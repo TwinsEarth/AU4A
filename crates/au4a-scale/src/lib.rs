@@ -14,29 +14,12 @@
 //! v1.9.4 效果评估 → v1.9.5 数据收集 → v1.9.6 分析工具 → v1.9.7 测试 →
 //! v1.9.8 文档 → v1.9.9 论文。轨道间**零耦合**：只依赖 `au4a-core` 与 `au4a-kernel`。
 
-pub mod analyze;
-pub mod cluster;
-pub mod collect;
-pub mod harness;
 pub mod metrics;
-pub mod paper;
-pub mod schema;
-pub mod verdict;
 
 use au4a_core::{CoreResult, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
-pub use analyze::{fit, residuals, FitReport, FitSearch};
-pub use cluster::{
-    bounded_vertex_scan, evaluation_budget, tier_report, TierReport, TierRow, VertexScan,
-    MAX_SCAN_SAMPLES, TIERS,
-};
-pub use collect::{collect, sweep, DataBundle, Record, ScenarioSpec};
-pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
-pub use paper::{paper_json, paper_summary};
-pub use schema::{schema_json, schema_summary};
-pub use verdict::{adjudicate, CapacityVerdict, VerdictKind, VerdictReason};
 pub use metrics::{
     aggregate_throughput_milli, analytic_vertex_floor, completion_bp, coordination_base,
     effective_per_node_milli, interaction_complexity, marginal_gain_milli, net_throughput_milli,
@@ -50,7 +33,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.9";
+pub const CURRENT: &str = "v1.9.1";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -129,218 +112,6 @@ pub fn self_check() -> Vec<SelfCheck> {
         }
     });
 
-    // v1.9.9：论文稿的每条结论都必须带证据分级，且与实算一致。
-    checks.push(match (paper_json(), paper_summary()) {
-        (Ok(paper), Ok(summary)) => {
-            let claims = paper["claims"].as_array().cloned().unwrap_or_default();
-            let graded = claims.iter().all(|claim| {
-                matches!(claim["evidence"].as_str(), Some("verified") | Some("cpu-proto"))
-            });
-            if graded && claims.len() >= 5 {
-                SelfCheck::pass(
-                    TRACK,
-                    "paper.evidence_graded",
-                    format!(
-                        "{} 条结论全部标注证据等级（verified {} / cpu-proto {}），局限 {} 条、未做 {} 项",
-                        summary["claims"],
-                        summary["verified_claims"],
-                        summary["model_derived_claims"],
-                        summary["limitations"],
-                        summary["not_done"]
-                    ),
-                )
-            } else {
-                SelfCheck::fail(TRACK, "paper.evidence_graded", "存在未标注证据等级的结论")
-            }
-        }
-        (Err(err), _) | (_, Err(err)) => {
-            SelfCheck::fail(TRACK, "paper.evidence_graded", err.to_string())
-        }
-    });
-
-    // v1.9.8：契约必须与代码常量一致。
-    checks.push(match (schema_json(), schema_summary()) {
-        (Ok(schema), Ok(summary)) => {
-            let kinds_ok = schema["verdict"]["kinds"].as_array().map(|v| v.len())
-                == Some(VerdictKind::ALL.len());
-            let reasons_ok = schema["verdict"]["reasons"].as_array().map(|v| v.len())
-                == Some(VerdictReason::ALL.len());
-            if kinds_ok && reasons_ok && au4a_core::canonicalize(&schema).is_ok() {
-                SelfCheck::pass(
-                    TRACK,
-                    "schema.aligned_with_code",
-                    format!(
-                        "{} 条公式、{} 个档位、{} 类裁决、{} 个原因码与代码常量一致，且可规范化",
-                        summary["formulas"],
-                        summary["tiers"],
-                        summary["verdict_kinds"],
-                        summary["verdict_reasons"]
-                    ),
-                )
-            } else {
-                SelfCheck::fail(TRACK, "schema.aligned_with_code", "schema 与代码常量不一致")
-            }
-        }
-        (Err(err), _) | (_, Err(err)) => {
-            SelfCheck::fail(TRACK, "schema.aligned_with_code", err.to_string())
-        }
-    });
-
-    // v1.9.6：从观测数据反推参数必须能恢复真值（有依据的拟合）。
-    checks.push({
-        let params = ScalingParams::new(1_000, 2, 1_000_000, 0);
-        let bundle = collect(&[ScenarioSpec::new(
-            "fit-probe",
-            vec![10, 100, 500, 1_000, 2_000, 5_000],
-            params,
-            100_000,
-        )]);
-        match bundle.and_then(|bundle| {
-            let search = FitSearch::around(1_000, 200, 10, vec![1, 2, 3]);
-            fit(&bundle, &search)
-        }) {
-            Ok(report) => {
-                let delta = report.n0_estimate.abs_diff(1_000);
-                if report.alpha_estimate == 2 && delta <= 50 && report.max_residual_ppm <= 10_000 {
-                    SelfCheck::pass(
-                        TRACK,
-                        "analyze.recovers_truth",
-                        format!(
-                            "从 6 条观测恢复 α={} N0={}（真值 2/1000，最大残差 {} ppm）",
-                            report.alpha_estimate, report.n0_estimate, report.max_residual_ppm
-                        ),
-                    )
-                } else {
-                    SelfCheck::fail(
-                        TRACK,
-                        "analyze.recovers_truth",
-                        format!(
-                            "恢复 α={} N0={} 残差 {} ppm",
-                            report.alpha_estimate, report.n0_estimate, report.max_residual_ppm
-                        ),
-                    )
-                }
-            }
-            Err(err) => SelfCheck::fail(TRACK, "analyze.recovers_truth", err.to_string()),
-        }
-    });
-
-    // v1.9.5：数据收集必须确定性且内容寻址。
-    checks.push(match collect(&[
-        ScenarioSpec::new(
-            "baseline",
-            TIERS.to_vec(),
-            ScalingParams::default(),
-            20_000,
-        ),
-    ]) {
-        Ok(bundle) => match bundle.recompute_digest() {
-            Ok(recomputed) if recomputed == bundle.digest && bundle.len() == TIERS.len() => {
-                SelfCheck::pass(
-                    TRACK,
-                    "collect.content_addressed",
-                    format!(
-                        "{} 条记录，digest={} 可独立复算",
-                        bundle.len(),
-                        au4a_core::short_id(&bundle.digest)
-                    ),
-                )
-            }
-            Ok(_) => SelfCheck::fail(TRACK, "collect.content_addressed", "digest 复算不一致"),
-            Err(err) => SelfCheck::fail(TRACK, "collect.content_addressed", err.to_string()),
-        },
-        Err(err) => SelfCheck::fail(TRACK, "collect.content_addressed", err.to_string()),
-    });
-
-    // v1.9.4：容量顶点裁决必须复现，且原因码与数值一致。
-    checks.push({
-        let params = ScalingParams::new(1_000, 2, 1_000_000, 1);
-        match (
-            adjudicate(&params, 100_000, 1, 4_000),
-            adjudicate(&params, 100_000, 1, 4_000),
-        ) {
-            (Ok(first), Ok(second)) => {
-                let analytic = analytic_vertex_floor(params.n0, params.alpha);
-                if first == second
-                    && first.kind == VerdictKind::VertexFound
-                    && first.has(VerdictReason::MarginalTurnedNegative)
-                    && first.vertex_nodes.abs_diff(analytic) <= first.step
-                {
-                    SelfCheck::pass(
-                        TRACK,
-                        "verdict.capacity_vertex",
-                        format!(
-                            "顶点 {}（解析 {analytic}，步长 {}），边际收益自 {} 起转负，开销占比 {} → {} ppm",
-                            first.vertex_nodes,
-                            first.step,
-                            first.marginal_negative_from.unwrap_or(0),
-                            first.overhead_ratio_at_peak_ppm,
-                            first.overhead_ratio_after_peak_ppm
-                        ),
-                    )
-                } else {
-                    SelfCheck::fail(
-                        TRACK,
-                        "verdict.capacity_vertex",
-                        format!("裁决不符合预期：{:?}", first.kind),
-                    )
-                }
-            }
-            (Err(err), _) | (_, Err(err)) => {
-                SelfCheck::fail(TRACK, "verdict.capacity_vertex", err.to_string())
-            }
-        }
-    });
-
-    // v1.9.3：大规模评估必须在固定预算内完成（与 N 无关）。
-    checks.push(match tier_report(&ScalingParams::default(), 20_000) {
-        Ok(report) => {
-            if report.evaluations <= evaluation_budget() && report.tiers.len() == TIERS.len() {
-                SelfCheck::pass(
-                    TRACK,
-                    "cluster.bounded_evaluation",
-                    format!(
-                        "10/100/1k/10k 档位 + 顶点扫描共用 {} 次求值（预算 {}），digest={}",
-                        report.evaluations,
-                        evaluation_budget(),
-                        au4a_core::short_id(&report.digest)
-                    ),
-                )
-            } else {
-                SelfCheck::fail(
-                    TRACK,
-                    "cluster.bounded_evaluation",
-                    format!("求值 {} 次，超出预算 {}", report.evaluations, evaluation_budget()),
-                )
-            }
-        }
-        Err(err) => SelfCheck::fail(TRACK, "cluster.bounded_evaluation", err.to_string()),
-    });
-    // v1.9.2：实验框架必须确定性且内容寻址。
-    checks.push(match (
-        harness::run(&ExperimentConfig::default_tiers()),
-        harness::run(&ExperimentConfig::default_tiers()),
-    ) {
-        (Ok(first), Ok(second)) => {
-            if first == second && first.digest == second.digest && first.digest.len() == 64 {
-                SelfCheck::pass(
-                    TRACK,
-                    "harness.deterministic",
-                    format!(
-                        "同一配置两次 run 完全相同，digest={} 覆盖 {} 个档位",
-                        au4a_core::short_id(&first.digest),
-                        first.rows.len()
-                    ),
-                )
-            } else {
-                SelfCheck::fail(TRACK, "harness.deterministic", "两次 run 结果不一致")
-            }
-        }
-        (Err(err), _) | (_, Err(err)) => {
-            SelfCheck::fail(TRACK, "harness.deterministic", err.to_string())
-        }
-    });
-
     checks
 }
 
@@ -356,8 +127,6 @@ pub fn results_json() -> CoreResult<Value> {
         "current": CURRENT,
         "checks": checks.len(),
         "checks_passed": checks.iter().filter(|c| c.passed).count(),
-        "schema": schema_summary()?,
-        "paper": paper_summary()?,
         "scenario": scenario_value,
     }))
 }
@@ -367,28 +136,31 @@ pub fn results_json() -> CoreResult<Value> {
 /// 契约（不可改）：不 panic、不读文件、不开网络、不读墙钟；同样的输入给同样的输出。
 /// 每一版迭代都应该让这里多做一件真实的事，而不是多打印一行字。
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
-    let config = ExperimentConfig::default_tiers();
-    config.validate()?;
-    let report = run_experiment(&config)?;
-    let tiers = tier_report(&config.params, config.demand_milli)?;
-    let verdict = adjudicate(&config.params, config.demand_milli, 1, 4 * config.params.n0)?;
-    let bundle = collect(&[ScenarioSpec::new(
-        "baseline",
-        config.nodes.clone(),
-        config.params,
-        config.demand_milli,
-    )])?;
-    let fit_report = fit(&bundle, &FitSearch::around(config.params.n0, 500, 10, vec![1, 2, 3]))?;
+    let params = ScalingParams::default();
+    params.validate()?;
+    let demand_milli = 20_000;
+
+    let mut rows = Vec::new();
+    for nodes in [10u64, 100, 1_000, 10_000] {
+        rows.push(json!({
+            "nodes": nodes,
+            "per_node_milli": effective_per_node_milli(nodes, &params)?,
+            "aggregate_milli": aggregate_throughput_milli(nodes, &params)?,
+            "overhead_milli": orchestration_overhead_milli(nodes, &params)?,
+            "net_milli": net_throughput_milli(nodes, &params)?,
+            "completion_bp": completion_bp(nodes, &params, demand_milli)?,
+            "overhead_ratio_bp": overhead_ratio_bp(nodes, &params)?,
+            "marginal_gain_milli": marginal_gain_milli(nodes, &params)?,
+        }));
+    }
 
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "{CURRENT} 档位评估 + 容量裁决 + 数据包 + 拟合：顶点 {}（{:?}），N0 估计 {}（真值 {}），最大残差 {} ppm",
-            verdict.vertex_nodes,
-            verdict.kind,
-            fit_report.n0_estimate,
-            config.params.n0,
-            fit_report.max_residual_ppm
+            "{CURRENT} 缩放度量：N0={} α={}，{} 个节点档位",
+            params.n0,
+            params.alpha,
+            rows.len()
         ),
     );
 
@@ -396,26 +168,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "version": CURRENT,
-        "config": report.config.to_json()?,
-        "rows": report.rows,
-        "digest": report.digest,
-        "peak_nodes": report.peak().map(|row| row.nodes),
-        "first_negative_net_nodes": report.first_negative_net().map(|row| row.nodes),
-        "analytic_vertex": analytic_vertex_floor(config.params.n0, config.params.alpha),
-        "tiers": tiers.to_json()?,
-        "verdict": verdict.to_json()?,
-        "bundle": {
-            "records": bundle.len(),
-            "digest": bundle.digest,
-            "scenarios": 1,
-        },
-        "fit": fit_report.to_json()?,
-        "verdict_kind": match verdict.kind {
-            VerdictKind::VertexFound => "vertex_found",
-            VerdictKind::MonotonicNoVertex => "monotonic_no_vertex",
-            VerdictKind::InsufficientRange => "insufficient_range",
-        },
-        "evaluation_budget": evaluation_budget(),
+        "params": params.to_json()?,
+        "demand_milli": demand_milli,
+        "rows": rows,
+        "analytic_vertex": analytic_vertex_floor(params.n0, params.alpha),
         "note": "确定性聚合模型（解析式实现），非真实分布式压测",
     }))
 }
