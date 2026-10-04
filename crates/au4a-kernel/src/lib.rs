@@ -20,6 +20,7 @@ pub mod audit;
 pub mod autonomy;
 pub mod council;
 pub mod lifecycle;
+pub mod migration;
 pub mod observer;
 pub mod permission;
 pub mod pmb;
@@ -36,6 +37,10 @@ pub use council::{
 };
 pub use lifecycle::{
     next_state, AgentState, Lifecycle, LifecycleBook, LifecycleEvent, LifecycleOutcome, Transition,
+};
+pub use migration::{
+    adapt, apply_plan, hook_route, permission_capability, CapabilityGrant, HookRoute,
+    MigrationApplication, MigrationLimits, MigrationPlan, MigrationRefusal, V3PluginManifest,
 };
 pub use observer::{
     observer_api, observer_self_checks, Observer, ObserverCapability, ObserverProjection,
@@ -816,7 +821,39 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "retired_is_terminal": retired_is_terminal,
     });
 
-    // 10. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    // 10. 迁移适配器：把 v3.x 风格插件清单映射到 PMB 能力路由（纯 CPU 语义，证据 cpu-proto）。
+    let legacy = V3PluginManifest::parse(&json!({
+        "name": "notes",
+        "entry": "plugins/notes.wasm",
+        "hooks": ["on_start", "on_settle"],
+        "permissions": ["write:progress", "net:http"],
+    }))?;
+    let plan = adapt(&legacy, &MigrationLimits::default()).map_err(|_| CoreError::InvalidKind)?;
+    let migration_application = apply_plan(kernel, &host_keys, &plan)?;
+    let legacy_refusal = {
+        let mut operator_bound = legacy.clone();
+        operator_bound.requires_operator_approval = true;
+        adapt(&operator_bound, &MigrationLimits::default())
+            .err()
+            .map(|refusal| json!({
+                "reason": refusal.as_str(),
+                "code": refusal.to_refusal_code().as_str(),
+            }))
+    };
+    let migration_json = json!({
+        "plugin": plan.plugin,
+        "evidence": plan.evidence.as_str(),
+        "routes": plan.routes.len(),
+        "mapped_grants": plan.grants.iter().filter(|g| g.capability.is_some()).count(),
+        "refused_permissions": plan.refused_permissions.len(),
+        "partial": plan.is_partial(),
+        "intact": plan.is_intact(),
+        "sent": migration_application.sent,
+        "denied": migration_application.denied.len(),
+        "operator_dependency": legacy_refusal,
+    });
+
+    // 11. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
     let report = Observer::report(kernel);
     let observer_layer = json!({
         "routes": ObserverRoute::ALL.len(),
@@ -852,6 +889,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "permission": permission_json,
         "pmb": pmb_json,
         "lifecycle": lifecycle_json,
+        "migration": migration_json,
         "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,

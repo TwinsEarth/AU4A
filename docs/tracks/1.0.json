@@ -256,6 +256,42 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 65 + autonomy 4 + council 5 + host_kernel 9 + lifecycle 6 + observer 5 + permission 6 + pmb 6 = 106 passed，0 failed，0 warning，exit 0。Slash 的经济执行属 au4a-economy(1.4)，跨节点同步属 1.3/1.7。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.8",
+      "title": "迁移适配器",
+      "goal": "把 v3.x 风格插件接口如实映射到 PMB 能力路由：能映射的映射、不能映射的具名拒绝、依赖人类审批的直接失败",
+      "deliverables": [
+        "src/migration.rs: V3PluginManifest / MigrationRefusal(8 个具名拒绝+拒绝码映射) / MigrationLimits / HookRoute / CapabilityGrant / MigrationPlan(内容寻址) / hook_route / permission_capability / adapt / apply_plan(fail-closed)",
+        "src/lib.rs: 接线迁移层，scenario() 新增 migration 阶段（真实适配+真实投递+运营方依赖被拒）",
+        "tests/migration.rs: 6 个集成测试（路由表完整、运营方审批被拒、宿主权限如实记录、执行真签名、被拒能力阻断路由、内容寻址可复现）"
+      ],
+      "interfaces": [
+        "pub struct V3PluginManifest { name, entry, hooks, permissions, requires_operator_approval, owner }",
+        "pub enum MigrationRefusal { EmptyName, MissingEntry, UnsupportedHook(String), UnsupportedPermission(String), OperatorApprovalRequired, DuplicateHook(String), TooManyHooks(usize), PlanNotEncodable }",
+        "pub struct MigrationPlan { id, plugin, entry, routes, grants, refused_permissions, evidence }",
+        "pub fn hook_route(hook: &str) -> Option<HookRoute>",
+        "pub fn permission_capability(permission: &str) -> Option<Capability>",
+        "pub fn adapt(&V3PluginManifest, &MigrationLimits) -> Result<MigrationPlan, MigrationRefusal>",
+        "pub fn apply_plan(&mut Kernel, &AgentKeys, &MigrationPlan) -> CoreResult<MigrationApplication>"
+      ],
+      "acceptance": [
+        "9 个旧钩子全部映射到真实 PMB 类型且 classify_kind 非 Unknown；on_teleport -> None",
+        "requires_operator_approval 或 owner:*/operator:* -> Err(OperatorApprovalRequired) 且 to_refusal_code()==policy_denied（非恶意）",
+        "net:http/fs:read/exec:shell -> 记入 refused_permissions(unsupported)，is_partial()==true",
+        "apply_plan 发出的信封逐个 verify() 通过、from 正确、migration.applied 事件落库；篡改计划 is_intact()==false -> Err",
+        "fail-closed：stake:withdraw 被拒时 denied 记录 (withdraw_stake, policy_denied)，该路由不发消息",
+        "同清单两次 adapt 的 id 与指纹相等；钩子换序 -> 换 id；改 entry -> is_intact()==false",
+        "plan.evidence == CpuProto（JSON \"cpu-proto\"）：不执行插件字节码"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 120,
+        "tests_total": 120,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 73 + autonomy 4 + council 5 + host_kernel 9 + lifecycle 6 + migration 6 + observer 5 + permission 6 + pmb 6 = 120 passed，0 failed，0 warning，exit 0。不执行插件字节码（WASM 运行时不在本 crate），故适配产物标注 cpu-proto。"
+      },
+      "status": "done"
     }
   ]
 }
