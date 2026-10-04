@@ -134,32 +134,6 @@ impl StateBlock {
     pub fn locator(&self) -> Value {
         json!({"d": self.digest, "k": self.key, "z": self.zone.as_str()})
     }
-
-    /// 用**已算好的**摘要构造块（v1.3.7 的哈希复用路径）。
-    ///
-    /// 为什么这是安全的：调用方只能从 [`crate::perf::DigestCache`] 拿到摘要，
-    /// 而那个缓存的键就是「(zone, key, 规范 JSON 字节)」本身——命中即代表
-    /// 输入逐字节相同，SHA-256 又是确定的，所以摘要必然相同。
-    /// 换句话说：类型不变式由缓存的正确性保证，而不是靠信任调用方。
-    pub(crate) fn new_cached(
-        zone: StateZone,
-        key: impl Into<String>,
-        value: Value,
-        digest: String,
-    ) -> CoreResult<Self> {
-        let key = key.into();
-        validate_key(&key)?;
-        validate_value(&value)?;
-        if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(CoreError::InvalidSignature);
-        }
-        Ok(Self {
-            zone,
-            key,
-            value,
-            digest,
-        })
-    }
 }
 
 impl<'de> Deserialize<'de> for StateBlock {
