@@ -111,6 +111,41 @@
         "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + doc-tests 3，本 crate 0 warning"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.4",
+      "title": "执行引擎",
+      "goal": "把已通过的决议落成真实状态变更（策略/信誉/账本），只能执行 passed、执行者须为在任委员、幂等且守恒",
+      "deliverables": [
+        "src/execution.rs: ExecutionEffect / ExecutionReceipt / execute() 校验+落地+收据",
+        "src/lib.rs: Council::execute / policy / policies / execution / executions / pub(crate) set_policy",
+        "tests/execution.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum ExecutionEffect { PolicySet, ReputationSet, Transferred, Slashed }",
+        "pub struct ExecutionReceipt { proposal, committee, executor, at, effects, total_before, total_after, slashed_before, slashed_after, conservation_ok }",
+        "pub fn ExecutionReceipt::ledger_effect_consistent() -> bool",
+        "pub fn Council::execute(&mut self, &mut Kernel, &AgentIdentity, &str) -> CoreResult<ExecutionReceipt>"
+      ],
+      "acceptance": [
+        "通过的决议落成策略写入 + executed 状态 + 收据 + 事件",
+        "非委员执行 → InvalidSignature+unauthorized；未注册 → UnknownAgent",
+        "open / rejected 动议不可执行且零状态变更",
+        "幂等：第二次执行被拒，收据不变",
+        "转账执行改变双方余额且总量不变、守恒成立",
+        "余额不足的转账执行失败后不留部分状态",
+        "罚没有界（锁定不足即拒）、罚没量入 slashed、总量恰好减少",
+        "信誉执行写入治理账并影响下一次选举花名册",
+        "自检 council.executions.ledger_effects / state_matches 一一对应"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 61,
+        "tests_total": 61,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + execution 10 + doc-tests 3，本 crate 0 warning"
+      },
+      "status": "done"
     }
   ]
 }

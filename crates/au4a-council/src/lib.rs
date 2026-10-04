@@ -23,6 +23,7 @@
 
 pub mod committee;
 pub mod election;
+pub mod execution;
 pub mod human;
 pub mod proposal;
 pub mod voting;
@@ -32,6 +33,7 @@ pub use election::{
     Candidate, ElectionBallot, ElectionConfig, ElectionOutcome, Elected, IgnoredBallot, Ineligible,
     ScoreRow,
 };
+pub use execution::{ExecutionEffect, ExecutionReceipt};
 pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
 pub use proposal::{Action, AgentIdentity, Proposal, ProposalDraft, ProposalState};
 pub use voting::{Choice, RoundOutcome, RoundState, Tally, Vote, VotingRound};
@@ -105,6 +107,8 @@ pub struct Council {
     proposals: BTreeMap<String, Proposal>,
     proposal_order: Vec<String>,
     rounds: BTreeMap<(String, u32), VotingRound>,
+    policies: BTreeMap<String, i64>,
+    executions: BTreeMap<String, ExecutionReceipt>,
     events: Vec<CouncilEvent>,
 }
 
@@ -122,6 +126,8 @@ impl Council {
             proposals: BTreeMap::new(),
             proposal_order: Vec::new(),
             rounds: BTreeMap::new(),
+            policies: BTreeMap::new(),
+            executions: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -680,6 +686,46 @@ impl Council {
         self.rounds.values()
     }
 
+    /// 写入治理策略。**只有执行引擎会调用它**（Agent 不能直接改策略）。
+    pub(crate) fn set_policy(&mut self, key: String, value: i64) {
+        self.policies.insert(key, value);
+    }
+
+    /// 读一条治理策略。
+    pub fn policy(&self, key: &str) -> Option<i64> {
+        self.policies.get(key).copied()
+    }
+
+    /// 全部治理策略（键升序）。
+    pub fn policies(&self) -> &BTreeMap<String, i64> {
+        &self.policies
+    }
+
+    /// 保存一张执行收据（执行引擎内部使用）。
+    pub(crate) fn store_execution(&mut self, receipt: ExecutionReceipt) {
+        self.executions.insert(receipt.proposal.clone(), receipt);
+    }
+
+    /// 读某条动议的执行收据。
+    pub fn execution(&self, proposal_id: &str) -> Option<&ExecutionReceipt> {
+        self.executions.get(proposal_id)
+    }
+
+    /// 全部执行收据（按动议 id 升序）。
+    pub fn executions(&self) -> impl Iterator<Item = &ExecutionReceipt> {
+        self.executions.values()
+    }
+
+    /// 执行一条**已通过**的动议（v1.7.4 执行引擎的唯一入口，见 [`execution::execute`]）。
+    pub fn execute(
+        &mut self,
+        kernel: &mut Kernel,
+        executor: &AgentIdentity,
+        proposal_id: &str,
+    ) -> CoreResult<ExecutionReceipt> {
+        execution::execute(self, kernel, executor, proposal_id)
+    }
+
     /// 治理层自检（v1.7.2 覆盖选举、席位与动议；后续版本追加表决、否决、审计）。
     pub fn checks(&self) -> Vec<SelfCheck> {
         let mut checks = Vec::new();
@@ -803,6 +849,40 @@ impl Council {
                 "存在与动议状态不一致的表决结论",
             )
         });
+
+        // 执行不变式：收据的账本效应必须自洽，且「已执行」与收据一一对应。
+        let executions = self.executions.len();
+        let effects_ok = self
+            .executions
+            .values()
+            .all(|r| r.ledger_effect_consistent() && r.conservation_ok);
+        checks.push(if effects_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.executions.ledger_effects",
+                format!("{executions} 张执行收据的账本效应自洽（转账不动总量、罚没量入 slashed、守恒成立）"),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.executions.ledger_effects", "存在账本效应不自洽的执行收据")
+        });
+        let paired = self
+            .proposals
+            .values()
+            .filter(|p| p.state == ProposalState::Executed)
+            .all(|p| self.executions.contains_key(&p.id))
+            && self
+                .executions
+                .values()
+                .all(|r| self.proposals.get(&r.proposal).map(|p| p.state == ProposalState::Executed).unwrap_or(false));
+        checks.push(if paired {
+            SelfCheck::pass(
+                TRACK,
+                "council.executions.state_matches",
+                format!("{executions} 张收据与 executed 状态一一对应（无未执行的状态、无无收据的执行）"),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.executions.state_matches", "executed 状态与执行收据不一一对应")
+        });
         checks
     }
 }
@@ -889,6 +969,7 @@ struct Build {
     sock_dids: Vec<Did>,
     proposal: Proposal,
     round: RoundState,
+    receipt: ExecutionReceipt,
 }
 
 /// 按 DID 找回该 Agent 的密钥（建场与 scenario 共用）。
@@ -950,6 +1031,8 @@ fn build_full() -> CoreResult<Build> {
     )?;
     let proposal = council.propose(&mut kernel, &identity, draft)?;
     let round = vote_yes_all(&mut kernel, &mut council, &agents, &proposal.id)?;
+    // 执行：由同一位委员触发，把通过的决议落成策略变更。
+    let receipt = council.execute(&mut kernel, &identity, &proposal.id)?;
 
     Ok(Build {
         kernel,
@@ -958,6 +1041,7 @@ fn build_full() -> CoreResult<Build> {
         sock_dids: socks.iter().map(|k| k.did()).collect(),
         proposal,
         round,
+        receipt,
     })
 }
 
@@ -1031,18 +1115,18 @@ pub fn self_check() -> Vec<SelfCheck> {
                 )
             });
             let live_state = a.council.proposal(&a.proposal.id).map(|p| p.state);
-            checks.push(if live_state == Some(ProposalState::Passed) {
+            checks.push(if live_state == Some(ProposalState::Executed) {
                 SelfCheck::pass(
                     TRACK,
                     "council.proposal.agent_only",
                     format!(
-                        "动议 {} 由委员 {} 签名提交并已表决通过（人类观察者无 propose 方法，见 compile_fail 文档测试）",
+                        "动议 {} 由委员 {} 签名提交、表决通过并已执行（人类观察者无 propose 方法，见 compile_fail 文档测试）",
                         au4a_core::short_id(&a.proposal.id),
                         au4a_core::short_id(a.proposal.author.as_str())
                     ),
                 )
             } else {
-                SelfCheck::fail(TRACK, "council.proposal.agent_only", "委员动议未能提交或未通过")
+                SelfCheck::fail(TRACK, "council.proposal.agent_only", "委员动议未能提交或未走到执行")
             });
             checks.push(if a.round.outcome == RoundOutcome::Passed
                 && a.round.tally.yes >= a.round.tally.quorum
@@ -1065,6 +1149,27 @@ pub fn self_check() -> Vec<SelfCheck> {
                     TRACK,
                     "council.vote.quorum",
                     format!("表决未按 BFT-lite 法定人数出结论：{:?}", a.round.outcome),
+                )
+            });
+            checks.push(if a.receipt.conservation_ok
+                && a.receipt.ledger_effect_consistent()
+                && a.council.policy("cpu_proto_settle_cap") == Some(250)
+            {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.execution.applied",
+                    format!(
+                        "执行引擎把通过的决议落成状态变更：policy cpu_proto_settle_cap={} 账本 {}→{}（守恒成立）",
+                        a.council.policy("cpu_proto_settle_cap").unwrap_or(-1),
+                        a.receipt.total_before,
+                        a.receipt.total_after
+                    ),
+                )
+            } else {
+                SelfCheck::fail(
+                    TRACK,
+                    "council.execution.applied",
+                    format!("执行未落成预期状态：policy={:?}", a.council.policy("cpu_proto_settle_cap")),
                 )
             });
             checks.extend(a.council.checks());
@@ -1114,6 +1219,16 @@ pub fn results_json() -> CoreResult<Value> {
             "no": run.round.tally.no,
             "abstain": run.round.tally.abstain,
         },
+        "execution": {
+            "proposal": run.receipt.proposal,
+            "executor": run.receipt.executor.as_str(),
+            "effects": run.receipt.effects.iter().map(|e| e.describe()).collect::<Vec<_>>(),
+            "total_before": run.receipt.total_before.get(),
+            "total_after": run.receipt.total_after.get(),
+            "conservation_ok": run.receipt.conservation_ok,
+            "ledger_effect_consistent": run.receipt.ledger_effect_consistent(),
+            "policies": run.council.policies(),
+        },
         "events": run.council.events().len(),
         "agents_enrolled": run.agents.len(),
         "kernel_delivered": run.kernel.observe().messages_delivered,
@@ -1150,6 +1265,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let proposal = council.propose(kernel, &identity, draft)?;
     // 表决：受理委员会按 BFT-lite 法定人数出结论。
     let round = vote_yes_all(kernel, &mut council, &agents, &proposal.id)?;
+    // 执行：通过的决议落成真实状态变更。
+    let receipt = council.execute(kernel, &identity, &proposal.id)?;
 
     // 人类只观察：拿到的只是一个值，没有任何写入口。
     let human = HumanObserver::new("operator");
@@ -1219,6 +1336,16 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "abstain": round.tally.abstain,
             "participation": round.tally.participation,
             "voters": round.votes.iter().map(|(did, choice)| json!({"did": did, "choice": choice.as_str()})).collect::<Vec<_>>(),
+        },
+        "execution": {
+            "proposal": receipt.proposal,
+            "executor": receipt.executor.as_str(),
+            "effects": receipt.effects.iter().map(|e| e.describe()).collect::<Vec<_>>(),
+            "total_before": receipt.total_before.get(),
+            "total_after": receipt.total_after.get(),
+            "conservation_ok": receipt.conservation_ok,
+            "ledger_effect_consistent": receipt.ledger_effect_consistent(),
+            "policies": council.policies(),
         },
         "human_view": {
             "label": view.label,
