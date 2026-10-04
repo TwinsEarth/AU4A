@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 
 pub mod audit;
 pub mod autonomy;
+pub mod council;
 pub mod observer;
 pub mod registry;
 
@@ -25,6 +26,10 @@ pub use audit::{audit_kernel, AuditFinding, HostAudit};
 pub use autonomy::{
     classify_error, AgentContext, AutonomyLayer, AutonomyPolicy, AutonomyState, AutonomyTurn,
     Intent, IntentKind, IntentRecord,
+};
+pub use council::{
+    motions_for_kernel, Ballot, Council, CouncilConfig, CouncilFailure, Decision, Motion,
+    MotionKind, Tally, Verdict, Vote,
 };
 pub use observer::{
     observer_api, observer_self_checks, Observer, ObserverCapability, ObserverProjection,
@@ -643,7 +648,46 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "halted": host_runtime.state().halted,
     });
 
-    // 6. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    // 6. 委员会：从在册 Agent 里确定性抽签，对「重复触发证据闸门」提案并表决。
+    //    竞争行为只拿得到 warn 动议；隔离动议只在恶意码上出现（本场景没有恶意码）。
+    let mut council = Council::sortition(kernel, kernel.now(), CouncilConfig::default())?;
+    let motion = Motion::new(
+        MotionKind::Warn,
+        settler.did.clone(),
+        RefusalCode::PolicyDenied,
+        Some(au4a_core::Escalation::Warn),
+        kernel.now(),
+    )?;
+    // 动议与选票的失败是**具名**的（`CouncilFailure`），这里如实计数而不是把它们抹平成成功。
+    let mut council_refusals = 0usize;
+    if council.submit(motion.clone()).is_err() {
+        council_refusals += 1;
+    }
+    let members: Vec<Did> = council.members().to_vec();
+    for (i, voter) in members.iter().enumerate() {
+        let vote = Vote {
+            voter: voter.clone(),
+            motion: motion.id.clone(),
+            ballot: Ballot::Uphold,
+            at: i as u64,
+        };
+        if council.vote(vote).is_err() {
+            council_refusals += 1;
+        }
+    }
+    let tally = council.decide(&motion.id, kernel.now());
+    let council_json = json!({
+        "members": council.members().len(),
+        "quorum_required": council.quorum_required(),
+        "verdict": tally.verdict.as_str(),
+        "uphold": tally.uphold,
+        "decisions": council.decisions().len(),
+        "refusals": council_refusals,
+        "failures": council.failures().len(),
+        "fingerprint": council.decisions_json()?["fingerprint"],
+    });
+
+    // 7. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
     let report = Observer::report(kernel);
     let observer_layer = json!({
         "routes": ObserverRoute::ALL.len(),
@@ -659,7 +703,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             .unwrap_or(Value::Null),
     });
 
-    // 7. 审计 + 只读观察。
+    // 8. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -668,13 +712,14 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": {"host": host.display, "observer": observer.display, "settler": settler.display},
-        "steps": ["register", "announce", "deliver", "settle", "autonomy", "observe_layer", "audit", "observe"],
+        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "observe_layer", "audit", "observe"],
         "announced": announced,
         "drained": drained,
         "settled_verified": settled_verified,
         "settled_cpu_proto": settled_cpu_proto,
         "refused_unverified": refused_unverified,
         "autonomy": autonomy,
+        "council": council_json,
         "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,

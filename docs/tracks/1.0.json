@@ -113,6 +113,42 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 35 + tests/autonomy.rs 4 + tests/host_kernel.rs 9 + tests/observer.rs 5 = 53 passed，0 failed，0 warning，exit 0。HTTP/Web 面板属 au4a-node，本版只断言内核侧结构只读性。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.4",
+      "title": "Agent 委员会骨架",
+      "goal": "建立只由在册 Agent 组成的裁决机构：确定性抽签、法定人数与多数、具名失败模式，且隔离动议只对恶意 2 码开放（竞争绝不隔离）",
+      "deliverables": [
+        "src/council.rs: CouncilConfig / Motion(内容寻址) / MotionKind / Ballot / Vote / Tally / Verdict / Decision / Council / CouncilFailure(8 个具名失败模式) / motions_for_kernel()",
+        "src/lib.rs: 接线委员会，scenario() 新增 council 阶段（真实抽签+全员投票+计票）",
+        "tests/council.rs: 5 个集成测试（抽签只抽在册 Agent、隔离只对恶意、法定人数与多数、非委员/重复投票、空委员会）"
+      ],
+      "interfaces": [
+        "pub struct CouncilConfig { size, quorum_bps, pass_bps }",
+        "pub struct Motion { id, kind, subject, cause, escalation, at }",
+        "pub enum MotionKind { Warn, Quarantine, Slash, Reprieve }",
+        "pub enum Ballot { Uphold, Reject, Abstain }",
+        "pub enum Verdict { Upheld, Rejected, Inconclusive }",
+        "pub enum CouncilFailure { NonMemberVote, DuplicateVote, MalformedMotion, UnknownMotion, DuplicateMotion, NoQuorum, TieInsufficient, EmptyCouncil }",
+        "impl Council { sortition / members / is_member / quorum_required / submit / vote / tally / decide / decisions / decisions_json / failures }",
+        "pub fn motions_for_kernel(kernel: &Kernel, at: u64) -> CoreResult<Vec<Motion>>"
+      ],
+      "acceptance": [
+        "sortition 可复现、委员全部 is_registered、在册不足取全部、空网络 -> EmptyCouncil 且映射为 degraded",
+        "穷举 10 拒绝码 x 3 升级级别：只有恶意 2 码能产生 Quarantine 动议；竞争码即使误传 Quarantine 也返回 None",
+        "真实内核：伪造信封 -> 1 份隔离动议(unauthorized)；证据闸门重复 5 次 -> 1 份 Warn 动议(policy_denied)；动议 id 自洽",
+        "5 人 60% 法定 3 人；2 人出席 -> NoQuorum+Inconclusive；3:2 -> Upheld；全员弃权 -> TieInsufficient 且不产生决定",
+        "NonMemberVote/DuplicateVote/MalformedMotion -> unauthorized(恶意)；UnknownMotion->unsupported，DuplicateMotion->conflict，其余->degraded",
+        "同输入两次运行 Tally/decisions/decisions_json 指纹全等"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 65,
+        "tests_total": 65,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 42 + tests/autonomy.rs 4 + tests/council.rs 5 + tests/host_kernel.rs 9 + tests/observer.rs 5 = 65 passed，0 failed，0 warning，exit 0。决定执行落 v1.0.7 状态机；真实链上治理属 1.7/1.8。"
+      },
+      "status": "done"
     }
   ]
 }
