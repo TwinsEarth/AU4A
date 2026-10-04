@@ -295,17 +295,33 @@
       "version": "v1.3.9",
       "title": "文档",
       "goal": "能力清单在代码里可枚举、可测试，文档每条声明都指向实现与测试。",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/capabilities.rs: Capability/CAPABILITIES（19 条）/capabilities()/coverage_check()/manifest()/declared_shape_ok()",
+        "tests/v139_capabilities.rs: 9 个集成测试",
+        "docs/tracks/1.3.md: 能力清单表格（与 CAPABILITIES 一一对应）"
+      ],
+      "interfaces": [
+        "pub const CAPABILITIES: [Capability; 19]",
+        "pub fn capabilities() -> &'static [Capability]",
+        "pub fn coverage_check() -> CoreResult<CoverageReport>",
+        "pub fn manifest() -> Value",
+        "pub struct Capability { id, title, since, grade, api, test, check, note }"
+      ],
+      "acceptance": [
+        "coverage_check 的 unknown/unclaimed/failing/bad_grades 四类问题全空",
+        "capabilities().len() == self_check().len()（无空头声明、无孤儿自检）",
+        "每条 api 落在真实模块且具体到函数；since 形如 v1.3.N",
+        "等级分布如实：unverified=0 且 cpu-proto>=1（跨节点传输为原型并在 note 写明）",
+        "results_json 与 scenario 携带同一份 manifest 与覆盖报告"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-state",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 200,
+        "tests_total": 200,
+        "grade": "verified",
+        "notes": "lib 87 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 + v138 16 + v139 9 全绿 0 warning。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.9.log"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.3.10",

@@ -16,6 +16,7 @@
 //! 把缺失/多余/被改的块定位到「区 + 键」，而不是一句笼统的校验失败。
 //! 之后每一版都在同一 crate 内增量实现，公共 API 只增不改。
 
+pub mod capabilities;
 pub mod chain;
 pub mod diff;
 pub mod integrity;
@@ -30,6 +31,10 @@ pub mod udos;
 use au4a_core::{AgentKeys, CoreError, CoreResult, Did, SelfCheck};
 use serde_json::{json, Value};
 
+pub use capabilities::{
+    capabilities, coverage_check, manifest as capability_manifest, Capability, CoverageReport,
+    CAPABILITIES,
+};
 pub use chain::{run_chain, ChainOptions, ChainReport, ConsistencyReportView};
 pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
 pub use integrity::{
@@ -139,6 +144,8 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_resume_saves_work());
     // 18) v1.3.8：把七版能力串成一条链后仍然成立（端到端自有流程）。
     checks.push(check_full_chain());
+    // 19) v1.3.9：能力清单自身形状正确（可枚举、等级合法、id 唯一）。
+    checks.push(check_capabilities_declared());
 
     checks
 }
@@ -506,6 +513,23 @@ fn state_as_raw(blocks: Vec<StateBlock>) -> Vec<(StateZone, String, serde_json::
         .into_iter()
         .map(|b| (b.zone(), b.key().to_string(), b.value().clone()))
         .collect()
+}
+
+/// v1.3.9：能力清单的形状检查（不含交叉检查，避免与 `self_check` 互相递归）。
+fn check_capabilities_declared() -> SelfCheck {
+    let name = "docs.capabilities_declared";
+    if capabilities::declared_shape_ok() {
+        SelfCheck::pass(
+            TRACK,
+            name,
+            format!(
+                "声明 {} 条能力，id 唯一、等级合法、每条都有 api/test/check 指向",
+                CAPABILITIES.len()
+            ),
+        )
+    } else {
+        SelfCheck::fail(TRACK, name, "能力清单存在空字段、重复 id 或非法等级")
+    }
 }
 
 /// v1.3.8：把全部能力串成一条链跑一遍（这也是端到端演示与灾难演练用的同一条链）。
@@ -961,6 +985,8 @@ pub fn results_json() -> CoreResult<Value> {
         "zones": zone_roots,
         "store_keys": store.len(),
         "checks": self_check().len(),
+        "capabilities": capability_manifest(),
+        "coverage": coverage_check()?.to_value(),
     }))
 }
 
@@ -1327,7 +1353,13 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             "evidence_grade": "verified",
             "note": "工作量以确定性计数器核算（哈希次数/操作数），不读墙钟；同样输入给同样数字",
         },
-        "events": 7,
+        "docs": {
+            "capabilities": capability_manifest(),
+            "coverage": coverage_check()?.to_value(),
+            "evidence_grade": "verified",
+            "note": "能力清单在代码里可枚举；每条声明都指向实现入口、测试名与自检名",
+        },
+        "events": 8,
     }))
 }
 
@@ -1367,7 +1399,14 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks), "{checks:#?}");
-        assert_eq!(checks.len(), 18);
+        assert_eq!(checks.len(), 19);
+    }
+
+    #[test]
+    fn capability_coverage_has_no_orphans() {
+        let report = coverage_check().unwrap();
+        assert!(report.is_clean(), "{report:#?}");
+        assert_eq!(report.capabilities, report.checks);
     }
 
     #[test]
@@ -1422,6 +1461,9 @@ mod tests {
         assert_eq!(a["perf"]["reuse_ratio_bp"], json!(10000));
         assert!(a["perf"]["ops_skipped"].as_u64().unwrap_or(0) > 0);
         assert_eq!(a["perf"]["counter"]["wall_clock_used"], json!(false));
+        assert_eq!(a["docs"]["coverage"]["capabilities"], json!(19));
+        assert_eq!(a["docs"]["coverage"]["unclaimed_checks"], json!([]));
+        assert_eq!(a["docs"]["capabilities"]["unverified"], json!(0));
         k1.ledger().check_conservation().unwrap();
     }
 
