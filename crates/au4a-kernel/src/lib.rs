@@ -20,6 +20,7 @@ pub mod audit;
 pub mod autonomy;
 pub mod council;
 pub mod observer;
+pub mod permission;
 pub mod registry;
 
 pub use audit::{audit_kernel, AuditFinding, HostAudit};
@@ -34,6 +35,10 @@ pub use council::{
 pub use observer::{
     observer_api, observer_self_checks, Observer, ObserverCapability, ObserverProjection,
     ObserverReport, ObserverRoute,
+};
+pub use permission::{
+    authority_roots, explain, explain_with_council, Authority, Capability, Denial,
+    PermissionReport,
 };
 pub use registry::{AgentRegistry, RegistrySnapshot};
 
@@ -228,6 +233,11 @@ impl Kernel {
     /// 宿主审计：把内核声称的不变式变成可断言对象。
     pub fn audit(&self) -> HostAudit {
         audit_kernel(self)
+    }
+
+    /// 「这个 Agent 能做什么 / 不能做什么」的完整答案（分权模型，见 `permission.rs`）。
+    pub fn permissions(&self, did: &Did) -> CoreResult<PermissionReport> {
+        explain(self, did)
     }
 
     /// 追加一条进度事件（任何轨道都可以发，观察层只读订阅）。
@@ -687,7 +697,18 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "fingerprint": council.decisions_json()?["fingerprint"],
     });
 
-    // 7. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    // 7. 权限模型：回答「这个 Agent 能做什么 / 不能做什么」（划分完备、来源无人类）。
+    let host_report = explain(kernel, &host.did)?;
+    let permission_json = json!({
+        "can": host_report.allowed.len(),
+        "cannot": host_report.denied.len(),
+        "total_partition": host_report.is_total_partition(),
+        "misconduct_denials": host_report.has_misconduct_denial(),
+        "cpu_proto_cap": host_report.limits.get("settle_cpu_proto").copied().unwrap_or(0),
+        "fingerprint": host_report.fingerprint()?,
+    });
+
+    // 8. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
     let report = Observer::report(kernel);
     let observer_layer = json!({
         "routes": ObserverRoute::ALL.len(),
@@ -703,7 +724,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             .unwrap_or(Value::Null),
     });
 
-    // 8. 审计 + 只读观察。
+    // 9. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -712,7 +733,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": {"host": host.display, "observer": observer.display, "settler": settler.display},
-        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "observe_layer", "audit", "observe"],
+        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "permission", "observe_layer", "audit", "observe"],
         "announced": announced,
         "drained": drained,
         "settled_verified": settled_verified,
@@ -720,6 +741,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "refused_unverified": refused_unverified,
         "autonomy": autonomy,
         "council": council_json,
+        "permission": permission_json,
         "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,

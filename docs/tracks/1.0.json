@@ -149,6 +149,42 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 42 + tests/autonomy.rs 4 + tests/council.rs 5 + tests/host_kernel.rs 9 + tests/observer.rs 5 = 65 passed，0 failed，0 warning，exit 0。决定执行落 v1.0.7 状态机；真实链上治理属 1.7/1.8。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.5",
+      "title": "权限模型更新",
+      "goal": "内核能回答「这个 Agent 能做什么/不能做什么」：全部能力的恰好一次划分 + 类型化拒绝理由，权限来源只有客观事实、没有人类或运营方",
+      "deliverables": [
+        "src/permission.rs: Capability(9 项) / Authority(5 个客观来源) / Denial / PermissionReport / explain / explain_with_council / authority_roots()",
+        "src/lib.rs: Kernel::permissions(&Did)，scenario() 新增 permission 阶段",
+        "tests/permission.rs: 6 个集成测试（划分完备、来源无人类、外部 DID 全拒、竞争不沾恶意码、只读可复现、能力名唯一）"
+      ],
+      "interfaces": [
+        "pub enum Capability { PublishCard, DeliverDirect, SettleVerified, SettleCpuProto, Offer, VoteInCouncil, ProposeMotion, ListSkill, WithdrawStake }",
+        "pub enum Authority { SelfSovereign, Stake, Evidence, DeclaredSkill, CouncilDecision }",
+        "pub struct Denial { capability, code, reason }",
+        "pub struct PermissionReport { did, registered, allowed, denied, limits, authorities }",
+        "pub fn explain(kernel: &Kernel, did: &Did) -> CoreResult<PermissionReport>",
+        "pub fn explain_with_council(kernel: &Kernel, did: &Did, council: &Council) -> CoreResult<PermissionReport>",
+        "pub fn authority_roots() -> serde_json::Value",
+        "impl Kernel { pub fn permissions(&self, did: &Did) -> CoreResult<PermissionReport> }"
+      ],
+      "acceptance": [
+        "allowed.len()+denied.len()==9 且 is_total_partition()；allows 与 denial_for 对同一能力互斥",
+        "Authority::ALL 字符串不含 operator/human/admin/owner；authority_roots()[\"human_is_a_root\"]==false；提案权来自 self_sovereign",
+        "未注册 DID 的 9 项能力全拒且 code=unauthorized(is_misconduct=true, retryable=false)，与内核 send 分类一致",
+        "在册 Agent 的拒绝清单无恶意码；cpu_proto_cap=100 与 resource_exhausted 上限拒绝如实暴露",
+        "两次 permissions() 报告与指纹相等；解释前后注册表指纹/观察投影不变",
+        "9 个能力名唯一且 parse 往返成功；Capability::parse(\"become_operator\")==None"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 79,
+        "tests_total": 79,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 50 + tests/autonomy.rs 4 + tests/council.rs 5 + tests/host_kernel.rs 9 + tests/observer.rs 5 + tests/permission.rs 6 = 79 passed，0 failed，0 warning，exit 0。真实 API 网关注入属 au4a-node / au4a-safety(1.5)。"
+      },
+      "status": "done"
     }
   ]
 }
