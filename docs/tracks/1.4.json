@@ -35,6 +35,37 @@
         "notes": "本机 Windows 实测，cargo exit 0、0 warning；日志 _forangent\\logs\\1.4-v1.4.1.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.2",
+      "title": "定价策略",
+      "goal": "Agent 用信誉分/稀缺度/负载的整数基点函数自主定价并广播，买方按整数单价发现并挑选最便宜供给方。",
+      "deliverables": [
+        "src/pricing.rs: PriceInputs / PriceKnobs / PriceComponents / PriceQuote / quote / unit_price / total_for / fingerprint",
+        "src/lib.rs: PRICE_KIND 报价公告 + scenario 定价-广播-验签-发现-成交；self_check 定价可复现与单调性"
+      ],
+      "interfaces": [
+        "pub fn quote(inputs: &PriceInputs, knobs: &PriceKnobs) -> CoreResult<PriceQuote>",
+        "pub fn unit_price(inputs: &PriceInputs, knobs: &PriceKnobs) -> CoreResult<Credits>",
+        "pub struct PriceQuote { inputs, components, multiplier_bp: i64, unit_price: Credits }",
+        "pub const PRICE_KIND: &str = \"economy.price\""
+      ],
+      "acceptance": [
+        "base 1000000 / 信誉 8000 / 稀缺 2000 / 负载 4000 → 折扣 1600、稀缺 600、负载 2000、乘数 11000、单价 1100000",
+        "同一输入两次报价相等且内容哈希相等；报价可被拒绝浮点的规范 JSON 编码",
+        "负载 0→10000 逐点不降、500bp 网格严格递增；信誉 0→10000 逐点不升、网格严格递减；稀缺每 +500bp 严格上升",
+        "乘数夹取 [9500,12000] 两端生效；base=1 满信誉时单价仍为 1（不塌缩为 0）",
+        "base 0 → ZeroAmount；信誉 10001 → InvalidKind；负数 → NegativeAmount；min>max → InvalidKind",
+        "空内核连跑两次场景规范 JSON 逐字节一致；卖方 408 / 对手 636 → 选中 408"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-economy)",
+        "tests_passed": 21,
+        "tests_total": 21,
+        "grade": "verified",
+        "notes": "本机 Windows 实测，cargo exit 0、0 warning；日志 _forangent\\logs\\1.4-v1.4.2.log"
+      },
+      "status": "done"
     }
   ]
 }
