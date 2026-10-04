@@ -15,7 +15,8 @@ use serde_json::{json, Value};
 use crate::cache::{CacheStats, CapabilityCache};
 use crate::capability::{Capability, SkillId};
 use crate::declaration::{Declaration, SignedDeclaration};
-use crate::index::{rank_and_truncate, CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats};
+use crate::index::{CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats};
+use crate::perf::{rank_top_k, QueryCache, QueryPerf};
 use crate::version::{VersionHistory, VersionRecord};
 
 /// 能力图配置。人类可以设定容量与上限，但不能设定「谁有什么能力」。
@@ -27,6 +28,8 @@ pub struct CapGraphConfig {
     pub neighbor_capacity: usize,
     /// 邻居条目的存活逻辑刻数；`0` 表示不过期。
     pub cache_ttl_ticks: u64,
+    /// 查询结果缓存容量；`0` 表示关闭缓存（v1.1.8）。
+    pub query_cache_capacity: usize,
 }
 
 impl Default for CapGraphConfig {
@@ -35,6 +38,7 @@ impl Default for CapGraphConfig {
             max_skills_per_agent: 64,
             neighbor_capacity: 128,
             cache_ttl_ticks: 64,
+            query_cache_capacity: 32,
         }
     }
 }
@@ -159,11 +163,16 @@ pub struct AgentCapabilityGraph {
     neighbors: CapabilityCache,
     index: CapabilityIndex,
     history: VersionHistory,
+    /// 图修订号：每次数据变更 +1（查询缓存与索引都以它为准）。
+    revision: u64,
+    perf: QueryPerf,
+    query_cache: QueryCache,
 }
 
 impl AgentCapabilityGraph {
     pub fn new(owner: Did, config: CapGraphConfig) -> Self {
         let neighbors = CapabilityCache::new(config.neighbor_capacity, config.cache_ttl_ticks);
+        let query_cache = QueryCache::new(config.query_cache_capacity);
         Self {
             owner,
             config,
@@ -173,6 +182,9 @@ impl AgentCapabilityGraph {
             neighbors,
             index: CapabilityIndex::new(),
             history: VersionHistory::new(),
+            revision: 0,
+            perf: QueryPerf::default(),
+            query_cache,
         }
     }
 
@@ -313,6 +325,7 @@ impl AgentCapabilityGraph {
         self.own_content_fingerprint = Some(fingerprint.clone());
         // 索引与数据同步：索引只记「哪里有」，因此每个写入口都必须更新它。
         self.index.insert_agent(&agent, &self.own);
+        self.bump_revision();
         self.history.record(VersionRecord {
             did: agent.clone(),
             version: epoch,
@@ -403,6 +416,7 @@ impl AgentCapabilityGraph {
             self.index.remove_agent(gone);
         }
         self.index.insert_agent(&agent, signed.capabilities());
+        self.bump_revision();
         self.history.record(VersionRecord {
             did: agent.clone(),
             version: epoch,
@@ -456,6 +470,9 @@ impl AgentCapabilityGraph {
         for did in &expired {
             self.index.remove_agent(did);
         }
+        if !expired.is_empty() {
+            self.bump_revision();
+        }
         expired
     }
 
@@ -464,6 +481,7 @@ impl AgentCapabilityGraph {
         let removed = self.neighbors.invalidate(did);
         if removed {
             self.index.remove_agent(did);
+            self.bump_revision();
         }
         removed
     }
@@ -492,7 +510,8 @@ impl AgentCapabilityGraph {
             .and_then(|record| record.capabilities.get(*slot))
     }
 
-    /// 查询：**只走倒排索引**，扫描条数由 [`QueryStats`] 如实报告。
+    /// 查询：**只走倒排索引**，扫描条数由 [`QueryStats`] 如实报告；
+    /// `limit` 小于命中数时走有界 top-k（不排序整个候选集），v1.1.8 起。
     ///
     /// 查询前先清理过期邻居：过期数据不该出现在结果里，也不该留在索引里。
     pub fn query(&mut self, query: &CapabilityQuery, now: u64) -> QueryResult {
@@ -517,7 +536,10 @@ impl AgentCapabilityGraph {
             }
         }
         let matched = matches.len();
-        let matches = rank_and_truncate(matches, query.limit);
+        let bounded_selection = query.limit != 0 && query.limit < matched;
+        let matches = rank_top_k(matches, query.limit, &mut self.perf);
+        self.perf.queries += 1;
+        self.perf.candidates_scanned += scanned as u64;
         QueryResult {
             matches,
             stats: QueryStats {
@@ -525,8 +547,77 @@ impl AgentCapabilityGraph {
                 scanned,
                 matched,
                 nodes_total,
+                bounded_selection,
             },
         }
+    }
+
+    /// 带结果缓存的查询（v1.1.8）：键是**查询指纹**，条目里带图修订号。
+    ///
+    /// 修订号不匹配即视为未命中并作废（计入 `invalidated`）——
+    /// 把修订号放进条目而不是放进键，才能让「失效」这件事被观察到，
+    /// 也不会留下永远取不到的垃圾条目。
+    pub fn query_cached(&mut self, query: &CapabilityQuery, now: u64) -> QueryResult {
+        let key = match query.fingerprint() {
+            Ok(fingerprint) => fingerprint,
+            // 指纹算不出来（例如查询里含非法值）就退化为直接查询，不缓存。
+            Err(_) => return self.query(query, now),
+        };
+        if let Some(hit) = self.query_cache.get(&key, self.revision) {
+            return hit;
+        }
+        let result = self.query(query, now);
+        self.query_cache.insert(key, self.revision, result.clone());
+        result
+    }
+
+    /// 图修订号：每次数据变更 +1。派生状态（索引、查询缓存）都以它为准。
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.saturating_add(1);
+    }
+
+    pub fn query_perf(&self) -> QueryPerf {
+        self.perf
+    }
+
+    pub fn query_cache_stats(&self) -> crate::perf::QueryCacheStats {
+        self.query_cache.stats()
+    }
+
+    pub fn query_cache_capacity(&self) -> usize {
+        self.query_cache.capacity()
+    }
+
+    /// 显式重建索引（修复用途）。正常读写路径**从不**调用它，`index_rebuilds` 可证。
+    pub fn reindex(&mut self) {
+        let mut snapshot: Vec<(Did, Vec<Capability>)> = Vec::new();
+        if !self.own.is_empty() {
+            snapshot.push((self.owner.clone(), self.own.clone()));
+        }
+        for record in self.neighbors.iter() {
+            snapshot.push((record.did.clone(), record.capabilities.clone()));
+        }
+        let mut index = CapabilityIndex::new();
+        crate::perf::rebuild_index(&mut index, &snapshot, &mut self.perf);
+        self.index = index;
+        self.bump_revision();
+    }
+
+    /// 性能证据汇总：全部是操作计数，没有墙钟。
+    pub fn perf_summary(&self) -> Value {
+        json!({
+            "revision": self.revision,
+            "queries": self.perf.to_value(),
+            "index": self.index.to_value(),
+            "query_cache": self.query_cache.to_value(),
+            "neighbor_cache": self.neighbors.stats().to_value(),
+            "live_neighbors": self.neighbors.live_len(u64::MAX),
+            "capabilities": self.capability_count(),
+        })
     }
 
     /// 「谁最适合做 X」：等价于 `limit = 1` 的查询，但意图更明确。

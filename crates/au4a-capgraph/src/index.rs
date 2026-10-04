@@ -291,17 +291,6 @@ pub struct CapabilityMatch {
 }
 
 impl CapabilityMatch {
-    /// 排序键：可靠度降序 → 加权延迟升序 → 价格升序 → DID/槽位（确定性兜底）。
-    fn rank_key(&self) -> (i64, u64, i64, &Did, usize) {
-        (
-            -self.score,
-            self.capability.effective_latency_ms(),
-            self.capability.price_per_unit.get(),
-            &self.did,
-            self.slot,
-        )
-    }
-
     pub fn to_value(&self) -> Value {
         json!({
             "did": self.did.as_str(),
@@ -327,6 +316,8 @@ pub struct QueryStats {
     pub matched: usize,
     /// 整张图里的能力总条数（对照量）。
     pub nodes_total: usize,
+    /// 本查询是否走了「有界 top-k」而不是全排序（v1.1.8 起）。
+    pub bounded_selection: bool,
 }
 
 impl QueryStats {
@@ -336,6 +327,7 @@ impl QueryStats {
             "scanned": self.scanned,
             "matched": self.matched,
             "nodes_total": self.nodes_total,
+            "bounded_selection": self.bounded_selection,
         })
     }
 }
@@ -385,9 +377,12 @@ impl QueryResult {
     }
 }
 
-/// 对候选排序并截断。抽成函数是为了让 v1.1.8 的「有界 top-k」能与之逐位对齐。
-pub(crate) fn rank_and_truncate(mut matches: Vec<CapabilityMatch>, limit: usize) -> Vec<CapabilityMatch> {
-    matches.sort_by(|a, b| a.rank_key().cmp(&b.rank_key()));
+/// 排序与截断的**参考实现**（v1.1.5 起）：全排序后截断。
+///
+/// v1.1.8 的 [`crate::perf::rank_top_k`] 在 `limit < 候选数` 时用有界选择替代它，
+/// 并且必须与它**逐位一致**——这条不变式由 `perf` 模块的测试断言。
+pub fn rank_and_truncate(mut matches: Vec<CapabilityMatch>, limit: usize) -> Vec<CapabilityMatch> {
+    matches.sort_by(|a, b| crate::perf::rank_key(a).cmp(&crate::perf::rank_key(b)));
     if limit > 0 && matches.len() > limit {
         matches.truncate(limit);
     }

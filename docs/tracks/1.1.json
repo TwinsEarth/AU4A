@@ -259,17 +259,39 @@
       "version": "v1.1.8",
       "title": "性能优化",
       "goal": "增量索引维护 + 有界 top-k 选择 + 查询结果缓存，用操作计数而非墙钟证明",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/perf.rs: QueryPerf / rank_top_k（有界选择）/ QueryCache+QueryCacheStats / rebuild_index",
+        "src/graph.rs: revision()/query_cached()/query_perf()/query_cache_stats()/query_cache_capacity()/reindex()/perf_summary()",
+        "src/index.rs: rank_and_truncate 作为全排序参考实现（等价性对照）",
+        "tests/perf.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn rank_top_k(matches: Vec<CapabilityMatch>, k: usize, perf: &mut QueryPerf) -> Vec<CapabilityMatch>",
+        "pub fn AgentCapabilityGraph::query_cached(&mut self, q: &CapabilityQuery, now: u64) -> QueryResult",
+        "pub fn AgentCapabilityGraph::revision(&self) -> u64",
+        "pub fn AgentCapabilityGraph::reindex(&mut self)",
+        "pub fn AgentCapabilityGraph::perf_summary(&self) -> Value",
+        "pub struct QueryPerf { queries, full_sorts, bounded_selections, comparisons, candidates_scanned, index_rebuilds }"
+      ],
+      "acceptance": [
+        "80 邻居×2 能力增量入图：index_rebuilds==0、entries==160、writes==160、索引自洽",
+        "容量 4 缓存淘汰后索引同步（被淘汰邻居不在 providers_of 中）",
+        "64 候选取前 3：bounded_selections==1、full_sorts==0，且与全排序前 3 逐位相同",
+        "rank_top_k 与 rank_and_truncate 结果一致",
+        "同一查询第二次命中；apply 推进修订号后 invalidated==1；只读查询不推进修订号",
+        "缓存容量 0 → 关闭缓存但结果与直接查询一致",
+        "reindex() 使 index_rebuilds==1 且索引仍自洽、查询结果不变",
+        "同一负载两次运行 perf_summary() 逐字节相同（证据不依赖时间）",
+        "scenario.perf: index_rebuilds==0、index.entries==5、bounded_selections>=1、full_sorts>=1、query_cache.misses>=1、query_cache_hit==true"
+      ],
       "evidence": {
-        "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 126,
+        "tests_total": 126,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 57 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + perf 9 + planner 9 + query_index 8 + versioning 9 = 126，0 failed，0 warning。性能以操作计数（扫描/比较/排序/淘汰）为证据，不含任何墙钟读数。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.9",
