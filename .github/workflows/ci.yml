@@ -1,0 +1,124 @@
+name: CI
+
+# 从无到有：本仓库此前没有任何 CI。这个工作流把「本机实测过的事实」变成「每次 push 都被机器复验的事实」。
+#
+# 设计口径（与 README 徽章一致，不吹不藏）：
+#   * fmt    —— 只检查格式，不自动改写；
+#   * test   —— ubuntu + windows 双平台 `cargo test --workspace`（--locked 保证依赖锁定）；
+#   * verify —— 10 条轨道自检 + 端到端 8 Agent 运行 + 只读观察面探针（GET 全通、写方法必须 405）；
+#   * deploy —— Windows 上的真实部署验证脚本 deploy/verify.ps1（构建→自检→端到端→只读面板）。
+# 没有「伪绿」步骤：任何一步失败，工作流就是红的。
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  fmt:
+    name: fmt (rustfmt)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: cargo fmt --all --check
+        run: cargo fmt --all --check
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test --workspace --locked
+        run: cargo test --workspace --locked
+
+  verify:
+    name: verify (10 tracks + e2e + read-only observer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: build node (release)
+        run: cargo build --release --locked -p au4a-node
+      - name: track self-checks (must exit 0)
+        run: ./target/release/au4a-node verify --json | tee verify.json
+      - name: end-to-end run (8 agents, deterministic)
+        run: ./target/release/au4a-node run --agents 8 --json | tee run.json
+      - name: read-only observer probe (GET 200, write methods 405)
+        run: |
+          set -euo pipefail
+          ./target/release/au4a-node run --agents 8 --observe 127.0.0.1:8787 > observer.log 2>&1 &
+          OBS_PID=$!
+          trap 'kill $OBS_PID 2>/dev/null || true' EXIT
+          ready=0
+          for i in $(seq 1 60); do
+            sleep 0.5
+            if curl -fsS -o /dev/null http://127.0.0.1:8787/api/progress; then ready=1; break; fi
+          done
+          if [ "$ready" != "1" ]; then echo "::error::observer did not become ready"; cat observer.log; exit 1; fi
+          for route in / /api/progress /api/results /api/revenue /api/selfcheck /api/tracks; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8787${route}")
+            echo "GET ${route} -> ${code}"
+            test "$code" = "200" || { echo "::error::expected 200 for ${route}, got ${code}"; exit 1; }
+          done
+          for method in POST PUT PATCH DELETE; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X "$method" http://127.0.0.1:8787/api/revenue)
+            echo "${method} /api/revenue -> ${code}"
+            test "$code" = "405" || { echo "::error::observer accepted a write: ${method} -> ${code}"; exit 1; }
+          done
+          echo "只读观察面：6 条 GET 全部 200，4 种写方法全部 405。"
+      - name: job summary
+        if: always()
+        run: |
+          {
+            echo "## AU4A verify"
+            echo ''
+            echo '```json'
+            head -c 2000 verify.json 2>/dev/null || echo '(verify.json missing)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: au4a-verify-evidence
+          path: |
+            verify.json
+            run.json
+            observer.log
+          if-no-files-found: warn
+
+  deploy:
+    name: deploy verify (Windows, deploy/verify.ps1)
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: pwsh -File deploy/verify.ps1
+        shell: pwsh
+        run: ./deploy/verify.ps1 -Agents 8 -Port 8787
