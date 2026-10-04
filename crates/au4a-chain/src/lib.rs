@@ -24,6 +24,7 @@
 pub mod bridge;
 pub mod erc8004;
 pub mod rgb;
+pub mod routing;
 pub mod taproot;
 pub mod testnet;
 pub mod x402;
@@ -40,6 +41,11 @@ pub use erc8004::{
     ReputationSummary, Validation, ERC8004_REFUSALS, ERC8004_SUPPORTED,
 };
 pub use rgb::{RgbAdapter, RgbContract, RgbOutcome, Seal, TransferBundle, RGB_REFUSALS, RGB_SUPPORTED};
+pub use routing::{
+    route as route_settlement, settle as settle_via_rails, DecisionReason as RouteReason, Rail,
+    RailTerms, RouteAction, RouteDecision, RoutingTable, SettlementOutcome, SettlementRequest,
+    Urgency as RouteUrgency, UNSUPPORTED_RAIL_CODE,
+};
 pub use taproot::{
     leaf_hash, merkle_proof, merkle_root, verify_merkle, ProofStep, TaprootAdapter, TaprootAnchor,
     TaprootOutcome, TAPROOT_REFUSALS, TAPROOT_SUPPORTED,
@@ -205,6 +211,45 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("routing.fail_closed_first", || {
+        let table = RoutingTable::default_table();
+        let payer = did_of(31);
+        let payee = did_of(32);
+        let request = SettlementRequest::new(&payer, &payee, 1_000).map_err(|e| e.to_string())?;
+        let normal = routing::route(&request, &table, true).map_err(|e| e.to_string())?;
+        if normal.action != RouteAction::Onchain || normal.rail != Rail::X402 {
+            return Err(format!("最便宜轨应为 x402，实际 {normal:?}"));
+        }
+        if normal.fee != Credits(6) || normal.net != Credits(994) {
+            return Err(format!("费用/到账不符：fee={} net={}", normal.fee, normal.net));
+        }
+        // 双轨不一致 → 一律缓办（即使请求本身完全合格）。
+        let blocked = routing::route(&request, &table, false).map_err(|e| e.to_string())?;
+        if blocked.action != RouteAction::Defer || blocked.reason != RouteReason::ReconciliationFailed {
+            return Err(format!("fail-closed 闸门失效：{blocked:?}"));
+        }
+        // 真正动账也走同一条闸门。
+        let mut ledger = Ledger::new();
+        ledger.mint(&payer, Credits(5_000)).map_err(|e| e.to_string())?;
+        let mut book = BridgeBook::new();
+        let outcome = routing::settle(&mut ledger, &mut book, &request, &table)
+            .map_err(|e| format!("结算失败：{e}"))?;
+        if outcome.moved != Credits(1_000) || !outcome.reconciliation.consistent {
+            return Err(format!("结算结果不符：{outcome:?}"));
+        }
+        ledger.check_conservation().map_err(|e| e.to_string())?;
+        book.require_consistent(&ledger).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "1000 → 最便宜轨 {} 费用 {} 到账 {}；不一致时 {}；实付 1000 后托管 {} == 链上表示 {}",
+            normal.rail.as_str(),
+            normal.fee,
+            normal.net,
+            blocked.reason.as_str(),
+            book.escrowed(),
+            book.chain_supply()
+        ))
+    }));
+
     checks.push(check("chain.dual_track_conservation", || {
         let who = did_of(2);
         let mut ledger = Ledger::new();
@@ -320,7 +365,7 @@ fn adapter_ok<T>(
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}： RGB + Taproot + ERC-8004 + x402（v1.8.4，确定性测试网）"),
+        format!("{TITLE} {RANGE}：RGB + Taproot + ERC-8004 + x402 + 结算路由（v1.8.5，确定性测试网）"),
     );
 
     let alice_keys = agent(81);
@@ -584,6 +629,29 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         ),
     );
 
+    // 结算路由（v1.8.5）：金额/时效/费用阈值选轨；fail-closed 闸门优先。
+    let routing_table = RoutingTable::default_table();
+    let route_req = SettlementRequest::new(&bob, &alice, 400)?;
+    let live_reconciliation = bridge::reconcile(kernel.ledger(), &book)?;
+    let route_decision = routing::route(&route_req, &routing_table, live_reconciliation.consistent)?;
+    // 把「双轨不一致」这个输入显式喂给决策表，验证它第一优先级就缓办（纯函数，不动账）。
+    let blocked_decision = routing::route(&route_req, &routing_table, false)?;
+    if blocked_decision.action != RouteAction::Defer {
+        return Err(CoreError::InvalidKind);
+    }
+    kernel.emit(
+        "chain.routed",
+        format!(
+            "400 → {} 走 {}（费用 {} 到账 {}，eta {} tick）；双轨不一致时决策 = {}",
+            route_decision.action.as_str(),
+            route_decision.rail.as_str(),
+            route_decision.fee,
+            route_decision.net,
+            route_decision.eta_ticks,
+            blocked_decision.reason.as_str()
+        ),
+    );
+
     // 双轨对账（fail-closed）：本地托管 == 链上表示 == RGB 流通量 == Taproot 锚定总量。
     let report = book.require_consistent(kernel.ledger())?;
     rgb.contract()?.check_supply_conservation()?;
@@ -601,7 +669,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.8.4 RGB + Taproot Assets + ERC-8004 + x402（确定性测试网）",
+        "scenario": "v1.8.5 RGB + Taproot + ERC-8004 + x402 + 结算路由（确定性测试网）",
         "agents": [alice.as_str(), bob.as_str()],
         "bridge": {
             "out": bridged,
@@ -656,6 +724,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "settled": x402.is_settled(&invoice.id),
             "escrow_after_claim": book.escrowed(),
             "chain_supply_after_claim": book.chain_supply(),
+        },
+        "routing": {
+            "table": routing_table,
+            "decision": route_decision.to_json(),
+            "blocked_decision": blocked_decision.to_json(),
+            "reconciliation": live_reconciliation,
         },
         "refusals": [
             { "op": early_refusal.op, "code": early_refusal.code.as_str(), "detail": early_refusal.detail },
@@ -716,6 +790,17 @@ mod tests {
         assert_eq!(a["x402"]["escrow_before_claim"], json!(100));
         assert_eq!(a["x402"]["escrow_after_claim"], json!(400));
         assert_eq!(a["x402"]["chain_supply_after_claim"], json!(400));
+        // 结算路由：400 → x402（60bp → 费用 2、到账 398、eta 12）；双轨不一致 → 缓办。
+        assert_eq!(a["routing"]["decision"]["action"], json!("onchain"));
+        assert_eq!(a["routing"]["decision"]["rail"], json!("x402"));
+        assert_eq!(a["routing"]["decision"]["fee"], json!(2));
+        assert_eq!(a["routing"]["decision"]["net"], json!(398));
+        assert_eq!(a["routing"]["decision"]["eta_ticks"], json!(12));
+        assert_eq!(a["routing"]["blocked_decision"]["action"], json!("defer"));
+        assert_eq!(
+            a["routing"]["blocked_decision"]["reason"],
+            json!("reconciliation_failed")
+        );
         // 锁定 = 注册质押 100 + 桥出托管 400 = 500。
         assert_eq!(a["conservation"]["locked"], json!(500));
         first.ledger().check_conservation().unwrap();

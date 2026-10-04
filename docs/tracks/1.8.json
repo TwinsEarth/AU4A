@@ -134,6 +134,37 @@
         "notes": "无真实 HTTP、无真实结算层；发票/支付/领取为本地确定性状态机；日志 _forangent\\logs\\1.8-v1.8.4.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.5",
+      "title": "结算路由",
+      "goal": "按金额/时效/费用阈值在 internal/rgb/taproot/x402 之间选路；fail-closed 为决策表第一优先级；结算前中后各对账一次。",
+      "deliverables": [
+        "src/routing.rs: Rail / Urgency / RouteAction / DecisionReason / RailTerms / RoutingTable / SettlementRequest / RouteDecision / SettlementOutcome / route / settle",
+        "src/lib.rs: 自检 routing.fail_closed_first + 场景 routing 段（400 → x402 决策 + 不一致时缓办）"
+      ],
+      "interfaces": [
+        "pub fn route(request: &SettlementRequest, table: &RoutingTable, reconciliation_ok: bool) -> CoreResult<RouteDecision>",
+        "pub fn settle(ledger: &mut Ledger, book: &mut BridgeBook, request: &SettlementRequest, table: &RoutingTable) -> CoreResult<SettlementOutcome>",
+        "pub enum Rail { Internal, Rgb, Taproot, X402 }",
+        "pub fn RoutingTable::default_table() -> RoutingTable"
+      ],
+      "acceptance": [
+        "双轨不一致 → defer/reconciliation_failed（费用 0、到账不变），即使请求本身完全合格",
+        "1000 → 最便宜轨 x402（60bp）：费用 6、到账 994、eta 12；偏好 RGB 合格时走 RGB（费用 8）",
+        "时效 9 → deadline_too_tight（required_slack=30、eta=0）；费率上限 50bp → fee_above_threshold；2000000 → rail_unavailable；零额 → ZeroAmount",
+        "链上结算：托管 1000 == 链上表示 1000，桥回后双轨归零、收款方 +1000、守恒成立",
+        "内部结算不动链上轨；故障注入后 settle 返回 Err 且账本无新动账；缓办时 LedgerView 不变",
+        "4 金额 × 4 时效的决策可复现且 JSON 无浮点（grade=cpu-proto）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-chain)",
+        "tests_passed": 63,
+        "tests_total": 63,
+        "grade": "cpu-proto",
+        "notes": "路由与账务为真实整数逻辑；链上仍是确定性测试网；日志 _forangent\\logs\\1.8-v1.8.5.log"
+      },
+      "status": "done"
     }
   ]
 }
