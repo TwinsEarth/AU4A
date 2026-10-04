@@ -20,10 +20,14 @@ AU4A 是对 [agent-universe](https://github.com/TwinsEarth/agent-universe)（及
 ## 快速开始
 
 ```bash
+# 方式一：作为 npm 依赖（已实测可安装）
+npm install github:TwinsEarth/agent-universeForAngent   # 或发布至 npm 后 @twinsearth/agent-universe-for-angent@1.9.9
+
+# 方式二：克隆源码
 git clone https://github.com/TwinsEarth/agent-universeForAngent.git
 cd agent-universeForAngent
 npm install          # 自动安装参考项目 SDK @twinsearth/agent-universe@3.7.8（结算引擎）
-npm test             # node:test 全量回归
+npm test             # node:test 全量回归（35/35）
 npm run demo         # 端到端：Agent 自治经济体演示
 ```
 
