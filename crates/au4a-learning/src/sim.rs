@@ -16,6 +16,8 @@
 //! 由本文件的常量定义。因此「学习带来提升」这句话的含义是：
 //! **在这个合成环境里、相对未学习的初始策略，提升是可测量的**——不是真实网络的绩效数据。
 
+use std::collections::BTreeMap;
+
 use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Credits, Did, SelfCheck};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,7 +25,7 @@ use serde_json::Value;
 use crate::experience::{Experience, ExperienceStore, Outcome};
 use crate::feedback::{FeedbackAnalyser, MIN_SAMPLES};
 use crate::model::{LearningModel, UpdateRecord};
-use crate::policy::{adjust, PolicyBounds, PolicyParams, PolicyTargets};
+use crate::policy::{adjust, PolicyAdjustment, PolicyBounds, PolicyParams, PolicyTargets};
 use crate::rng::{hash_below, hash_bp};
 use crate::signal::{LearningSignal, SignalWeights};
 use crate::violation::{Violation, ViolationLog};
@@ -112,6 +114,12 @@ pub struct MarketConfig {
     pub noise_span_bp: i64,
     /// `true` = 学习组；`false` = 对照组（参数冻结在初始策略）。
     pub learn: bool,
+    /// 是否允许学习**定价**（消融实验用）。
+    pub learn_price: bool,
+    /// 是否允许学习**任务选择偏好**（消融实验用）。
+    pub learn_task: bool,
+    /// 是否允许学习**协作对象偏好**（消融实验用）。
+    pub learn_peer: bool,
 }
 
 impl Default for MarketConfig {
@@ -123,6 +131,9 @@ impl Default for MarketConfig {
             peers: 8,
             noise_span_bp: 1_200,
             learn: true,
+            learn_price: true,
+            learn_task: true,
+            learn_peer: true,
         }
     }
 }
@@ -135,6 +146,10 @@ impl MarketConfig {
             || self.peers > 16
             || self.noise_span_bp < 0
         {
+            return Err(CoreError::InvalidKind);
+        }
+        if self.learn && !(self.learn_price || self.learn_task || self.learn_peer) {
+            // 学习打开但三个杠杆全被屏蔽 = 配置自相矛盾（会得到与对照组相同的轨迹）
             return Err(CoreError::InvalidKind);
         }
         Ok(())
@@ -466,14 +481,21 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
         )?;
         let mut record: Option<UpdateRecord> = None;
         if config.learn && adjustment.changed {
-            // 意图由模型更新落地：学习率缩放 → 阻尼 → 动量 → 遗忘 → 漂移钳制。
-            let applied = model.apply(&adjustment)?;
-            prev_dir = if applied.price_drift_bp == 0 {
-                prev_dir
-            } else {
-                applied.price_drift_bp.signum()
-            };
-            record = Some(applied);
+            // 消融：按配置屏蔽某些策略杠杆（掩码后的意图才交给模型更新）
+            let masked = mask_adjustment(&adjustment, config);
+            let any_lever = masked.price_moved_bp != 0
+                || !masked.task_bias_moved_bp.is_empty()
+                || !masked.peer_bias_moved_bp.is_empty();
+            if any_lever {
+                // 意图由模型更新落地：学习率缩放 → 阻尼 → 动量 → 遗忘 → 漂移钳制。
+                let applied = model.apply(&masked)?;
+                prev_dir = if applied.price_drift_bp == 0 {
+                    prev_dir
+                } else {
+                    applied.price_drift_bp.signum()
+                };
+                record = Some(applied);
+            }
         }
         prev_reward = reward_ema;
 
@@ -557,6 +579,30 @@ fn ratio_bp(part: i64, whole: i64) -> i64 {
         0
     } else {
         part.saturating_mul(10_000) / whole
+    }
+}
+
+/// 按 `MarketConfig` 的掩码裁掉某些策略杠杆（消融实验用）。`reasons` 原样保留，便于核对。
+fn mask_adjustment(adjustment: &PolicyAdjustment, config: &MarketConfig) -> PolicyAdjustment {
+    PolicyAdjustment {
+        next: adjustment.next.clone(),
+        changed: adjustment.changed,
+        price_moved_bp: if config.learn_price {
+            adjustment.price_moved_bp
+        } else {
+            0
+        },
+        task_bias_moved_bp: if config.learn_task {
+            adjustment.task_bias_moved_bp.clone()
+        } else {
+            BTreeMap::new()
+        },
+        peer_bias_moved_bp: if config.learn_peer {
+            adjustment.peer_bias_moved_bp.clone()
+        } else {
+            BTreeMap::new()
+        },
+        reasons: adjustment.reasons.clone(),
     }
 }
 
