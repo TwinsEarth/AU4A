@@ -312,7 +312,7 @@ fn self_check_results_and_scenario_expose_the_vote_math() {
     assert_eq!(results["voting"]["outcome"], "passed");
     assert_eq!(results["voting"]["quorum"], 4);
     assert_eq!(results["voting"]["n"], 5);
-    assert_eq!(results["proposal"]["state"], "executed");
+    assert_eq!(results["proposal"]["state"], "passed");
 
     let mut kernel = Kernel::new(KernelConfig::default());
     let scenario = au4a_council::scenario(&mut kernel).expect("scenario");
@@ -321,5 +321,5 @@ fn self_check_results_and_scenario_expose_the_vote_math() {
     assert_eq!(scenario["voting"]["yes"], 4);
     assert_eq!(scenario["voting"]["quorum"], 4);
     assert_eq!(scenario["voting"]["voters"].as_array().map(|v| v.len()), Some(4));
-    assert_eq!(scenario["proposals"][0]["state"], "executed");
+    assert_eq!(scenario["proposals"][0]["state"], "passed");
 }

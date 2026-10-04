@@ -75,6 +75,42 @@
         "notes": "EXIT=0；单元 16 + election 8 + proposal 10 + doc-tests 3（2 compile_fail + 1 正例），0 warning"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.3",
+      "title": "表决机制",
+      "goal": "BFT-lite 法定人数表决（n≥3f+1、quorum=n-f），重复投票被拒，模棱两可双签作废整轮",
+      "deliverables": [
+        "src/voting.rs: Choice/Vote 签名票/Tally 计票/RoundOutcome/VotingRound/RoundState",
+        "src/lib.rs: Council::open_round / cast_vote / round / current_round / rounds + 私有 apply_state",
+        "tests/voting.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum Choice { Yes, No, Abstain }",
+        "pub struct Vote { voter, proposal, round, choice, sig }",
+        "pub struct Tally { yes, no, abstain, participation, n, f, quorum }",
+        "pub enum RoundOutcome { Pending, Passed, Rejected, VoidAmbiguous }",
+        "pub fn Council::open_round(&mut self, &mut Kernel, &str) -> CoreResult<RoundState>",
+        "pub fn Council::cast_vote(&mut self, &mut Kernel, Vote) -> CoreResult<RoundState>"
+      ],
+      "acceptance": [
+        "n=4 → f=1 quorum=3，第 3 张赞成票出结论",
+        "n=7=3f+1 → f=2 quorum=5=2f+1，缺席 2 人仍出结论",
+        "no≥quorum → rejected；全票弃权不产生结论",
+        "同轮同选择重复投票被拒且本轮票数不变",
+        "双签 → void_ambiguous 整轮作废、动议回 open、作废轮不再收票、重开可通过、留痕",
+        "非委员投票 → unauthorized（单次即恶意）",
+        "篡改签名 → InvalidSignature；未来轮次/已关闭轮次 → InvalidVersion（stale_epoch）",
+        "计票自洽：票数守恒、participation≤n、yes/no 不可能同时达法定人数"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 51,
+        "tests_total": 51,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + doc-tests 3，本 crate 0 warning"
+      },
+      "status": "done"
     }
   ]
 }

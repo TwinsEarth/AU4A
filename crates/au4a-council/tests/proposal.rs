@@ -333,12 +333,12 @@ fn self_check_results_and_scenario_cover_the_proposal_flow() {
     assert!(checks.iter().any(|c| c.name == "council.proposals.content_addressed"));
 
     let results = au4a_council::results_json().expect("results");
-    assert_eq!(results["proposal"]["state"], "open");
+    assert_eq!(results["proposal"]["state"], "passed");
     assert_eq!(results["election"]["reproducible"], true);
 
     let mut kernel = Kernel::new(KernelConfig::default());
     let scenario = au4a_council::scenario(&mut kernel).expect("scenario");
-    assert_eq!(scenario["proposals"][0]["state"], "open");
+    assert_eq!(scenario["proposals"][0]["state"], "passed");
     assert_eq!(scenario["human_view"]["proposals"], 1);
     assert_eq!(scenario["sock_elected"], 0);
 }

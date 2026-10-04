@@ -25,6 +25,7 @@ pub mod committee;
 pub mod election;
 pub mod human;
 pub mod proposal;
+pub mod voting;
 
 pub use committee::{Committee, CommitteeKind, Member, COMMITTEE_COUNT};
 pub use election::{
@@ -33,6 +34,7 @@ pub use election::{
 };
 pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
 pub use proposal::{Action, AgentIdentity, Proposal, ProposalDraft, ProposalState};
+pub use voting::{Choice, RoundOutcome, RoundState, Tally, Vote, VotingRound};
 
 use std::collections::BTreeMap;
 
@@ -102,6 +104,7 @@ pub struct Council {
     elections: Vec<ElectionOutcome>,
     proposals: BTreeMap<String, Proposal>,
     proposal_order: Vec<String>,
+    rounds: BTreeMap<(String, u32), VotingRound>,
     events: Vec<CouncilEvent>,
 }
 
@@ -118,6 +121,7 @@ impl Council {
             elections: Vec::new(),
             proposals: BTreeMap::new(),
             proposal_order: Vec::new(),
+            rounds: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -408,6 +412,13 @@ impl Council {
         id: &str,
         next: ProposalState,
     ) -> CoreResult<Proposal> {
+        self.clock.tick();
+        self.apply_state(kernel, id, next)?;
+        self.proposals.get(id).cloned().ok_or(CoreError::UnknownAgent)
+    }
+
+    /// 状态落地的唯一内部路径：先过状态机，再记账。
+    fn apply_state(&mut self, kernel: &mut Kernel, id: &str, next: ProposalState) -> CoreResult<()> {
         let (state, author) = match self.proposals.get(id) {
             Some(p) => (p.state, p.author.clone()),
             None => return Err(CoreError::UnknownAgent),
@@ -420,20 +431,253 @@ impl Council {
             );
             return Err(CoreError::InvalidKind);
         }
-        self.clock.tick();
-        let updated = match self.proposals.get_mut(id) {
-            Some(p) => {
-                p.state = next;
-                p.clone()
-            }
+        match self.proposals.get_mut(id) {
+            Some(p) => p.state = next,
             None => return Err(CoreError::UnknownAgent),
-        };
+        }
         kernel.emit(
             "council.proposal.state",
             format!("{} {} -> {}", au4a_core::short_id(id), state.as_str(), next.as_str()),
         );
         self.record_event("proposal.state", id, format!("{} -> {}", state.as_str(), next.as_str()));
-        Ok(updated)
+        Ok(())
+    }
+
+    /// 为一条处于 `open` 的动议开启新一轮表决，返回本轮快照。
+    ///
+    /// 被拒绝的情形：动议不存在、动议不在 `open`、受理委员会没有表决资格（含 0 席委员会）。
+    pub fn open_round(&mut self, kernel: &mut Kernel, proposal_id: &str) -> CoreResult<RoundState> {
+        let (committee_kind, state, current_round, author) = match self.proposals.get(proposal_id) {
+            Some(p) => (p.committee, p.state, p.round, p.author.clone()),
+            None => return Err(CoreError::UnknownAgent),
+        };
+        if state != ProposalState::Open {
+            kernel.refuse(
+                &author,
+                RefusalCode::Conflict,
+                format!("cannot open a round for a {} proposal", state.as_str()),
+            );
+            return Err(CoreError::InvalidKind);
+        }
+        let (seats, quorum, fault_bound) = match self.committees.get(&committee_kind) {
+            Some(c) if c.is_bft_consistent() => (c.size(), c.quorum(), c.fault_bound()),
+            Some(_) => {
+                kernel.refuse(&author, RefusalCode::PolicyDenied, "committee has no voting capacity");
+                return Err(CoreError::InvalidKind);
+            }
+            None => {
+                kernel.refuse(&author, RefusalCode::StaleEpoch, "no committee of that kind is seated");
+                return Err(CoreError::UnknownAgent);
+            }
+        };
+        let round = current_round.saturating_add(1);
+        let at = self.clock.tick();
+        let voting_round = VotingRound {
+            proposal: proposal_id.to_string(),
+            committee: committee_kind,
+            round,
+            n: seats,
+            f: fault_bound,
+            quorum,
+            votes: BTreeMap::new(),
+            outcome: RoundOutcome::Pending,
+            opened_at: at,
+        };
+        if let Some(p) = self.proposals.get_mut(proposal_id) {
+            p.round = round;
+        }
+        self.rounds
+            .insert((proposal_id.to_string(), round), voting_round.clone());
+        kernel.emit(
+            "council.vote.open",
+            format!(
+                "{} round={} n={} f={} quorum={}",
+                au4a_core::short_id(proposal_id),
+                round,
+                seats,
+                fault_bound,
+                quorum
+            ),
+        );
+        self.record_event(
+            "vote.open",
+            proposal_id,
+            format!("round={round} n={seats} f={fault_bound} quorum={quorum}"),
+        );
+        Ok(voting_round.state())
+    }
+
+    /// 投一张表决票。
+    ///
+    /// 具名失败模式：
+    /// * 签名/委员资格不成立 → [`CoreError::InvalidSignature`] + `unauthorized`（单次即恶意证据）；
+    /// * 轮次不匹配或轮次已关闭 → [`CoreError::InvalidVersion`] + `stale_epoch`；
+    /// * 同轮同选择重复投票 → [`CoreError::DuplicateAgent`] + `conflict`（本轮不受影响）；
+    /// * 同轮不同选择（模棱两可/双签）→ [`CoreError::DuplicateAgent`] + `conflict`，
+    ///   **整轮作废**（`void_ambiguous`），已投票全部不计入结论，必须重开一轮。
+    pub fn cast_vote(&mut self, kernel: &mut Kernel, vote: Vote) -> CoreResult<RoundState> {
+        let (committee_kind, proposal_round, proposal_state) = match self.proposals.get(&vote.proposal) {
+            Some(p) => (p.committee, p.round, p.state),
+            None => return Err(CoreError::UnknownAgent),
+        };
+        if let Err(err) = vote.verify() {
+            kernel.refuse(&vote.voter, RefusalCode::Unauthorized, format!("vote signature: {err}"));
+            return Err(err);
+        }
+        let seated = self
+            .committees
+            .get(&committee_kind)
+            .map(|c| c.has_member(&vote.voter))
+            .unwrap_or(false);
+        if !seated {
+            kernel.refuse(&vote.voter, RefusalCode::Unauthorized, "voter is not a seated member");
+            return Err(CoreError::InvalidSignature);
+        }
+        // 轮次不匹配或轮次已关闭 → 竞争语义（stale_epoch），不升级为恶意。
+        if proposal_round == 0 || vote.round != proposal_round {
+            kernel.refuse(
+                &vote.voter,
+                RefusalCode::StaleEpoch,
+                format!("vote for round {} but the current round is {proposal_round}", vote.round),
+            );
+            return Err(CoreError::InvalidVersion);
+        }
+        let key = (vote.proposal.clone(), vote.round);
+        let (exists, closed) = match self.rounds.get(&key) {
+            Some(r) => (true, r.outcome.is_closed()),
+            None => (false, true),
+        };
+        if !exists {
+            kernel.refuse(&vote.voter, RefusalCode::StaleEpoch, "no such voting round");
+            return Err(CoreError::InvalidVersion);
+        }
+        if closed {
+            kernel.refuse(&vote.voter, RefusalCode::StaleEpoch, "voting round is closed");
+            return Err(CoreError::InvalidVersion);
+        }
+        // 轮次还开着但动议已不在待表决状态（被否决阻断 / 已执行）→ 协议冲突。
+        if proposal_state != ProposalState::Open {
+            kernel.refuse(
+                &vote.voter,
+                RefusalCode::Conflict,
+                format!("proposal is {}", proposal_state.as_str()),
+            );
+            return Err(CoreError::InvalidKind);
+        }
+        let previous = self
+            .rounds
+            .get(&key)
+            .and_then(|r| r.votes.get(vote.voter.as_str()))
+            .map(|v| v.choice);
+        if let Some(previous) = previous {
+            self.clock.tick();
+            if previous == vote.choice {
+                kernel.refuse(&vote.voter, RefusalCode::Conflict, "duplicate vote in the same round");
+                return Err(CoreError::DuplicateAgent);
+            }
+            if let Some(round) = self.rounds.get_mut(&key) {
+                round.outcome = RoundOutcome::VoidAmbiguous;
+                round.votes.insert(vote.voter.as_str().to_string(), vote.clone());
+            }
+            kernel.refuse(&vote.voter, RefusalCode::Conflict, "ambiguous double vote: round voided");
+            kernel.emit(
+                "council.vote.void",
+                format!(
+                    "{} round={} 双签作废（{} vs {}）",
+                    au4a_core::short_id(&vote.proposal),
+                    vote.round,
+                    previous.as_str(),
+                    vote.choice.as_str()
+                ),
+            );
+            self.record_event(
+                "vote.void",
+                &vote.proposal,
+                format!(
+                    "round={} voter={} {} vs {} 本轮作废",
+                    vote.round,
+                    au4a_core::short_id(vote.voter.as_str()),
+                    previous.as_str(),
+                    vote.choice.as_str()
+                ),
+            );
+            return Err(CoreError::DuplicateAgent);
+        }
+
+        self.clock.tick();
+        match self.rounds.get_mut(&key) {
+            Some(round) => {
+                round.votes.insert(vote.voter.as_str().to_string(), vote.clone());
+                let outcome = round.tally().outcome();
+                round.outcome = outcome;
+            }
+            None => return Err(CoreError::InvalidVersion),
+        }
+        let state = match self.rounds.get(&key) {
+            Some(round) => round.state(),
+            None => return Err(CoreError::InvalidVersion),
+        };
+        self.record_event(
+            "vote.cast",
+            &vote.proposal,
+            format!(
+                "round={} {} yes={} no={} abstain={} participation={}/{} quorum={}",
+                state.round,
+                vote.choice.as_str(),
+                state.tally.yes,
+                state.tally.no,
+                state.tally.abstain,
+                state.tally.participation,
+                state.tally.n,
+                state.tally.quorum
+            ),
+        );
+        match state.outcome {
+            RoundOutcome::Passed => {
+                self.apply_state(kernel, &vote.proposal, ProposalState::Passed)?;
+                kernel.emit(
+                    "council.vote.passed",
+                    format!(
+                        "{} round={} yes={} quorum={}",
+                        au4a_core::short_id(&vote.proposal),
+                        state.round,
+                        state.tally.yes,
+                        state.tally.quorum
+                    ),
+                );
+            }
+            RoundOutcome::Rejected => {
+                self.apply_state(kernel, &vote.proposal, ProposalState::Rejected)?;
+                kernel.emit(
+                    "council.vote.rejected",
+                    format!(
+                        "{} round={} no={} quorum={}",
+                        au4a_core::short_id(&vote.proposal),
+                        state.round,
+                        state.tally.no,
+                        state.tally.quorum
+                    ),
+                );
+            }
+            RoundOutcome::Pending | RoundOutcome::VoidAmbiguous => {}
+        }
+        Ok(state)
+    }
+
+    /// 读某一轮表决的快照。
+    pub fn round(&self, proposal_id: &str, round: u32) -> Option<RoundState> {
+        self.rounds.get(&(proposal_id.to_string(), round)).map(|r| r.state())
+    }
+
+    /// 读动议当前轮次的快照。
+    pub fn current_round(&self, proposal_id: &str) -> Option<RoundState> {
+        let round = self.proposals.get(proposal_id)?.round;
+        self.round(proposal_id, round)
+    }
+
+    /// 全部表决轮次（按动议 id、轮次升序）。
+    pub fn rounds(&self) -> impl Iterator<Item = &VotingRound> {
+        self.rounds.values()
     }
 
     /// 治理层自检（v1.7.2 覆盖选举、席位与动议；后续版本追加表决、否决、审计）。
@@ -503,6 +747,61 @@ impl Council {
             )
         } else {
             SelfCheck::fail(TRACK, "council.events.monotonic", "治理事件日志的时刻倒退")
+        });
+
+        // 表决不变式：计票自洽、投票人只能是在任委员、结论必须与动议状态一致。
+        let rounds = self.rounds.len();
+        let tallies_ok = self.rounds.values().all(|r| r.tally().is_consistent());
+        checks.push(if tallies_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.votes.tally_consistent",
+                format!("{rounds} 轮表决的计票自洽（票数守恒、无人重复计入、yes/no 不可能同时达法定人数）"),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.votes.tally_consistent", "存在自相矛盾的计票")
+        });
+        let members_only = self.rounds.values().all(|r| {
+            let committee = self.committees.get(&r.committee);
+            r.votes.keys().all(|did| match (Did::parse(did), committee) {
+                (Ok(did), Some(c)) => c.has_member(&did),
+                _ => false,
+            })
+        });
+        checks.push(if members_only {
+            SelfCheck::pass(
+                TRACK,
+                "council.votes.members_only",
+                format!("{rounds} 轮表决的所有投票人都是对应委员会的在任委员"),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.votes.members_only", "存在非委员投票")
+        });
+        let decided_ok = self.rounds.values().all(|r| match r.outcome {
+            RoundOutcome::Passed => self
+                .proposals
+                .get(&r.proposal)
+                .map(|p| matches!(p.state, ProposalState::Passed | ProposalState::Executed | ProposalState::Blocked))
+                .unwrap_or(false),
+            RoundOutcome::Rejected => self
+                .proposals
+                .get(&r.proposal)
+                .map(|p| p.state == ProposalState::Rejected)
+                .unwrap_or(false),
+            RoundOutcome::Pending | RoundOutcome::VoidAmbiguous => true,
+        });
+        checks.push(if decided_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.rounds.decided_matches_proposal",
+                format!("{rounds} 轮表决的结论与动议状态一致（作废轮不产生结论）"),
+            )
+        } else {
+            SelfCheck::fail(
+                TRACK,
+                "council.rounds.decided_matches_proposal",
+                "存在与动议状态不一致的表决结论",
+            )
         });
         checks
     }
@@ -589,6 +888,43 @@ struct Build {
     agents: Vec<AgentKeys>,
     sock_dids: Vec<Did>,
     proposal: Proposal,
+    round: RoundState,
+}
+
+/// 按 DID 找回该 Agent 的密钥（建场与 scenario 共用）。
+fn keys_for<'a>(agents: &'a [AgentKeys], did: &Did) -> Option<&'a AgentKeys> {
+    agents.iter().find(|k| &k.did() == did)
+}
+
+/// 让受理委员会全体在任委员投赞成票，直到本轮出结论。
+///
+/// 返回最后一次投票后的轮次快照（若委员会人数不足或有人缺席，可能仍是 `pending`）。
+fn vote_yes_all(
+    kernel: &mut Kernel,
+    council: &mut Council,
+    agents: &[AgentKeys],
+    proposal_id: &str,
+) -> CoreResult<RoundState> {
+    let round = council.open_round(kernel, proposal_id)?;
+    let members = council
+        .proposal(proposal_id)
+        .and_then(|p| council.committee(p.committee))
+        .map(|c| c.member_dids())
+        .unwrap_or_default();
+    let mut state = round;
+    for did in &members {
+        if state.outcome.is_closed() {
+            // 本轮已经出结论：后面的票不必再发（发了也会按 stale_epoch 拒绝）。
+            break;
+        }
+        let keys = match keys_for(agents, did) {
+            Some(k) => k,
+            None => continue,
+        };
+        let vote = Vote::cast(keys, proposal_id, state.round, Choice::Yes)?;
+        state = council.cast_vote(kernel, vote)?;
+    }
+    Ok(state)
 }
 
 fn build_full() -> CoreResult<Build> {
@@ -613,6 +949,7 @@ fn build_full() -> CoreResult<Build> {
         Action::SetPolicy { key: String::from("cpu_proto_settle_cap"), value: 250 },
     )?;
     let proposal = council.propose(&mut kernel, &identity, draft)?;
+    let round = vote_yes_all(&mut kernel, &mut council, &agents, &proposal.id)?;
 
     Ok(Build {
         kernel,
@@ -620,6 +957,7 @@ fn build_full() -> CoreResult<Build> {
         agents,
         sock_dids: socks.iter().map(|k| k.did()).collect(),
         proposal,
+        round,
     })
 }
 
@@ -692,18 +1030,42 @@ pub fn self_check() -> Vec<SelfCheck> {
                     format!("刷票未完全被拦：当选空壳 {sock_elected}，忽略票 {ignored}"),
                 )
             });
-            checks.push(if a.council.proposal(&a.proposal.id).is_some() && a.proposal.state == ProposalState::Open {
+            let live_state = a.council.proposal(&a.proposal.id).map(|p| p.state);
+            checks.push(if live_state == Some(ProposalState::Passed) {
                 SelfCheck::pass(
                     TRACK,
                     "council.proposal.agent_only",
                     format!(
-                        "动议 {} 由委员 {} 签名提交并处于 open 状态（人类观察者无 propose 方法，见 compile_fail 文档测试）",
+                        "动议 {} 由委员 {} 签名提交并已表决通过（人类观察者无 propose 方法，见 compile_fail 文档测试）",
                         au4a_core::short_id(&a.proposal.id),
                         au4a_core::short_id(a.proposal.author.as_str())
                     ),
                 )
             } else {
-                SelfCheck::fail(TRACK, "council.proposal.agent_only", "委员动议未能提交")
+                SelfCheck::fail(TRACK, "council.proposal.agent_only", "委员动议未能提交或未通过")
+            });
+            checks.push(if a.round.outcome == RoundOutcome::Passed
+                && a.round.tally.yes >= a.round.tally.quorum
+                && a.round.tally.quorum == a.round.tally.n - a.round.tally.f
+            {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.vote.quorum",
+                    format!(
+                        "资源委员会第 {} 轮：n={} f={} quorum={} yes={} → passed",
+                        a.round.round,
+                        a.round.tally.n,
+                        a.round.tally.f,
+                        a.round.tally.quorum,
+                        a.round.tally.yes
+                    ),
+                )
+            } else {
+                SelfCheck::fail(
+                    TRACK,
+                    "council.vote.quorum",
+                    format!("表决未按 BFT-lite 法定人数出结论：{:?}", a.round.outcome),
+                )
             });
             checks.extend(a.council.checks());
         }
@@ -740,7 +1102,17 @@ pub fn results_json() -> CoreResult<Value> {
         "proposal": {
             "id": run.proposal.id,
             "author": run.proposal.author.as_str(),
-            "state": run.proposal.state.as_str(),
+            "state": run.council.proposal(&run.proposal.id).map(|p| p.state.as_str()).unwrap_or("unknown"),
+        },
+        "voting": {
+            "round": run.round.round,
+            "outcome": run.round.outcome.as_str(),
+            "n": run.round.tally.n,
+            "f": run.round.tally.f,
+            "quorum": run.round.tally.quorum,
+            "yes": run.round.tally.yes,
+            "no": run.round.tally.no,
+            "abstain": run.round.tally.abstain,
         },
         "events": run.council.events().len(),
         "agents_enrolled": run.agents.len(),
@@ -776,6 +1148,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         Action::SetPolicy { key: String::from("cpu_proto_settle_cap"), value: 250 },
     )?;
     let proposal = council.propose(kernel, &identity, draft)?;
+    // 表决：受理委员会按 BFT-lite 法定人数出结论。
+    let round = vote_yes_all(kernel, &mut council, &agents, &proposal.id)?;
 
     // 人类只观察：拿到的只是一个值，没有任何写入口。
     let human = HumanObserver::new("operator");
@@ -807,9 +1181,11 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "五类委员会 {} 席；动议 {} 由 Agent 提交；观察者只读看到 {} 条动议",
+            "五类委员会 {} 席；动议 {} 由 Agent 提交并经第 {} 轮表决（{}）；观察者只读看到 {} 条动议",
             seats,
             au4a_core::short_id(&proposal.id),
+            round.round,
+            round.outcome.as_str(),
             view.proposals.len()
         ),
     );
@@ -829,9 +1205,21 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "title": proposal.title,
             "committee": proposal.committee.as_str(),
             "author": proposal.author.as_str(),
-            "state": proposal.state.as_str(),
+            "state": council.proposal(&proposal.id).map(|p| p.state.as_str()).unwrap_or("unknown"),
             "action": proposal.action.describe(),
         }],
+        "voting": {
+            "round": round.round,
+            "outcome": round.outcome.as_str(),
+            "n": round.tally.n,
+            "f": round.tally.f,
+            "quorum": round.tally.quorum,
+            "yes": round.tally.yes,
+            "no": round.tally.no,
+            "abstain": round.tally.abstain,
+            "participation": round.tally.participation,
+            "voters": round.votes.iter().map(|(did, choice)| json!({"did": did, "choice": choice.as_str()})).collect::<Vec<_>>(),
+        },
         "human_view": {
             "label": view.label,
             "seats_filled": view.seats_filled,
