@@ -114,3 +114,35 @@ export class Migrator {
     return true;
   }
 }
+
+// —— v1.3.6 增量快照：块级 diff ——
+// 只传输变更块（set/del），大状态迁移体积显著下降；可逐块校验后合并。
+
+/** 计算两块状态的块级差异（files/memory/context 三区） */
+export function diffState(prev, next) {
+  const diff = {
+    files: { set: {}, del: [] },
+    memory: { set: {}, del: [] },
+    context: { set: {}, del: [] },
+  };
+  for (const sec of ['files', 'memory', 'context']) {
+    const p = prev[sec] || {};
+    const n = next[sec] || {};
+    const keys = new Set([...Object.keys(p), ...Object.keys(n)]);
+    for (const k of keys) {
+      if (!(k in n)) diff[sec].del.push(k);
+      else if (JSON.stringify(p[k]) !== JSON.stringify(n[k])) diff[sec].set[k] = n[k];
+    }
+  }
+  return diff;
+}
+
+/** 在基线上应用差异，返回新状态（不修改基线） */
+export function applyDiff(base, diff) {
+  const out = JSON.parse(JSON.stringify(base));
+  for (const sec of ['files', 'memory', 'context']) {
+    for (const k of diff[sec].del) delete out[sec][k];
+    Object.assign(out[sec], diff[sec].set);
+  }
+  return out;
+}
