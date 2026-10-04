@@ -25,6 +25,7 @@ pub mod committee;
 pub mod election;
 pub mod execution;
 pub mod human;
+pub mod ongov;
 pub mod proposal;
 pub mod veto;
 pub mod voting;
@@ -36,6 +37,10 @@ pub use election::{
 };
 pub use execution::{ExecutionEffect, ExecutionReceipt};
 pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
+pub use ongov::{
+    no_false_chain_claims, project_all, state_summary, ChainBinding, GovExecution, GovState, GovVeto,
+    GovernorToken,
+};
 pub use proposal::{Action, AgentIdentity, Proposal, ProposalDraft, ProposalState};
 pub use veto::{HumanVeto, Veto, VetoReceipt};
 pub use voting::{Choice, RoundOutcome, RoundState, Tally, Vote, VotingRound};
@@ -937,6 +942,47 @@ impl Council {
         } else {
             SelfCheck::fail(TRACK, "council.vetoes.reasons_public", "存在没有理由的否决")
         });
+
+        // 链上治理映射：投影必须复算成功、状态与治理层一致、且不允许声称真实链上。
+        let tokens: Vec<GovernorToken> = self
+            .proposals
+            .values()
+            .filter_map(|p| GovernorToken::project(self, &p.id).ok())
+            .collect();
+        let mapping_ok = tokens.len() == self.proposals.len()
+            && tokens.iter().all(|t| {
+                match self.proposals.get(&t.proposal).map(|p| p.state) {
+                    Some(ProposalState::Open) => matches!(t.state, GovState::Pending | GovState::Active),
+                    Some(ProposalState::Passed) => t.state == GovState::Succeeded,
+                    Some(ProposalState::Rejected) => t.state == GovState::Defeated,
+                    Some(ProposalState::Blocked) => t.state == GovState::Canceled,
+                    Some(ProposalState::Executed) => t.state == GovState::Executed,
+                    None => false,
+                }
+            });
+        checks.push(if mapping_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.ongov.mapping",
+                format!("{} 条动议的 GovernorToken 状态与治理状态一一对应", tokens.len()),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.ongov.mapping", "存在映射状态不一致的动议")
+        });
+        let honest = no_false_chain_claims(&tokens)
+            && tokens.iter().all(|t| t.evidence() == au4a_core::EvidenceGrade::CpuProto);
+        checks.push(if honest {
+            SelfCheck::pass(
+                TRACK,
+                "council.ongov.no_false_chain",
+                format!(
+                    "{} 个 GovernorToken 全部标注 cpu-proto、real_chain=false（真实链上执行属 v1.8）",
+                    tokens.len()
+                ),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.ongov.no_false_chain", "存在声称真实链上执行的对象")
+        });
         checks
     }
 }
@@ -1286,6 +1332,23 @@ pub fn self_check() -> Vec<SelfCheck> {
                     format!("执行未落成预期状态：policy={:?}", a.council.policy("cpu_proto_settle_cap")),
                 )
             });
+            let tokens = project_all(&a.council).unwrap_or_default();
+            checks.push(if no_false_chain_claims(&tokens)
+                && tokens.iter().all(|t| t.evidence() == au4a_core::EvidenceGrade::CpuProto)
+                && tokens.len() == a.council.proposals().len()
+            {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.ongov.no_false_chain",
+                    format!(
+                        "{} 个 GovernorToken 全部标注 cpu-proto / real_chain=false，状态分布 {}",
+                        tokens.len(),
+                        state_summary(&tokens)
+                    ),
+                )
+            } else {
+                SelfCheck::fail(TRACK, "council.ongov.no_false_chain", "链上治理映射出现不实声明")
+            });
             checks.extend(a.council.checks());
         }
         (Err(err), _) | (_, Err(err)) => {
@@ -1396,6 +1459,13 @@ pub fn results_json() -> CoreResult<Value> {
             "execute_after_veto_refused": vetoed.execute_refused,
             "proposals_unchanged": vetoed.proposals_before == vetoed.proposals_after,
             "action_unchanged": vetoed.action_unchanged,
+        },
+        "ongov": {
+            "tokens": project_all(&run.council)?.len(),
+            "states": state_summary(&project_all(&run.council)?),
+            "vetoed_states": state_summary(&project_all(&vetoed.council)?),
+            "real_chain": false,
+            "grade": au4a_core::EvidenceGrade::CpuProto.as_str(),
         },
         "events": run.council.events().len(),
         "agents_enrolled": run.agents.len(),
@@ -1565,6 +1635,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "vetoes": view.vetoes.len(),
             "events": view.events,
         },
+        "governor_tokens": project_all(&council)?.iter().map(|t| t.to_json()).collect::<Vec<_>>(),
         "events": council.events().len(),
     }))
 }

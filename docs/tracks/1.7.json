@@ -182,6 +182,39 @@
         "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + execution 10 + veto 8 + doc-tests 7（6 compile_fail + 1 正例），本 crate 0 warning；人类无密钥这一限制已在 md 中明说"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.6",
+      "title": "链上治理",
+      "goal": "把治理状态投影成 GovernorToken 语义数据结构（只做语义映射，不假装有链；真实链上执行属 v1.8）",
+      "deliverables": [
+        "src/ongov.rs: GovState / ChainBinding / GovVeto / GovExecution / GovernorToken::project / project_all / no_false_chain_claims / state_summary",
+        "src/lib.rs: 自检 council.ongov.mapping 与 council.ongov.no_false_chain、results_json().ongov、scenario 的 governor_tokens",
+        "tests/ongov.rs: 6 个集成测试（+ ongov.rs 内 3 个单元测试）"
+      ],
+      "interfaces": [
+        "pub enum GovState { Pending, Active, Canceled, Defeated, Succeeded, Queued, Executed }",
+        "pub struct GovernorToken { id, proposal, proposer, committee, snapshot_epoch, for_votes, against_votes, abstain_votes, quorum_numerator, quorum_denominator, state, veto, execution, binding }",
+        "pub fn GovernorToken::project(&Council, &str) -> CoreResult<GovernorToken>",
+        "pub struct ChainBinding { chain, grade, real_chain, note }",
+        "pub fn ongov::{project_all, no_false_chain_claims, state_summary}"
+      ],
+      "acceptance": [
+        "生命周期映射 pending → active → succeeded → executed",
+        "Canceled（带否决理由）与 Defeated 可区分",
+        "双签作废轮不产生链上结论，动议仍 active",
+        "绑定恒为 cpu-proto / real_chain=false，伪造绑定会被 claims_real_chain 抓出",
+        "投影确定性、JSON 往返、整数法定人数分数",
+        "scenario 两条动议投影为 executed 与 canceled，tx_ref 全为 null"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 82,
+        "tests_total": 82,
+        "grade": "cpu-proto",
+        "notes": "EXIT=0；单元 23 + election 8 + execution 10 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning；本版主动降级为 cpu-proto：只有语义映射，没有真实链上执行与真实 tx_ref"
+      },
+      "status": "done"
     }
   ]
 }
