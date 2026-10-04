@@ -17,13 +17,11 @@
 //! 每次状态转换照旧**双方签名**：对端的签名是「这次转换确实发生过」的收据
 //! （对争议中的条款不等于同意其内容——条款本身由报价方签名）。
 
-use au4a_core::{CoreError, CoreResult, Credits, Did, RefusalCode};
+use au4a_core::{CoreError, CoreResult, Did, RefusalCode};
 use au4a_kernel::Kernel;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::arbitration::ArbitrationCase;
-use crate::contract::{Contract, ANCHOR_EVENT};
 use crate::journal::Journal;
 use crate::msg::{self, NegotiationMsg, Terms};
 use crate::state::{Event, Phase, StateMachine, TransitionRecord};
@@ -67,12 +65,6 @@ pub struct Negotiation {
     rejections: Vec<Rejection>,
     /// 最后一条协商消息的 id，用作下一条的 `in_reply_to`。
     tip: Option<String>,
-    /// 达成后签署的合约（v1.2.5）。
-    contract: Option<Contract>,
-    /// 违约申诉（v1.2.6）。
-    breach: Option<crate::breach::BreachClaim>,
-    /// 仲裁案件（v1.2.7）。
-    case: Option<ArbitrationCase>,
     machine: StateMachine,
     journal: Journal,
 }
@@ -122,9 +114,6 @@ impl Negotiation {
             last_offer_by: proposer.did(),
             rejections: Vec::new(),
             tip: Some(env.id),
-            contract: None,
-            breach: None,
-            case: None,
             machine,
             journal,
         })
@@ -306,227 +295,6 @@ impl Negotiation {
         self.journal.encode()
     }
 
-    /// 已签署的合约（若有）。
-    pub fn contract(&self) -> Option<&Contract> {
-        self.contract.as_ref()
-    }
-
-    /// 开始执行：`CONTRACT_SIGNED → EXECUTING`（双方联署的转换记录）。
-    pub fn execute(
-        &mut self,
-        kernel: &mut Kernel,
-        initiator: &au4a_core::AgentKeys,
-        counterparty: &au4a_core::AgentKeys,
-    ) -> CoreResult<TransitionRecord> {
-        self.ensure_party(&initiator.did())?;
-        self.ensure_party(&counterparty.did())?;
-        if self.phase() != Phase::ContractSigned {
-            return Err(CoreError::InvalidKind);
-        }
-        let at = kernel.tick();
-        let record = self
-            .machine
-            .transact(Event::Execute, initiator, counterparty, at, &self.parties)?;
-        self.journal.append_transition(&record, None)?;
-        Ok(record)
-    }
-
-    /// 违约申诉：`CONTRACT_SIGNED|EXECUTING → ARBITRATION`。
-    ///
-    /// 转换由**双方已签署的合约**预授权（[`crate::state::Basis::ContractClause`]）：
-    /// 申诉方单签 + 出示双签合约见证；缺合约、单方合约、哈希不符一律拒绝。
-    pub fn report_breach(
-        &mut self,
-        kernel: &mut Kernel,
-        claimant: &au4a_core::AgentKeys,
-        kind: crate::msg::BreachKind,
-        evidence: au4a_core::EvidenceGrade,
-        note: &str,
-    ) -> CoreResult<crate::breach::BreachClaim> {
-        self.ensure_party(&claimant.did())?;
-        if !matches!(self.phase(), Phase::ContractSigned | Phase::Executing) {
-            return Err(CoreError::InvalidKind);
-        }
-        let contract = self.contract.clone().ok_or(CoreError::NotSealed)?;
-        contract.verify()?;
-
-        let at = kernel.tick();
-        let claim = crate::breach::BreachClaim::file(claimant, &contract, kind, evidence, note, at)?;
-        let accused = claim.accused.clone();
-
-        // 一条真实的 CONTRACT_BREACH 消息：被诉方与任何观察者都能独立验签。
-        let env = NegotiationMsg::breach(&contract.id, &contract.hash, kind, note)?.signed(
-            claimant,
-            &accused,
-            kernel.tick(),
-            self.tip.clone(),
-        )?;
-        kernel.send(&env)?;
-        self.journal.append(&env)?;
-        self.tip = Some(env.id);
-
-        // 进入仲裁：条款授权（单签 + 双签合约见证）。
-        let record = self.machine.stage_under_contract(
-            Event::Breach,
-            claimant,
-            at,
-            &contract.id,
-            &contract.hash,
-        )?;
-        self.machine
-            .commit(record.clone(), &self.parties, Some(&contract))?;
-        self.journal.append_transition(&record, Some(&contract))?;
-        self.breach = Some(claim.clone());
-        Ok(claim)
-    }
-
-    /// 本次协商里最近一次违约申诉（若有）。
-    pub fn breach(&self) -> Option<&crate::breach::BreachClaim> {
-        self.breach.as_ref()
-    }
-
-    /// 结算：`EXECUTING → SETTLED`。
-    ///
-    /// 付款方必须是合约的提议方、收款方必须是应答方（角色由合约固定，不接受临时换人）。
-    /// 钱走 `Kernel::settle`：先过证据闸门再动账本，`unverified` 永远结算不了。
-    pub fn settle(
-        &mut self,
-        kernel: &mut Kernel,
-        payer: &au4a_core::AgentKeys,
-        payee: &au4a_core::AgentKeys,
-    ) -> CoreResult<Credits> {
-        self.ensure_party(&payer.did())?;
-        self.ensure_party(&payee.did())?;
-        if self.phase() != Phase::Executing {
-            return Err(CoreError::InvalidKind);
-        }
-        let contract = self.contract.clone().ok_or(CoreError::NotSealed)?;
-        if payer.did() != contract.proposer || payee.did() != contract.responder {
-            // 结算必须按合约角色来，不能临时换付款人/收款人。
-            kernel.refuse(
-                &payer.did(),
-                RefusalCode::Conflict,
-                "settlement must follow the contract roles",
-            );
-            return Err(CoreError::InvalidKind);
-        }
-        let price = contract.terms.price;
-        kernel.settle(
-            &payer.did(),
-            &payee.did(),
-            price,
-            contract.terms.evidence,
-        )?;
-        let at = kernel.tick();
-        let record = self.machine.transact(Event::Settle, payer, payee, at, &self.parties)?;
-        self.journal.append_transition(&record, None)?;
-        Ok(price)
-    }
-
-    /// 立案仲裁：`ARBITRATION` 相位 + 已有一条有效申诉 + 两名第三方仲裁员。
-    pub fn open_case(
-        &mut self,
-        arbiters: &[Did],
-        at: u64,
-    ) -> CoreResult<ArbitrationCase> {
-        if self.phase() != Phase::Arbitration {
-            return Err(CoreError::InvalidKind);
-        }
-        let claim = self.breach.clone().ok_or(CoreError::NotSealed)?;
-        let contract = self.contract.clone().ok_or(CoreError::NotSealed)?;
-        let case = ArbitrationCase::file(&claim, &contract, arbiters, at)?;
-        self.case = Some(case.clone());
-        Ok(case)
-    }
-
-    pub fn case(&self) -> Option<&ArbitrationCase> {
-        self.case.as_ref()
-    }
-
-    /// 可变访问案件本体：`rule` 与 `enforce` 在案件上完成。
-    pub fn case_mut(&mut self) -> Option<&mut ArbitrationCase> {
-        self.case.as_mut()
-    }
-
-    /// 结案：`ARBITRATION → SETTLED`（双方联署的 `Resolve`）。
-    pub fn resolve(
-        &mut self,
-        kernel: &mut Kernel,
-        initiator: &au4a_core::AgentKeys,
-        counterparty: &au4a_core::AgentKeys,
-    ) -> CoreResult<TransitionRecord> {
-        self.ensure_party(&initiator.did())?;
-        self.ensure_party(&counterparty.did())?;
-        if self.phase() != Phase::Arbitration {
-            return Err(CoreError::InvalidKind);
-        }
-        let at = kernel.tick();
-        let record = self
-            .machine
-            .transact(Event::Resolve, initiator, counterparty, at, &self.parties)?;
-        self.journal.append_transition(&record, None)?;
-        Ok(record)
-    }
-
-    /// 签订合约：`ACCEPTED → CONTRACT_SIGNED`。
-    ///
-    /// 步骤全部真实发生：双方各自签署同一份条款载荷 → 各自发一条 `CONTRACT_SIGN` 消息（可被任何
-    /// 观察者验签）→ 双方联署状态机转换记录 → 由已签署方锚定合约哈希到只读进度流。
-    pub fn sign_contract(
-        &mut self,
-        kernel: &mut Kernel,
-        proposer: &au4a_core::AgentKeys,
-        responder: &au4a_core::AgentKeys,
-    ) -> CoreResult<Contract> {
-        if self.phase() != Phase::Accepted {
-            return Err(CoreError::InvalidKind);
-        }
-        self.ensure_party(&proposer.did())?;
-        self.ensure_party(&responder.did())?;
-        if proposer.did() == responder.did() {
-            return Err(CoreError::InvalidKind);
-        }
-
-        let at = kernel.tick();
-        let mut contract = Contract::draft(
-            proposer,
-            &responder.did(),
-            &self.current_terms,
-            &self.session,
-            at,
-        )?;
-        contract.sign(proposer)?;
-        contract.sign(responder)?;
-        contract.verify()?;
-
-        // 双方各发一条 CONTRACT_SIGN：合约的承认是**两条**可独立验签的声明，而不是一条。
-        for (keys, peer) in [(proposer, responder), (responder, proposer)] {
-            let env = NegotiationMsg::sign_contract(&contract.id, &contract.hash)?.signed(
-                keys,
-                &peer.did(),
-                kernel.tick(),
-                self.tip.clone(),
-            )?;
-            kernel.send(&env)?;
-            self.journal.append(&env)?;
-            self.tip = Some(env.id);
-        }
-
-        let record = self.machine.transact(Event::Sign, proposer, responder, at, &self.parties)?;
-        self.journal.append_transition(&record, None)?;
-
-        let anchor = contract.anchor(proposer, kernel.tick())?;
-        kernel.emit(
-            ANCHOR_EVENT,
-            format!(
-                "{} hash={} price={}",
-                anchor.contract_id, anchor.contract_hash, contract.terms.price.0
-            ),
-        );
-        self.contract = Some(contract.clone());
-        Ok(contract)
-    }
-
     /// 协商摘要（观察层与 scenario 共用）。
     pub fn summary(&self) -> CoreResult<Value> {
         Ok(json!({
@@ -539,9 +307,6 @@ impl Negotiation {
             "price_trail": self.price_trail(),
             "journal_bytes": self.archive()?.len(),
             "history_tip": self.machine.verify_history(&self.parties)?,
-            "contract": self.contract.as_ref().map(|c| c.summary()),
-            "breach": self.breach.as_ref().map(|b| b.summary()),
-            "case": self.case.as_ref().map(|c| c.summary()),
         }))
     }
 
@@ -708,43 +473,6 @@ mod tests {
         assert_eq!(n.counter(&mut k, &a, &b, terms(90)), Err(CoreError::InvalidKind));
         assert_eq!(n.reject(&mut k, &a, &b, "no"), Err(CoreError::InvalidKind));
         assert_eq!(n.accept(&mut k, &a, &b), Err(CoreError::InvalidKind));
-    }
-
-    #[test]
-    fn contract_signing_requires_acceptance_and_stays_dual_signed() {
-        let mut k = kernel();
-        let (a, b) = pair(&mut k, 30, 31);
-        let mut n = Negotiation::open(&mut k, &a, &b, terms(100), 4).unwrap();
-        // 还没接受就不能签。
-        assert_eq!(n.sign_contract(&mut k, &a, &b), Err(CoreError::InvalidKind));
-        assert!(n.contract().is_none());
-
-        n.accept(&mut k, &b, &a).unwrap();
-        let contract = n.sign_contract(&mut k, &a, &b).unwrap();
-        assert_eq!(n.phase(), Phase::ContractSigned);
-        contract.verify().unwrap();
-        assert!(contract.is_dual_signed());
-        assert_eq!(contract.terms.price, Credits(100));
-        assert_eq!(contract.negotiation, n.session());
-        contract.verify_anchor().unwrap();
-        assert_eq!(n.contract().unwrap().hash, contract.hash);
-
-        // 双方各发了一条 CONTRACT_SIGN；锚点事件进了只读进度流。
-        let delivered = k.drain();
-        assert_eq!(delivered.len(), 4, "request + accept + 两条 CONTRACT_SIGN");
-        let sign_messages = delivered
-            .iter()
-            .filter(|e| e.kind.as_str() == crate::kinds::CONTRACT_SIGN)
-            .count();
-        assert_eq!(sign_messages, 2);
-        assert!(k
-            .observe()
-            .progress
-            .iter()
-            .any(|p| p.kind == ANCHOR_EVENT && p.detail.contains(&contract.hash)));
-
-        // 合约签完就不再是 ACCEPTED：不能重复签。
-        assert_eq!(n.sign_contract(&mut k, &a, &b), Err(CoreError::InvalidKind));
     }
 
     #[test]

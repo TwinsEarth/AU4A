@@ -101,25 +101,32 @@
       "version": "v1.2.4",
       "title": "多轮协商",
       "goal": "多轮报价/还价引擎：轮数上限、REJECT 不占额度、超限走类型化拒绝",
-      "deliverables": ["src/rounds.rs: Negotiator/Session 的 counter/accept/reject"],
+      "deliverables": [
+        "src/rounds.rs: Negotiation/Offer/Rejection（消息+状态机+归档三合一）",
+        "src/lib.rs: scenario 改用协商引擎真跑，self_check 增 rounds.cap / rounds.reject_free",
+        "tests/rounds.rs: 多轮经 PMB 真跑 + 上限/轮转拒绝测试"
+      ],
       "interfaces": [
-        "pub struct Session",
-        "Session::open/counter/accept/reject",
-        "pub const DEFAULT_MAX_ROUNDS"
+        "pub struct Negotiation",
+        "Negotiation::open(&mut Kernel,&AgentKeys,&AgentKeys,Terms,u32) -> CoreResult<Negotiation>",
+        "Negotiation::counter/accept/reject/archive/summary/price_trail",
+        "pub const DEFAULT_MAX_ROUNDS: u32 = 6"
       ],
       "acceptance": [
-        "max_rounds 轮还价后第 max_rounds+1 次被拒（Err + 内核记 PolicyDenied）",
-        "REJECT 任意次都不消耗轮数额度",
-        "每次转换双方签名齐备才落地"
+        "max_rounds 轮还价后第 max_rounds+1 次 → Err(Overflow) + 内核记 PolicyDenied（非恶意码），轮数/报价数/归档字节均不变",
+        "REJECT 任意次都不消耗轮数额度，但每次都留下双方签名的自环记录",
+        "还价必须来自上一次报价的对端（自问自答 → Err + Conflict）；不能接受自己的报价",
+        "七条消息全部经内核投递、逐条验签、in_reply_to 引用链连续",
+        "同种子两次独立协商的归档逐字节相同"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 51,
+        "tests_total": 51,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：32 单元 + 4 tests/journal.rs + 4 tests/rounds.rs + 6 tests/messages.rs + 5 tests/state_machine.rs 全绿、0 warning（日志 1.2-v1.2.4.log）。行为：150→140→130→(拒绝)→125→120→接受；上限=1 时第 2 次还价 Err(Overflow)+policy_denied+escalation=None；5 次连续 REJECT 后轮数仍为 0。首轮 3 个测试失败（轮转规则的真实交互），修正后复跑全绿。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.5",

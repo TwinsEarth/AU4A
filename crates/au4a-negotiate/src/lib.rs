@@ -17,10 +17,12 @@
 
 pub mod journal;
 pub mod msg;
+pub mod rounds;
 pub mod state;
 
 pub use journal::{Journal, JOURNAL_VERSION};
 pub use msg::{kinds, BreachKind, NegotiationMsg, Terms, ALL_KINDS};
+pub use rounds::{Negotiation, Offer, Rejection, DEFAULT_MAX_ROUNDS};
 pub use state::{
     transition, Basis, DualSigned, Event, PartySignature, Phase, StateMachine, TransitionRecord,
     LEGAL_TRANSITIONS,
@@ -214,6 +216,48 @@ fn state_round_quota_check() -> CoreResult<String> {
     Ok("3 次 REJECT 后轮数仍为 0，1 次 COUNTER 后为 1".to_string())
 }
 
+fn rounds_cap_check() -> CoreResult<String> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let a = au4a_core::AgentKeys::from_seed(&[0x5B; 32]);
+    let b = au4a_core::AgentKeys::from_seed(&[0x6C; 32]);
+    ensure_agent(&mut kernel, &a, "selfcheck.a", &["summarize.zh"])?;
+    ensure_agent(&mut kernel, &b, "selfcheck.b", &["summarize.zh"])?;
+    let deal = |price: i64| Terms::new("summarize.zh", Credits(price), 10, EvidenceGrade::Verified);
+    let mut negotiation = Negotiation::open(&mut kernel, &a, &b, deal(100)?, 1)?;
+    negotiation.counter(&mut kernel, &b, &a, deal(90)?)?;
+    if negotiation.counter(&mut kernel, &a, &b, deal(80)?) != Err(au4a_core::CoreError::Overflow) {
+        return Err(au4a_core::CoreError::Overflow);
+    }
+    if kernel.refusals().last().map(|(_, r)| r.code) != Some(au4a_core::RefusalCode::PolicyDenied) {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    if negotiation.rounds_used() != 1 || negotiation.offers().len() != 2 {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    Ok("max_rounds=1：第 2 次还价 → Err(Overflow) + 内核记 policy_denied，轮数与报价数不变".to_string())
+}
+
+fn rounds_reject_check() -> CoreResult<String> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let a = au4a_core::AgentKeys::from_seed(&[0x7D; 32]);
+    let b = au4a_core::AgentKeys::from_seed(&[0x8E; 32]);
+    ensure_agent(&mut kernel, &a, "selfcheck.r1", &["summarize.zh"])?;
+    ensure_agent(&mut kernel, &b, "selfcheck.r2", &["summarize.zh"])?;
+    let terms = Terms::new("summarize.zh", Credits(100), 10, EvidenceGrade::Verified)?;
+    let mut negotiation = Negotiation::open(&mut kernel, &a, &b, terms, 2)?;
+    for _ in 0..5 {
+        negotiation.reject(&mut kernel, &b, &a, "not yet")?;
+    }
+    if negotiation.rounds_used() != 0 || negotiation.rejections().len() != 5 {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    negotiation.counter(&mut kernel, &b, &a, Terms::new("summarize.zh", Credits(90), 10, EvidenceGrade::Verified)?)?;
+    if negotiation.rounds_used() != 1 {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    Ok("5 次 REJECT 后轮数仍为 0，随后 1 次 COUNTER 才消耗 1 轮".to_string())
+}
+
 fn journal_roundtrip_check() -> CoreResult<String> {
     let a = au4a_core::AgentKeys::from_seed(&[0x39; 32]);
     let b = au4a_core::AgentKeys::from_seed(&[0x4A; 32]);
@@ -258,6 +302,8 @@ pub fn self_check() -> Vec<SelfCheck> {
         check("state.dual_signature", state_dual_signature_check()),
         check("state.round_quota", state_round_quota_check()),
         check("journal.roundtrip", journal_roundtrip_check()),
+        check("rounds.cap", rounds_cap_check()),
+        check("rounds.reject_free", rounds_reject_check()),
     ]
 }
 
@@ -272,6 +318,7 @@ pub fn results_json() -> CoreResult<Value> {
         "events": Event::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>(),
         "legal_transitions": LEGAL_TRANSITIONS.len(),
         "journal_version": JOURNAL_VERSION,
+        "default_max_rounds": DEFAULT_MAX_ROUNDS,
         "checks": self_check().len(),
         "checks_passed": self_check().iter().filter(|c| c.passed).count(),
     }))
@@ -284,21 +331,24 @@ pub fn results_json() -> CoreResult<Value> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let (proposer, responder) = scenario_agents(kernel)?;
     let opening = Terms::new("summarize.zh", Credits(120), 40, EvidenceGrade::Verified)?;
-    let session = msg::session_id(&proposer.did(), &responder.did(), &opening)?;
 
-    let request = NegotiationMsg::request(&session, opening.clone())?;
-    let request_env = request.signed(&proposer, &responder.did(), kernel.tick(), None)?;
-    kernel.send(&request_env)?;
-
-    let counter_terms = Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?;
-    let counter = NegotiationMsg::counter(&session, 1, counter_terms)?;
-    let counter_env = counter.signed(
+    // 多轮协商引擎真跑：开局 → 还价 → 拒绝（不占额度）→ 再还价。
+    let mut negotiation =
+        Negotiation::open(kernel, &proposer, &responder, opening, DEFAULT_MAX_ROUNDS)?;
+    negotiation.counter(
+        kernel,
         &responder,
-        &proposer.did(),
-        kernel.tick(),
-        Some(request_env.id.clone()),
+        &proposer,
+        Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?,
     )?;
-    kernel.send(&counter_env)?;
+    negotiation.reject(kernel, &proposer, &responder, "deadline too tight")?;
+    // 还价必须由上一次报价的对端发出：上一次是应答方报的价，所以这次由提议方还价。
+    negotiation.counter(
+        kernel,
+        &proposer,
+        &responder,
+        Terms::new("summarize.zh", Credits(95), 42, EvidenceGrade::Verified)?,
+    )?;
 
     let delivered = kernel.drain();
     let mut transcript: Vec<Value> = Vec::new();
@@ -312,44 +362,22 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         }));
     }
 
-    // 状态机：把这次交换落成两条**双方签名**的转换记录。
-    let parties = vec![proposer.did(), responder.did()];
-    let mut machine = StateMachine::open(&session)?;
-    let request_record = machine.transact(
-        Event::Request,
-        &proposer,
-        &responder,
-        kernel.tick(),
-        &parties,
-    )?;
-    let counter_record = machine.transact(
-        Event::Counter,
-        &responder,
-        &proposer,
-        kernel.tick(),
-        &parties,
-    )?;
-    let tip = machine.verify_history(&parties)?;
-
-    // 归档：把这次交换持久化成规范 JSON，再解回来做逐字节比对（纯内存，无文件 I/O）。
-    let mut journal = Journal::open(&session, &parties)?;
-    journal.append(&delivered[0])?;
-    journal.append(&delivered[1])?;
-    journal.append_transition(&request_record, None)?;
-    journal.append_transition(&counter_record, None)?;
-    let archived = journal.encode()?;
+    // 归档：把这次协商持久化成规范 JSON，再解回来做逐字节比对（纯内存，无文件 I/O）。
+    let archived = negotiation.archive()?;
     let restored = Journal::decode(&archived)?;
     let byte_exact = restored.encode()? == archived;
     let replay_digest = restored.replay_digest()?;
+    let summary = negotiation.summary()?;
 
     kernel.emit(
         format!("{TRACK}.scenario").as_str(),
         format!(
-            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；状态机 {} → {}（{} 条双签记录）；归档 {} 字节，重放{}",
+            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；{} → {}（{} 条双签记录，{} 轮报价）；归档 {} 字节，重放{}",
             transcript.len(),
             Phase::Idle.as_str(),
-            machine.phase().as_str(),
-            machine.seq(),
+            negotiation.phase().as_str(),
+            negotiation.machine().seq(),
+            negotiation.rounds_used(),
             archived.len(),
             if byte_exact { "逐字节一致" } else { "不一致" }
         ),
@@ -359,18 +387,21 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "session": session,
+        "session": negotiation.session(),
         "delivered": transcript.len(),
         "transcript": transcript,
-        "phase": machine.phase().as_str(),
-        "transitions": machine.seq(),
-        "rounds_used": machine.round(),
-        "history_tip": tip,
-        "signed_by": [request_record.sigs.len(), counter_record.sigs.len()],
+        "phase": negotiation.phase().as_str(),
+        "transitions": negotiation.machine().seq(),
+        "rounds_used": negotiation.rounds_used(),
+        "max_rounds": negotiation.max_rounds(),
+        "offers": negotiation.offers().len(),
+        "rejections": negotiation.rejections().len(),
+        "price_trail": negotiation.price_trail(),
+        "history_tip": summary["history_tip"],
         "journal_bytes": archived.len(),
         "replay_byte_exact": byte_exact,
         "replay_digest": replay_digest,
-        "steps": 3,
+        "steps": 4,
     }))
 }
 

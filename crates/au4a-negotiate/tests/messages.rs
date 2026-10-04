@@ -174,6 +174,8 @@ fn scenario_is_repeatable_and_idempotent() {
         kinds_seen,
         vec![
             kinds::NEGOTIATE_REQUEST.to_string(),
+            kinds::NEGOTIATE_COUNTER.to_string(),
+            kinds::NEGOTIATE_REJECT.to_string(),
             kinds::NEGOTIATE_COUNTER.to_string()
         ]
     );
