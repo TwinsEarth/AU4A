@@ -21,6 +21,7 @@ pub mod autonomy;
 pub mod council;
 pub mod harness;
 pub mod lifecycle;
+pub mod manifest;
 pub mod migration;
 pub mod observer;
 pub mod permission;
@@ -39,6 +40,10 @@ pub use council::{
 pub use harness::{invariant_suite, Harness, Journal, JournalEntry, JournalStep, ReplayOutcome};
 pub use lifecycle::{
     next_state, AgentState, Lifecycle, LifecycleBook, LifecycleEvent, LifecycleOutcome, Transition,
+};
+pub use manifest::{
+    manifest_is_valid, track_manifest, validate_manifest, TrackManifest, VersionEvidence,
+    VersionSpec, VERSION_ORDER,
 };
 pub use migration::{
     adapt, apply_plan, hook_route, permission_capability, CapabilityGrant, HookRoute,
@@ -614,17 +619,27 @@ pub fn self_check() -> Vec<SelfCheck> {
         _ => checks.push(SelfCheck::fail(TRACK, "registry.deterministic", "引导失败")),
     }
 
+    // 文档即数据：清单里的 10 个版本必须齐备、顺序正确、字段完整、证据合法。
+    checks.extend(validate_manifest(&track_manifest()));
+
     checks
 }
 
 /// 轨道级结果摘要（节点「结果」面板聚合用）。
 pub fn results_json() -> CoreResult<Value> {
     let checks = self_check();
+    let manifest = track_manifest();
     let value = serde_json::to_value(&checks).map_err(|_| CoreError::Encoding)?;
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
+        "owner": manifest.owner,
+        "versions": manifest.versions.len(),
+        "version_ids": VERSION_ORDER,
+        "latest_version": VERSION_ORDER.last(),
+        "tests_total_latest": manifest.total_tests(),
+        "manifest_valid": manifest_is_valid(),
         "checks_passed": checks.iter().filter(|c| c.passed).count(),
         "checks_total": checks.len(),
         "all_passed": all_passed(&checks),
@@ -871,7 +886,19 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "invariants_all_passed": all_passed(&invariant_suite(rehearsal.kernel())),
     });
 
-    // 12. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    // 12. 轨道清单：文档即数据，逐条校验（版本数/顺序/字段/证据/往返）。
+    let manifest = track_manifest();
+    let manifest_checks = validate_manifest(&manifest);
+    let manifest_json = json!({
+        "versions": manifest.versions.len(),
+        "owner": manifest.owner,
+        "latest": manifest.versions.last().map(|v| v.version.clone()),
+        "tests_total": manifest.total_tests(),
+        "valid": all_passed(&manifest_checks),
+        "checks": manifest_checks.len(),
+    });
+
+    // 13. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
     let report = Observer::report(kernel);
     let observer_layer = json!({
         "routes": ObserverRoute::ALL.len(),
@@ -887,7 +914,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             .unwrap_or(Value::Null),
     });
 
-    // 13. 审计 + 只读观察。
+    // 14. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -909,6 +936,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "lifecycle": lifecycle_json,
         "migration": migration_json,
         "harness": harness_json,
+        "manifest": manifest_json,
         "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,
