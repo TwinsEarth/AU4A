@@ -78,17 +78,35 @@
       "version": "v1.1.3",
       "title": "广播协议",
       "goal": "用 PMB Envelope + MsgKind 广播能力通告，真签名验签，篡改被拒",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/broadcast.rs: announce/announce_to/query_skill/parse_announcement/parse_query/ingest/pump + Ingest/PumpReport",
+        "src/lib.rs: demo_agents() 确定性角色集合 + scenario 改为真广播 + 4 条新自检",
+        "tests/broadcast.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub const PROTOCOL: &str = \"au4a.capgraph/1\"",
+        "pub const KIND_ANNOUNCE: &str = \"capgraph.announce\" / KIND_REQUEST: &str = \"capgraph.request\"",
+        "pub fn announce(keys: &AgentKeys, declaration: &Declaration, ts: u64) -> CoreResult<Envelope>",
+        "pub fn parse_announcement(env: &Envelope) -> Result<Announcement, (RefusalCode, String)>",
+        "pub fn ingest(graph: &mut AgentCapabilityGraph, env: &Envelope, now: u64) -> Ingest",
+        "pub fn pump(kernel: &mut Kernel, graph: &mut AgentCapabilityGraph, now: u64) -> PumpReport"
+      ],
+      "acceptance": [
+        "announce 的信封 verify() 通过、to==None、kind==capgraph.announce；分帧往返后信封相等且内容寻址 id 不变",
+        "篡改 price/throughput/reliability/load 任一字段 → unauthorized（is_misconduct()==true）",
+        "B 的信封装 A 的合法声明 → 身份错配判 unauthorized，图不变（capability_count()==0）",
+        "错误 kind 或错误 protocol → unsupported，且不触图",
+        "5 Agent 全量广播 → pump 报 routed=4/applied=4/refused=0，known_agents=5，内核 refusals 为空",
+        "他轨道信封被转发回队列（id 不变）；伪造通告的拒绝记在伪造者头上（escalation_for==Quarantine）"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 52,
+        "tests_total": 52,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 27 + tests/broadcast 10 + tests/data_structures 7 + tests/declaration 8，0 failed，本 crate 0 warning。签名/验签/内容寻址/分帧/内核准入为真实实现；同进程内的队列传递标注 cpu-proto（本 crate 禁止网络 I/O）。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.4",

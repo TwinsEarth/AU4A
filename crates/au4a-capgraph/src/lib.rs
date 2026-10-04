@@ -24,10 +24,15 @@
 //! | v1.1.9 | 测试（端到端 + 不变式 + 对抗用例） | `tests/` |
 //! | v1.1.10 | 文档与证据 | `docs/tracks/1.1.md` |
 
+pub mod broadcast;
 pub mod capability;
 pub mod declaration;
 pub mod graph;
 
+pub use broadcast::{
+    announce, announce_to, ingest, parse_announcement, parse_query, pump, query_skill,
+    Announcement, Ingest, PumpReport, KIND_ANNOUNCE, KIND_REQUEST, PROTOCOL,
+};
 pub use capability::{
     Capability, Constraints, FormatId, SkillId, BP_SCALE, MAX_FORMAT_LEN, MAX_SKILL_LEN,
 };
@@ -181,9 +186,173 @@ fn checks_v112() -> Vec<SelfCheck> {
     checks
 }
 
+/// v1.1.3：通告走 PMB、两层签名都验、篡改与身份错配被拒、别人的消息不被吞。
+fn checks_v113() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.3.announce_seals_and_verifies", || {
+        let a = AgentKeys::from_seed(&[31; 32]);
+        let declaration = Declaration::new(a.did(), 1, 1, vec![sample_capability()?]).map_err(show)?;
+        let env = announce(&a, &declaration, 7).map_err(show)?;
+        env.verify().map_err(show)?;
+        let frame = au4a_core::encode_frame(&env).map_err(show)?;
+        let decoded = au4a_core::decode_frame(&frame).map_err(show)?;
+        if decoded != env || env.to.is_some() || env.kind.as_str() != KIND_ANNOUNCE {
+            return Err("信封形状不是广播，或分帧往返不一致".into());
+        }
+        let parsed = parse_announcement(&decoded).map_err(|(_, r)| r)?;
+        Ok(format!(
+            "断言：{KIND_ANNOUNCE} 信封验签通过、to=None、4 字节大端分帧往返一致，解析出 {} 条能力",
+            parsed.declaration.capabilities.len()
+        ))
+    }));
+    checks.push(verdict("1.1.3.tamper_is_unauthorized", || {
+        let a = AgentKeys::from_seed(&[32; 32]);
+        let mut env = announce(
+            &a,
+            &Declaration::new(a.did(), 1, 1, vec![sample_capability()?]).map_err(show)?,
+            3,
+        )
+        .map_err(show)?;
+        env.body["declaration"]["declaration"]["capabilities"][0]["price_per_unit"] = json!(0);
+        match parse_announcement(&env) {
+            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => {
+                Ok("断言：改动 body 后信封验签失败，判 unauthorized（一次即恶意，不可重试）".into())
+            }
+            other => Err(format!("篡改未被判 unauthorized：{other:?}")),
+        }
+    }));
+    checks.push(verdict("1.1.3.identity_mismatch_refused", || {
+        let a = AgentKeys::from_seed(&[33; 32]);
+        let b = AgentKeys::from_seed(&[34; 32]);
+        let signed = Declaration::new(a.did(), 1, 1, vec![sample_capability()?])
+            .map_err(show)?
+            .sign(&a)
+            .map_err(show)?;
+        let body = json!({"protocol": PROTOCOL, "declaration": signed.to_value().map_err(show)?});
+        let env = au4a_core::Envelope::new(b.did(), None, KIND_ANNOUNCE, 1, None, body)
+            .map_err(show)?
+            .seal(&b)
+            .map_err(show)?;
+        match parse_announcement(&env) {
+            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => {
+                Ok("断言：B 的信封携带 A 的合法声明 → 两层签名都对但身份错配，判 unauthorized".into())
+            }
+            other => Err(format!("身份错配未被拒：{other:?}")),
+        }
+    }));
+    checks.push(verdict("1.1.3.pump_routes_and_forwards", || {
+        let a = AgentKeys::from_seed(&[35; 32]);
+        let b = AgentKeys::from_seed(&[36; 32]);
+        let mut kernel = au4a_kernel::Kernel::new(au4a_kernel::KernelConfig::default());
+        kernel
+            .register(&a, "alice", &["x"], Credits(20))
+            .map_err(show)?;
+        kernel
+            .register(&b, "bob", &["x"], Credits(20))
+            .map_err(show)?;
+        let announcement = announce(
+            &b,
+            &Declaration::new(b.did(), 1, 1, vec![sample_capability()?]).map_err(show)?,
+            1,
+        )
+        .map_err(show)?;
+        kernel.send(&announcement).map_err(show)?;
+        let foreign = au4a_core::Envelope::new(
+            b.did(),
+            None,
+            au4a_core::kinds::AGENT_CARD,
+            1,
+            None,
+            json!({"other_track": true}),
+        )
+        .map_err(show)?
+        .seal(&b)
+        .map_err(show)?;
+        kernel.send(&foreign).map_err(show)?;
+
+        let mut graph = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
+        let report = pump(&mut kernel, &mut graph, 1);
+        if report.routed != 1 || report.applied != 1 || report.forwarded != 1 || kernel.queue_len() != 1
+        {
+            return Err(format!("pump 统计不符：{}", report.to_value()));
+        }
+        Ok("断言：1 条能力通告被路由入图、1 条他轨道信封被转发回队列（id 不变、不吞消息）".into())
+    }));
+    checks
+}
+
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
     Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
+}
+
+/// 演示用 Agent：确定性种子 → 确定性 DID → 确定性场景。
+///
+/// 五个角色是刻意设计的，不是随手凑数：
+///
+/// * `alice` 需要「英译中 + 情感分析」的流水线（输入 `text/plain`）。
+/// * `bob` 提供 `translate.en-zh`，产出 `application/json`。
+/// * `carol` 提供 `sentiment.analyze`，接受 `application/json`。→ `bob → carol` 是可行解。
+/// * `dave` 提供**更便宜**的 `translate.en-zh`，但产出 `text/html`：贪心选它会走进死路。
+/// * `erin` 提供**更便宜**的 `sentiment.analyze`，但只接受 `text/plain`：同样对不上。
+///
+/// 于是「路径规划必须是真搜索」这件事有了可证伪的用例（见 v1.1.6 测试）：
+/// 按每步最便宜贪心会失败，只有搜索才能找到 `bob → carol`。
+pub struct DemoAgent {
+    pub keys: AgentKeys,
+    pub display: &'static str,
+    pub capabilities: Vec<Capability>,
+}
+
+/// 构造演示 Agent 集合（顺序固定：alice, bob, carol, dave, erin）。
+pub fn demo_agents() -> CoreResult<Vec<DemoAgent>> {
+    let translate_bob = Capability::new(SkillId::new("translate.en-zh")?, Credits(3))
+        .with_formats(&["text/plain"], &["application/json"])?
+        .with_latency(90, 240)
+        .with_reliability_bp(9_600);
+    let sentiment_carol = Capability::new(SkillId::new("sentiment.analyze")?, Credits(2))
+        .with_formats(&["application/json"], &["application/json"])?
+        .with_latency(110, 300)
+        .with_reliability_bp(9_700);
+    let translate_dave = Capability::new(SkillId::new("translate.en-zh")?, Credits(1))
+        .with_formats(&["text/plain"], &["text/html"])?
+        .with_latency(60, 150)
+        .with_reliability_bp(8_000);
+    let sentiment_erin = Capability::new(SkillId::new("sentiment.analyze")?, Credits(1))
+        .with_formats(&["text/plain"], &["application/json"])?
+        .with_latency(50, 120)
+        .with_reliability_bp(7_500);
+    let summarize_alice = Capability::new(SkillId::new("summarize.zh")?, Credits(5))
+        .with_formats(&["text/plain"], &["text/plain"])?
+        .with_latency(200, 600);
+
+    let mut agents = Vec::new();
+    for (seed, display, capabilities) in [
+        (11u8, "alice", vec![summarize_alice]),
+        (12, "bob", vec![translate_bob]),
+        (13, "carol", vec![sentiment_carol]),
+        (14, "dave", vec![translate_dave]),
+        (15, "erin", vec![sentiment_erin]),
+    ] {
+        agents.push(DemoAgent {
+            keys: AgentKeys::from_seed(&[seed; 32]),
+            display,
+            capabilities,
+        });
+    }
+    Ok(agents)
+}
+
+/// 在共享内核里注册演示 Agent（已注册就跳过：内核是共享资源，本轨道不重复注册）。
+fn ensure_registered(kernel: &mut au4a_kernel::Kernel, agents: &[DemoAgent]) -> CoreResult<usize> {
+    let mut registered = 0;
+    for agent in agents {
+        if kernel.card(&agent.keys.did()).is_none() {
+            kernel.register(&agent.keys, agent.display, &[], Credits(20))?;
+            registered += 1;
+        }
+    }
+    Ok(registered)
 }
 
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
@@ -197,6 +366,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     )];
     checks.extend(checks_v111());
     checks.extend(checks_v112());
+    checks.extend(checks_v113());
     checks
 }
 
@@ -208,7 +378,7 @@ pub fn results_json() -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "versions": ["v1.1.1", "v1.1.2"],
+        "versions": ["v1.1.1", "v1.1.2", "v1.1.3"],
         "checks": checks.len(),
         "checks_passed": passed,
         "schema": {
@@ -222,63 +392,65 @@ pub fn results_json() -> CoreResult<Value> {
     }))
 }
 
-/// v1.1.2 的自有流程：三个 Agent 各自签一份声明，A 接受 B/C 的声明并报告结果。
-///
-/// 后续小版本会让这里逐步接上广播、缓存、查询与路径规划，
-/// 但它从第一版起就必须做**真事**：返回值里的每个数字都来自真实计算。
+/// v1.1.3 的自有流程：五个 Agent 各自签声明并**通过 PMB 广播**，alice 收下邻居通告。
 pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
-    let alice = AgentKeys::from_seed(&[11; 32]);
-    let bob = AgentKeys::from_seed(&[12; 32]);
-    let carol = AgentKeys::from_seed(&[13; 32]);
+    let agents = demo_agents()?;
+    let newly_registered = ensure_registered(kernel, &agents)?;
+    let alice = &agents[0];
 
-    let alice_caps = vec![
-        Capability::new(SkillId::new("translate.en-zh")?, Credits(4))
-            .with_formats(&["text/plain"], &["text/plain"])?
-            .with_latency(80, 200)
-            .with_reliability_bp(9_500),
-        Capability::new(SkillId::new("sentiment.analyze")?, Credits(2))
-            .with_formats(&["text/plain"], &["application/json"])?
-            .with_latency(120, 400),
-    ];
-    let bob_caps = vec![Capability::new(SkillId::new("translate.en-zh")?, Credits(3))
-        .with_formats(&["text/plain"], &["application/json"])?
-        .with_latency(90, 240)];
-    let carol_caps = vec![Capability::new(SkillId::new("sentiment.analyze")?, Credits(2))
-        .with_formats(&["application/json"], &["application/json"])?
-        .with_latency(110, 300)];
-
-    let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
-    let own = Declaration::new(alice.did(), 1, 0, alice_caps)?.sign(&alice)?;
+    let mut graph = AgentCapabilityGraph::new(alice.keys.did(), CapGraphConfig::default());
+    let own = Declaration::new(alice.keys.did(), 1, 0, alice.capabilities.clone())?.sign(&alice.keys)?;
     let own_outcome = graph.apply(&own, 0);
-    let bob_outcome = graph.apply(&Declaration::new(bob.did(), 1, 0, bob_caps)?.sign(&bob)?, 0);
-    let carol_outcome =
-        graph.apply(&Declaration::new(carol.did(), 1, 0, carol_caps)?.sign(&carol)?, 0);
 
-    let rejected = [&own_outcome, &bob_outcome, &carol_outcome]
-        .iter()
-        .filter(|o| !o.is_applied())
-        .count();
+    // 每个邻居把自己的完整声明作为广播通告送进 PMB。ts 用固定值，保证可重放。
+    let mut sent = 0usize;
+    let mut send_failures = 0usize;
+    for agent in &agents[1..] {
+        let declaration = Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone())?;
+        let env = announce(&agent.keys, &declaration, 1)?;
+        match kernel.send(&env) {
+            Ok(_) => sent += 1,
+            Err(_) => send_failures += 1,
+        }
+    }
+
+    // 收到的通告进图；不属于本轨道的信封被原样转发回队列。
+    let pump_report = pump(kernel, &mut graph, 1);
+
+    // 篡改演示：改动已签通告里的一个数字，验签必然失败（不经过内核，避免污染共享拒绝记录）。
+    let tampered_rejected = {
+        let mut env = announce(
+            &agents[2].keys,
+            &Declaration::new(agents[2].keys.did(), 1, 0, agents[2].capabilities.clone())?,
+            2,
+        )?;
+        env.body["declaration"]["declaration"]["capabilities"][0]["price_per_unit"] = json!(0);
+        parse_announcement(&env)
+            .err()
+            .map(|(code, _)| code == au4a_core::RefusalCode::Unauthorized)
+            .unwrap_or(false)
+    };
+
+    let rejected = usize::from(!own_outcome.is_applied());
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "v1.1.2 声明 API：{} 个 Agent 自签声明，{} 条能力入图，{rejected} 次拒绝",
-            graph.known_agents(),
-            graph.capability_count()
+            "v1.1.3 广播协议：{sent} 条通告入队、{} 条被路由入图、{rejected} 条自有声明被拒、篡改拒绝={tampered_rejected}",
+            pump_report.routed
         ),
     );
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "version": "v1.1.2",
-        "agents": graph.known_agents(),
-        "capabilities": graph.capability_count(),
-        "skills": graph.skills().iter().map(|s| s.as_str()).collect::<Vec<_>>(),
-        "outcomes": [
-            own_outcome.to_value(),
-            bob_outcome.to_value(),
-            carol_outcome.to_value(),
-        ],
+        "version": "v1.1.3",
+        "agents_in_kernel": kernel.agent_count(),
+        "newly_registered": newly_registered,
+        "announcements_sent": sent,
+        "send_failures": send_failures,
+        "pump": pump_report.to_value(),
+        "tampered_rejected": tampered_rejected,
+        "graph": graph.to_value(),
         "rejected": rejected,
         "events": 1,
     }))
