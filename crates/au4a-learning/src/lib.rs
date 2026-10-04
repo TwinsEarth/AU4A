@@ -28,14 +28,23 @@
 
 pub mod experience;
 pub mod feedback;
+pub mod policy;
 pub mod rng;
 pub mod scenario;
+pub mod sim;
+pub mod violation;
 
 pub use experience::{Experience, ExperienceStore, Outcome, RecordOutcome, StoreStats};
 pub use feedback::{
     confidence_of, Feedback, FeedbackAnalyser, FeedbackReport, PeerFeedback, MIN_SAMPLES,
 };
+pub use policy::{adjust, PolicyAdjustment, PolicyBounds, PolicyParams, PolicyTargets, Signals};
 pub use rng::{hash64, SplitMix64};
+pub use sim::{
+    ab_test, accept_rate_curve_bp, compare, effective_success_bp, peer_profiles, Comparison,
+    MarketConfig, MarketRun, PeerProfile, RoundStats, TaskProfile, TASK_PROFILES,
+};
+pub use violation::{Violation, ViolationLog};
 
 use au4a_core::{CoreResult, SelfCheck};
 use serde_json::Value;
@@ -47,7 +56,7 @@ pub const TITLE: &str = "Individual Learning 个体学习";
 /// 版本区间。
 pub const RANGE: &str = "v1.6.1 → v1.6.10";
 /// 已实现到的小版本（每落地一版就前移一格）。
-pub const VERSION: &str = "v1.6.2";
+pub const VERSION: &str = "v1.6.3";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_learning";
 
@@ -58,6 +67,9 @@ pub fn self_check() -> Vec<SelfCheck> {
     let mut checks = Vec::new();
     checks.extend(experience::self_check());
     checks.extend(feedback::self_check());
+    checks.extend(violation::self_check());
+    checks.extend(policy::self_check());
+    checks.extend(sim::self_check());
     checks.extend(scenario::self_check());
     checks
 }

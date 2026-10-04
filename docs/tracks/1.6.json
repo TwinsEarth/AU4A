@@ -81,27 +81,44 @@
     {
       "version": "v1.6.3",
       "title": "行为调整",
-      "goal": "基于反馈真正改变策略参数：定价、任务选择、协作对象选择；并用同种子的对照实验量化改善。",
+      "goal": "让学习真的改变行为：把反馈与信号变成定价/任务选择/协作对象选择三个策略参数的下一个取值，并用同种子的对照实验量化改善。",
       "deliverables": [
-        "src/policy.rs: PolicyParams / PolicyBounds / Signals / adjust()",
-        "src/sim.rs: 合成任务市场（学习组 vs 对照组共用同一市场）"
+        "src/policy.rs: PolicyParams / PolicyBounds / PolicyTargets / Signals / PolicyAdjustment / adjust() / task_score_bp()",
+        "src/violation.rs: Violation / ViolationLog（违规单独记账、按协作者计数、公开投影脱敏）",
+        "src/sim.rs: 合成任务市场 + ab_test() + Comparison（学习组 vs 对照组同种子同一市场）",
+        "src/scenario.rs: 用 24 条经验做真实行为调整 + 对照实验",
+        "tests/policy.rs（9 个）、tests/market.rs（10 个）"
       ],
       "interfaces": [
-        "pub fn adjust(&PolicyParams, &FeedbackReport, &Signals, &PolicyBounds) -> CoreResult<PolicyAdjustment>"
+        "pub struct PolicyParams { price_bp, task_bias_bp, peer_bias_bp }",
+        "pub fn PolicyParams::baseline() -> PolicyParams  // 12000bp + 均匀偏好 = 对照组",
+        "pub struct PolicyBounds / PolicyTargets / Signals",
+        "pub fn adjust(&PolicyParams, &FeedbackReport, &ViolationLog, &Signals, &PolicyBounds, &PolicyTargets) -> CoreResult<PolicyAdjustment>",
+        "pub fn task_score_bp(&Feedback, Credits) -> i64",
+        "pub fn ab_test(&MarketConfig) -> CoreResult<(MarketRun, MarketRun, Comparison)>",
+        "pub fn compare(&MarketRun, &MarketRun) -> CoreResult<Comparison>",
+        "pub struct ViolationLog { record/len/total/count_of/peers/public_json }"
       ],
       "acceptance": [
-        "证据不足 → changed == false（不假装学习）",
-        "接受率高于目标 → 定价上调；低于目标 → 下调（基点整数步长）",
-        "同一场景下学习组与对照组策略参数不同，且改善可量化"
+        "confidence_bp < min_confidence_bp → changed=false 且三个杠杆都不动（理由 evidence-below-threshold）",
+        "接受率 3000bp → 降价一步；9800bp → 提价一步；死区内 → 不动",
+        "good.type 偏好上升、bad.type 下降；peer0 上升、peer1 下降；每条理由可追溯到数据",
+        "平滑收益跌破死区 → 反向；收益改善 → 沿原方向继续",
+        "违规协作者偏好单调更低（-2000bp 惩罚），理由含 violations 计数",
+        "边界钳制：价格在上界时移动量为 0；偏好始终在 [bias_min, bias_max]；非法边界/门槛被拒",
+        "公开投影不含 did:au4a:（理由文本用 DID 摘要前缀 peer_tag）",
+        "对照组参数完全冻结；学习组价格 12000→9000bp、3 类任务偏好、8 个协作者偏好",
+        "对照组 2239bp/3240 微积分/21 违规 vs 学习组 4583bp/5105 微积分/12 违规（成功率 +2344bp、收益 +57.6%、违规 -43%）",
+        "两次 ab_test 逐字节一致；不同种子/不同 tick 数的 compare() 返回 InvalidKind"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 44,
+        "tests_total": 44,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 9 策略。A/B 数据为 192 tick/组、种子 0x161616 的真实运行输出（日志 1.6-v1.6.3-market.log）。提升结论的适用范围是本仓合成市场，不是真实网络绩效（该主张按 cpu-proto 对待）。第一版用相邻两轮收益比较驱动定价，实测学习组反而更差；改为接受率驱动 + EMA 安全阀后才为正，教训记录在 policy.rs::price_direction。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.3.log"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.6.4",

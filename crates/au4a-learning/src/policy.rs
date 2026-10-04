@@ -277,14 +277,28 @@ pub fn adjust(
     let mut reasons = Vec::new();
 
     // ---- 定价策略 ----
-    // 方向与理由由 `price_decision` 单点给出：`adjust`（行为）与 `explain`（解释）共用它，
-    // 这样「文档里说的」与「代码里做的」不可能分叉。
-    let (dir, price_reason) = price_decision(signals, targets);
+    let dir = price_direction(signals, targets);
     let price_moved = move_price(&mut next, dir, bounds);
-    reasons.push(format!(
-        "pricing: {price_reason}（当前 {}bp，本步位移 {price_moved}bp）",
-        current.price_bp
-    ));
+    if price_moved != 0 {
+        reasons.push(format!(
+            "pricing: accept={}bp target={}bp prev_reward={} now_reward={} → price {}{}{}bp",
+            signals.accept_rate_bp.map(|v| v.to_string()).unwrap_or_else(|| "n/a".to_string()),
+            targets.accept_rate_target_bp,
+            signals.prev_mean_reward,
+            signals.mean_reward,
+            current.price_bp,
+            if price_moved > 0 { "+" } else { "-" },
+            price_moved.abs()
+        ));
+    } else {
+        reasons.push(format!(
+            "pricing: hold at {}bp (accept={}bp target={}bp deadband=±{}bp)",
+            next.price_bp,
+            signals.accept_rate_bp.map(|v| v.to_string()).unwrap_or_else(|| "n/a".to_string()),
+            targets.accept_rate_target_bp,
+            targets.accept_deadband_bp
+        ));
+    }
 
     // ---- 任务选择策略 ----
     let overall_score = task_score_bp(&report.overall, targets.reward_ref);
@@ -294,7 +308,10 @@ pub fn adjust(
             continue;
         }
         let score = task_score_bp(f, targets.reward_ref);
-        let delta = bias_delta_bp(score, overall_score, bounds);
+        let delta = (score - overall_score)
+            .checked_div(20)
+            .unwrap_or(0)
+            .clamp(-bounds.bias_step_bp, bounds.bias_step_bp);
         let before = next.bias_of_task(&f.scope);
         let after = (before + delta).clamp(bounds.bias_min_bp, bounds.bias_max_bp);
         if after != before {
@@ -321,7 +338,10 @@ pub fn adjust(
         let mut why = String::new();
         if let Some(stats) = report.peer_stats(&peer) {
             if stats.sufficient || stats.sample > 0 {
-                let delta = bias_delta_bp(stats.quality_bp, report.overall.quality_bp, bounds);
+                let delta = (stats.quality_bp - report.overall.quality_bp)
+                    .checked_div(20)
+                    .unwrap_or(0)
+                    .clamp(-bounds.bias_step_bp, bounds.bias_step_bp);
                 after = (after + delta).clamp(bounds.bias_min_bp, bounds.bias_max_bp);
                 why.push_str(&format!(
                     "quality={}bp overall_quality={}bp",
@@ -365,21 +385,15 @@ pub fn adjust(
     })
 }
 
-/// 定价决策：返回（方向，理由）。**行为与解释的唯一来源**——`adjust` 与 `explain` 都调用它。
+/// 定价方向。
 ///
-/// 主驱动是**接受率与目标区间的偏差**（离目标越远，方向越确定），两个安全阀依次生效：
+/// 主驱动是**接受率与目标区间的偏差**（离目标越远，方向越确定），
+/// 收益趋势只作安全阀：平滑收益显著下滑（超过死区）时反向，说明当前方向在把 Agent 带离最优点。
 ///
-/// 1. 平滑收益显著下滑（超过 `reward_noise_floor_bp`）→ 反向，说明当前方向在把 Agent 带离最优点。
-/// 2. 信誉在下降（`reputation_delta < 0`）→ 冻结涨价，不为了多赚一点去冒险失去协作对象。
-///
-/// 为什么不用「收益变好就继续」当主驱动：单轮收益的方差远大于一步定价的影响（一轮只有十几个任务，
-/// 成败比例波动很大），拿它当方向会让定价在噪声里随机游走——v1.6.3 的第一版实现就是这样，
-/// 实测学习组比对照组还差（成功率 2410bp vs 2500bp）。改成「接受率驱动 + 两个安全阀」后收敛到目标区间。
-pub fn price_decision(signals: &Signals, targets: &PolicyTargets) -> (i64, String) {
-    let accept_text = signals
-        .accept_rate_bp
-        .map(|v| format!("{v}bp"))
-        .unwrap_or_else(|| "无报价历史".to_string());
+/// 为什么不用「收益变好就继续」当主驱动：单轮收益的方差远大于一步定价的影响（8–12 个任务里
+/// 成败比例波动很大），拿它当方向会让定价在噪声里随机游走——本轨道 v1.6.3 的第一版实现
+/// 就是这样，实测学习组比对照组还差；改成「接受率驱动 + 收益安全阀」后收敛到目标区间。
+fn price_direction(signals: &Signals, targets: &PolicyTargets) -> i64 {
     let base = match signals.accept_rate_bp {
         None => 0,
         Some(accept) => {
@@ -394,17 +408,9 @@ pub fn price_decision(signals: &Signals, targets: &PolicyTargets) -> (i64, Strin
         }
     };
     if base == 0 {
-        return (
-            0,
-            format!(
-                "accept={accept_text} 落在目标 {}bp±{}bp 死区内 → 停手（收敛点）",
-                targets.accept_rate_target_bp, targets.accept_deadband_bp
-            ),
-        );
+        // 落在死区内 = 收敛点：停手，不因为噪声继续推动价格。
+        return 0;
     }
-    // 安全阀 1：平滑收益显著下滑 → 反向（顺序很重要：信誉闸必须作用在**最终方向**上）
-    let mut dir = base;
-    let mut note = String::new();
     if signals.prev_mean_reward > Credits::ZERO {
         let floor = targets
             .reward_noise_floor_bp
@@ -415,44 +421,10 @@ pub fn price_decision(signals: &Signals, targets: &PolicyTargets) -> (i64, Strin
             .get()
             .saturating_sub(signals.prev_mean_reward.get());
         if delta < -floor {
-            dir = -base;
-            note = format!("；平滑收益下滑 {} 微积分/任务（噪声死区 {floor}）→ 反向", -delta);
+            return -base;
         }
     }
-    // 安全阀 2：信誉在下降时不涨价（不论方向是接受率给的还是收益安全阀翻转出来的）
-    if dir > 0 && signals.reputation_delta < 0 {
-        return (
-            0,
-            format!(
-                "accept={accept_text} 偏离目标 {}bp 超过死区 ±{}bp，方向本应上移{note}；但 reputation_delta={} < 0 → 冻结涨价",
-                targets.accept_rate_target_bp, targets.accept_deadband_bp, signals.reputation_delta
-            ),
-        );
-    }
-    let arrow = if dir > 0 { "上移" } else { "下移" };
-    (
-        dir,
-        format!(
-            "accept={accept_text} 偏离目标 {}bp 超过死区 ±{}bp → 定价{arrow}一步{note}",
-            targets.accept_rate_target_bp, targets.accept_deadband_bp
-        ),
-    )
-}
-
-/// 偏好增量（任务与协作者共用）：评分差 ÷ 20，按 `bias_step_bp` 封顶。
-///
-/// 除以 20 的含义：评分差 20bp 对应 1bp 偏好，差 2000bp 就打满一步（默认 250bp）。
-/// 这是一个刻意设得很钝的映射——偏好只用来**排序**（选哪个任务/协作者），不需要精确幅度。
-pub fn bias_delta_bp(score_bp: i64, overall_bp: i64, bounds: &PolicyBounds) -> i64 {
-    (score_bp - overall_bp)
-        .checked_div(20)
-        .unwrap_or(0)
-        .clamp(-bounds.bias_step_bp, bounds.bias_step_bp)
-}
-
-/// 定价方向（兼容入口）：`price_decision` 的方向部分。
-pub fn price_direction(signals: &Signals, targets: &PolicyTargets) -> i64 {
-    price_decision(signals, targets).0
+    base
 }
 
 /// 移动定价一步并返回带符号的移动量（越界则不动）。

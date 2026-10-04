@@ -15,7 +15,10 @@ use serde_json::{json, Value};
 
 use crate::experience::{Experience, ExperienceStore, Outcome};
 use crate::feedback::FeedbackAnalyser;
+use crate::policy::{adjust, PolicyBounds, PolicyParams, PolicyTargets, Signals};
 use crate::rng::hash64;
+use crate::sim::{ab_test, MarketConfig};
+use crate::violation::ViolationLog;
 use crate::TRACK;
 
 /// 场景种子：固定值，保证端到端演示与部署验证可复现。
@@ -191,6 +194,52 @@ pub fn run(kernel: &mut Kernel) -> CoreResult<Value> {
     }
 
     let stats = serde_json::to_value(store.stats()).map_err(|_| CoreError::Encoding)?;
+
+    // v1.6.3：用这 24 条成功/失败经验做一次真实的行为调整（策略参数必须真的变）
+    let baseline = PolicyParams::baseline();
+    let signals = Signals::cold_start(
+        store.len(),
+        report.overall.quality_bp,
+        report.overall.mean_reward,
+    );
+    let adjustment = adjust(
+        &baseline,
+        &report,
+        &ViolationLog::new(),
+        &signals,
+        &PolicyBounds::default(),
+        &PolicyTargets::default(),
+    )?;
+    if adjustment.changed {
+        kernel.emit(
+            &format!("{TRACK}.policy.adjust"),
+            format!(
+                "行为调整：定价移动 {:?}bp 至 {}bp、任务偏好 {} 项变动、协作者偏好 {} 项变动",
+                adjustment.price_moved_bp,
+                adjustment.next.price_bp,
+                adjustment.task_bias_moved_bp.len(),
+                adjustment.peer_bias_moved_bp.len()
+            ),
+        );
+    }
+
+    // v1.6.3：学习组 vs 对照组（同一市场、同一种子，唯一差别是是否更新策略参数）
+    let (control, learning, comparison) = ab_test(&MarketConfig::default())?;
+    kernel.emit(
+        &format!("{TRACK}.market.ab_test"),
+        format!(
+            "对照实验：成功率 {}bp→{}bp（+{}bp），收益 {}→{} 微积分（+{}bp），违规 {}→{}",
+            comparison.control_success_bp,
+            comparison.learning_success_bp,
+            comparison.success_lift_bp,
+            comparison.control_revenue,
+            comparison.learning_revenue,
+            comparison.revenue_lift_bp,
+            comparison.control_violations,
+            comparison.learning_violations
+        ),
+    );
+
     Ok(json!({
         "track": TRACK,
         "version": crate::VERSION,
@@ -206,6 +255,15 @@ pub fn run(kernel: &mut Kernel) -> CoreResult<Value> {
         "store": stats,
         "feedback": report.public_json()?,
         "ledger_conserved": kernel.ledger().check_conservation().is_ok(),
+        "policy_adjustment": adjustment.public_json()?,
+        "policy_before": baseline.public_json()?,
+        "policy_after": adjustment.next.public_json()?,
+        "market": {
+            "control": control.public_json()?,
+            "learning": learning.public_json()?,
+            "comparison": comparison.to_value()?,
+            "improved": comparison.improved(),
+        },
     }))
 }
 
@@ -269,6 +327,38 @@ pub fn self_check() -> Vec<SelfCheck> {
             "反馈样本 {feedback_total} == 经验 {experiences}；结算合计 {settled} 微积分 ≤ 成功数×单价；\
              结算被拒计数存在={}",
             a.get("settlement_refused").is_some()
+        ),
+    ));
+
+    // v1.6.3：学习必须真的改变行为，且改善可量化（不是打印「已学习」）
+    let policy_changed = a
+        .get("policy_adjustment")
+        .and_then(|p| p.get("changed"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let market_improved = a
+        .get("market")
+        .and_then(|m| m.get("improved"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let lift = a
+        .get("market")
+        .and_then(|m| m.get("comparison"))
+        .and_then(|c| c.get("success_lift_bp"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let revenue_lift = a
+        .get("market")
+        .and_then(|m| m.get("comparison"))
+        .and_then(|c| c.get("revenue_lift_credits"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    checks.push(crate::check(
+        "scenario.learning_changes_behaviour",
+        policy_changed && market_improved && lift > 0 && revenue_lift > 0,
+        format!(
+            "策略参数改变={policy_changed}；学习组成功率提升 +{lift}bp、收益提升 +{revenue_lift} 微积分；\
+             对照实验判定改善={market_improved}"
         ),
     ));
     checks
