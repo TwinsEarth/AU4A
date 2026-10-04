@@ -22,7 +22,8 @@ if (!version) {
 }
 const semver = version.replace(/^v/, '');
 const majorLine = has('--major');
-const pkgVersion = majorLine ? `${semver.split('.').slice(0, 2).join('.')}.0` : semver;
+// --as 允许显式指定包版本号（用于「大版本线」标记，例如把最新中版本再发一份 1.0.0 作为 v1 线）
+const pkgVersion = arg('--as') ?? (majorLine ? `${semver.split('.').slice(0, 2).join('.')}.0` : semver);
 const out = arg('--out', path.join('_pkg', 'npm', majorLine ? `${version}-major` : version));
 
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs', 'versions.json'), 'utf8'));

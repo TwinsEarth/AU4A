@@ -1,0 +1,204 @@
+name: Publish Packages
+
+# 把 AU4A 的「中版本」与「大版本线」自动生成包并同步发布到 NPM 与 GitHub Packages，
+# 同时把运行时镜像推到 GHCR。三类触发：
+#   * push tag v*      —— 某个版本收尾时自动发（中版本矩阵按 tag 精确到单个版本）
+#   * release published —— 10 个中版本 Release 发布时自动发
+#   * workflow_dispatch —— 手动全量发布（默认：10 个中版本 + 大版本线 v1）
+#
+# 版本策略：
+#   中版本  -> 包版本 = 该中版本收尾版本（1.0.10 … 1.8.10、1.9.9），dist-tag medium-x.y
+#   大版本线 -> 包版本 = 1.0.0（v1 线标记，内容 = 最新中版本），dist-tag major-v1 + latest
+# 同步双发：npmjs（secret NPM_TOKEN）+ GitHub Packages（内置 GITHUB_TOKEN）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "只发布单个版本 tag（例如 v1.9.9）；留空 = 10 个中版本全量 + 大版本线"
+        required: false
+        default: ""
+      skip_npmjs:
+        description: "跳过 npmjs（只发 GitHub Packages / GHCR）"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    name: plan (which versions to publish)
+    runs-on: ubuntu-latest
+    outputs:
+      versions: ${{ steps.set.outputs.versions }}
+      major: ${{ steps.set.outputs.major }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: set
+        run: |
+          set -euo pipefail
+          latest=$(node -e "const m=require('./docs/versions.json');console.log(m.versions.filter(v=>v.medium_final).pop().version)")
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "versions=[\"${{ inputs.version }}\"]" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "versions=[\"${{ github.ref_name }}\"]" >> "$GITHUB_OUTPUT"
+          else
+            all=$(node -e "const m=require('./docs/versions.json');console.log(JSON.stringify(m.versions.filter(v=>v.medium_final).map(v=>v.version)))")
+            echo "versions=$all" >> "$GITHUB_OUTPUT"
+          fi
+          echo "major=$latest" >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+  npm-medium:
+    name: npm medium ${{ matrix.version }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ${{ fromJSON(needs.plan.outputs.versions) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: pack
+        run: node tools/pack-npm.mjs --version ${{ matrix.version }} --out pkg
+      - name: show package identity
+        run: node -e "const p=require('./pkg/package.json');console.log(p.name+'@'+p.version+'  '+p.description.slice(0,80))"
+      - name: publish to npmjs
+        if: ${{ !inputs.skip_npmjs }}
+        working-directory: pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::secret NPM_TOKEN is not set — cannot publish to npmjs"; exit 1
+          fi
+          npm publish --access public --registry=https://registry.npmjs.org
+      - name: publish to GitHub Packages
+        working-directory: pkg
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '@twinsearth:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > .npmrc
+          npm publish --registry=https://npm.pkg.github.com || echo "already published to GitHub Packages"
+      - name: medium dist-tag (npmjs)
+        if: ${{ !inputs.skip_npmjs }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          v=${{ matrix.version }}; v=${v#v}
+          maj=${v%%.*}; rest=${v#*.}; min=${rest%%.*}
+          npm dist-tag add "@twinsearth/au4a@${v}" "medium-${maj}.${min}" --registry=https://registry.npmjs.org
+
+  npm-major:
+    name: npm major line v1
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: pack major-line marker (1.0.0 = the v1 line)
+        run: node tools/pack-npm.mjs --version ${{ needs.plan.outputs.major }} --as 1.0.0 --out pkg-major
+      - name: publish to npmjs
+        if: ${{ !inputs.skip_npmjs }}
+        working-directory: pkg-major
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::secret NPM_TOKEN is not set — cannot publish to npmjs"; exit 1
+          fi
+          npm publish --access public --registry=https://registry.npmjs.org || echo "already published"
+          latest=${{ needs.plan.outputs.major }}; latest=${latest#v}
+          npm dist-tag add "@twinsearth/au4a@${latest}" latest --registry=https://registry.npmjs.org
+          npm dist-tag add "@twinsearth/au4a@${latest}" major-v1 --registry=https://registry.npmjs.org
+      - name: publish to GitHub Packages
+        working-directory: pkg-major
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '@twinsearth:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > .npmrc
+          npm publish --registry=https://npm.pkg.github.com || echo "already published to GitHub Packages"
+
+  container:
+    name: container (ghcr.io/twinsearth/au4a)
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/twinsearth/au4a
+          tags: |
+            type=raw,value=${{ needs.plan.outputs.major }}
+            type=raw,value=1.0.0
+            type=raw,value=latest
+            type=sha,prefix=sha-
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  summary:
+    name: summary
+    needs: [plan, npm-medium, npm-major, container]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: job summary
+        run: |
+          {
+            echo "## AU4A packages"
+            echo ''
+            echo "- versions: \`${{ needs.plan.outputs.versions }}\`"
+            echo "- major line marker: \`1.0.0\` (content = ${{ needs.plan.outputs.major }})"
+            echo "- npm-medium: ${{ needs.npm-medium.result }}"
+            echo "- npm-major: ${{ needs.npm-major.result }}"
+            echo "- container: ${{ needs.container.result }}"
+            echo ''
+            echo "npm: https://www.npmjs.com/package/@twinsearth/au4a"
+            echo "GitHub Packages: https://github.com/TwinsEarth/AU4A/packages"
+            echo "GHCR: https://github.com/TwinsEarth/AU4A/pkgs/container/au4a"
+          } >> "$GITHUB_STEP_SUMMARY"
