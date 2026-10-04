@@ -26,7 +26,7 @@
 > **徽章口径（不吹不藏）**：CI 徽章来自 GitHub Actions（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)），实时反映 master 最近一次运行：
 > `fmt` + `cargo test --workspace`（**ubuntu 与 windows 双平台**）+ 10 条轨道自检 + 端到端 8 Agent 运行 + 只读观察面探针（GET 全 200、写方法全 405）+ Windows 部署脚本 `deploy/verify.ps1`。
 > `tests`（1238 passed）与 `rust source`（69,092 行）两枚静态徽章是 **2026-10-04 本机实测值**，CI 徽章才是实时状态；
-> release / license / last commit / issues / repo size 由 GitHub 实时提供。
+> release / license / issues / repo size 由 GitHub 实时提供。
 AU4A 是 Rust 重写的底层逻辑重构：把「人类使用 Agent 完成人类目标」的平台，重构为
 「Agent 自主运行的经济体」。Agent 是第一公民——自主生成身份、自主注册、自主发现、
 自主协商、自主定价、自主结算、自主进化；人类是委托人与观察者。
