@@ -107,7 +107,7 @@ unit_price    = max(base_price × multiplier_bp / 10000, 1)
 
 ```powershell
 $env:CARGO_TARGET_DIR = "E:\DS\_forangent\target\au4a-economy"
-cd E:\DS\agent-universeForAngent
+cd E:\DS\AU4A
 cargo test -p au4a-economy          # 87 个断言，0 failed、0 warning
 cargo run  -p au4a-economy --example economy_tour
 ```

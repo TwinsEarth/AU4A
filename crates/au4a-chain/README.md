@@ -107,7 +107,7 @@ AU4A 的跨链结算层：BTC 侧（RGB、Taproot Assets）与 ETH 侧（ERC-800
 
 ```powershell
 $env:CARGO_TARGET_DIR = "E:\DS\_forangent\target\au4a-chain"
-cd E:\DS\agent-universeForAngent
+cd E:\DS\AU4A
 cargo test -p au4a-chain          # 92 个断言（lib 76 + invariants 9 + e2e 7），0 failed、0 warning
 cargo run  -p au4a-chain --example chain_tour
 ```

@@ -4,7 +4,7 @@
 //!
 //! ```powershell
 //! $env:CARGO_TARGET_DIR = "E:\DS\_forangent\target\au4a-learning"
-//! cd E:\DS\agent-universeForAngent
+//! cd E:\DS\AU4A
 //! cargo run -p au4a-learning --example learning_loop            # 默认种子
 //! cargo run -p au4a-learning --example learning_loop -- 12345    # 指定种子
 //! ```

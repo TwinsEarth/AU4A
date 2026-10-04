@@ -14,7 +14,7 @@ import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { materialize } from './materialize.mjs';
 
-const ROOT = 'E:\\DS\\agent-universeForAngent';
+const ROOT = 'E:\\DS\\AU4A';
 const WORK = 'E:\\DS\\_forangent\\verify';
 const TARGET_ROOT = 'E:\\DS\\_forangent\\verify-target';
 const argv = process.argv.slice(2);

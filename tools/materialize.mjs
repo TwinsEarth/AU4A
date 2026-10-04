@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DEFAULT_ROOT = 'E:\\DS\\agent-universeForAngent';
+const DEFAULT_ROOT = 'E:\\DS\\AU4A';
 const DEFAULT_SNAP = 'E:\\DS\\_forangent\\snapshots';
 
 const JUNK_DIRS = new Set(['target', '.git', '.snapshots', 'node_modules', '.pytest_cache']);

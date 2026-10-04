@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const ROOT = 'E:\\DS\\agent-universeForAngent';
+const ROOT = 'E:\\DS\\AU4A';
 const argv = process.argv.slice(2);
 const has = (n) => argv.includes(n);
 const allowMissing = has('--allow-missing');

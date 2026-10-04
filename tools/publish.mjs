@@ -20,7 +20,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { materialize, walk } from './materialize.mjs';
 
-const ROOT = 'E:\\DS\\agent-universeForAngent';
+const ROOT = 'E:\\DS\\AU4A';
 const WORK = 'E:\\DS\\_forangent';
 const MAT = path.join(WORK, 'mat');
 const STATE_FILE = path.join(WORK, 'publish-state.json');
