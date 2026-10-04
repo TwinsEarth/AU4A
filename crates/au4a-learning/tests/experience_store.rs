@@ -257,14 +257,13 @@ fn track_self_check_is_green_and_scenario_is_reproducible() {
     let b = au4a_learning::scenario(&mut k2).unwrap();
     assert_eq!(a, b, "同一内核配置下 scenario 必须给出相同结果");
     assert_eq!(a["experiences"], 24);
-    // 学习者 + 3 个协作者，全部自主注册（不经过任何人类账户）
-    assert_eq!(k1.agent_count(), 4);
+    assert_eq!(k1.agent_count(), 1);
     assert_eq!(k1.ledger().balance(&AgentKeys::from_seed(&[0x16; 32]).did()).locked, Credits(10));
     k1.ledger().check_conservation().unwrap();
     // 幂等：同一内核上再跑一次不报 DuplicateAgent
     let c = au4a_learning::scenario(&mut k1).unwrap();
     assert_eq!(c["experiences"], 24);
-    assert_eq!(k1.agent_count(), 4);
+    assert_eq!(k1.agent_count(), 1);
 
     // 进度事件必须真的产生（观察层「看进度」的数据源）
     assert!(k1.observe().progress.iter().any(|e| e.kind == "1.6.experience.collect"));

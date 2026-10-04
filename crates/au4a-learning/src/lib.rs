@@ -22,50 +22,16 @@
 //! | 负数边界或负步长 | [`CoreError::NegativeAmount`] |
 //! | 整数溢出 | [`CoreError::Overflow`] |
 //! | 本地加密视图的密钥不正确（完整性标签不匹配） | [`CoreError::InvalidSignature`] |
-//! | 回滚到一个不存在的代际（历史为空） | [`CoreError::InvalidVersion`] |
 //!
 //! 轨道内**串行**开发：每个小版本落地一个职责，并留下自检与证据。
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 
-pub mod demo;
-pub mod eval;
 pub mod experience;
-pub mod explain;
-pub mod feedback;
-pub mod model;
-pub mod policy;
-pub mod privacy;
 pub mod rng;
 pub mod scenario;
-pub mod signal;
-pub mod sim;
-pub mod violation;
 
-pub use demo::{demo_report, demo_report_is_publishable, DEMO_EXPERIENCES, DEMO_GENERATIONS, DEMO_SEED};
-pub use eval::{
-    ablations, evaluate, AblationRow, ArmStats, EvalConfig, EvalReport, SeedResult, EVAL_SEEDS,
-};
 pub use experience::{Experience, ExperienceStore, Outcome, RecordOutcome, StoreStats};
-pub use explain::{explain, explain_peer_tag, BiasExplanation, PolicyExplanation, PriceExplanation};
-pub use feedback::{
-    confidence_of, Feedback, FeedbackAnalyser, FeedbackReport, PeerFeedback, MIN_SAMPLES,
-};
-pub use model::{
-    LearningModel, ModelConfig, ReputationLedger, UpdateRecord, REPUTATION_MAX, REPUTATION_MIN,
-    REPUTATION_VIOLATION,
-};
-pub use policy::{
-    adjust, bias_delta_bp, price_decision, price_direction, task_score_bp, PolicyAdjustment,
-    PolicyBounds, PolicyParams, PolicyTargets, Signals,
-};
-pub use privacy::{open, peer_tag, publish, seal, PrivacyPolicy, PublicAggregate, PublicView, SealedBlob};
 pub use rng::{hash64, SplitMix64};
-pub use signal::{LearningSignal, SignalWeights, VIOLATION_UNIT_BP};
-pub use sim::{
-    ab_test, accept_rate_curve_bp, compare, effective_success_bp, peer_profiles, Comparison,
-    MarketConfig, MarketRun, PeerProfile, RoundStats, TaskProfile, TASK_PROFILES,
-};
-pub use violation::{Violation, ViolationLog};
 
 use au4a_core::{CoreResult, SelfCheck};
 use serde_json::Value;
@@ -77,7 +43,7 @@ pub const TITLE: &str = "Individual Learning 个体学习";
 /// 版本区间。
 pub const RANGE: &str = "v1.6.1 → v1.6.10";
 /// 已实现到的小版本（每落地一版就前移一格）。
-pub const VERSION: &str = "v1.6.10";
+pub const VERSION: &str = "v1.6.1";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_learning";
 
@@ -87,15 +53,6 @@ pub const CRATE: &str = "au4a_learning";
 pub fn self_check() -> Vec<SelfCheck> {
     let mut checks = Vec::new();
     checks.extend(experience::self_check());
-    checks.extend(feedback::self_check());
-    checks.extend(violation::self_check());
-    checks.extend(policy::self_check());
-    checks.extend(signal::self_check());
-    checks.extend(model::self_check());
-    checks.extend(privacy::self_check());
-    checks.extend(explain::self_check());
-    checks.extend(sim::self_check());
-    checks.extend(eval::self_check());
     checks.extend(scenario::self_check());
     checks
 }

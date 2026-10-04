@@ -46,193 +46,126 @@
     {
       "version": "v1.6.2",
       "title": "反馈机制",
-      "goal": "把原始经验聚合成按任务类型与协作者维度的反馈统计（成功率/部分成功/失败、平均质量、平均收益、置信度），成功经验通过共享内核账本真实结算。",
+      "goal": "把原始经验聚合成按任务类型与协作者维度的反馈统计（成功率/部分成功/失败、平均收益、信誉变化、违规计数）。",
       "deliverables": [
-        "src/feedback.rs: Feedback / PeerFeedback / FeedbackReport / FeedbackAnalyser / confidence_of",
-        "src/scenario.rs: 反馈阶段 + cpu-proto 结算阶段（拒绝被计数）",
-        "tests/feedback.rs: 10 个集成测试"
+        "src/feedback.rs: Feedback / PeerFeedback / FeedbackReport / FeedbackAnalyser"
       ],
       "interfaces": [
-        "pub const MIN_SAMPLES: usize = 4",
-        "pub fn confidence_of(sample: usize) -> i64",
-        "pub struct Feedback { scope, sample, success_bp, partial_bp, failure_bp, quality_bp, reward_total, mean_reward, confidence_bp, sufficient }",
-        "pub struct PeerFeedback { peer, sample, success_bp, quality_bp, mean_reward, confidence_bp, sufficient }",
-        "pub struct FeedbackReport { total, overall, per_type, per_peer }",
-        "pub fn FeedbackReport::public_json(&self) -> CoreResult<Value>",
-        "pub fn FeedbackAnalyser::analyse(store: &ExperienceStore) -> CoreResult<FeedbackReport>"
+        "pub fn FeedbackAnalyser::analyse(&ExperienceStore) -> CoreResult<FeedbackReport>"
       ],
       "acceptance": [
-        "4 条混合经验 → success/partial/failure = 5000/2500/2500 bp 且三率和恒为 10000",
-        "quality_bp=6250、reward_total=100、mean_reward=25（整数除法）",
-        "样本 1/4 → sufficient=false 且 confidence_bp=2500；空库 → 零报告不是错误",
-        "协作者维度统计精确（成功/失败/部分各自落在正确 peer 上）",
-        "public_json 不含 did:au4a:、不含上下文原文、不含 per_peer 字段",
-        "端到端 settled_total == successes×40 且账本守恒；cap=0 时拒付被计数"
+        "已知经验集合 → 精确的 success_bp / partial_bp / failure_bp / 平均收益",
+        "样本不足时 confidence_bp 低且 sufficient == false",
+        "空经验库 → 空报告而不是错误"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 25,
-        "tests_total": 25,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 10 经验库集成 + 10 反馈集成。结算走本地内存账本（无真实链上转账），结算金额受 EvidenceGrade::CpuProto 上限保护。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.2.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.3",
       "title": "行为调整",
-      "goal": "让学习真的改变行为：把反馈与信号变成定价/任务选择/协作对象选择三个策略参数的下一个取值，并用同种子的对照实验量化改善。",
+      "goal": "基于反馈真正改变策略参数：定价、任务选择、协作对象选择；并用同种子的对照实验量化改善。",
       "deliverables": [
-        "src/policy.rs: PolicyParams / PolicyBounds / PolicyTargets / Signals / PolicyAdjustment / adjust() / task_score_bp()",
-        "src/violation.rs: Violation / ViolationLog（违规单独记账、按协作者计数、公开投影脱敏）",
-        "src/sim.rs: 合成任务市场 + ab_test() + Comparison（学习组 vs 对照组同种子同一市场）",
-        "src/scenario.rs: 用 24 条经验做真实行为调整 + 对照实验",
-        "tests/policy.rs（9 个）、tests/market.rs（10 个）"
+        "src/policy.rs: PolicyParams / PolicyBounds / Signals / adjust()",
+        "src/sim.rs: 合成任务市场（学习组 vs 对照组共用同一市场）"
       ],
       "interfaces": [
-        "pub struct PolicyParams { price_bp, task_bias_bp, peer_bias_bp }",
-        "pub fn PolicyParams::baseline() -> PolicyParams  // 12000bp + 均匀偏好 = 对照组",
-        "pub struct PolicyBounds / PolicyTargets / Signals",
-        "pub fn adjust(&PolicyParams, &FeedbackReport, &ViolationLog, &Signals, &PolicyBounds, &PolicyTargets) -> CoreResult<PolicyAdjustment>",
-        "pub fn task_score_bp(&Feedback, Credits) -> i64",
-        "pub fn ab_test(&MarketConfig) -> CoreResult<(MarketRun, MarketRun, Comparison)>",
-        "pub fn compare(&MarketRun, &MarketRun) -> CoreResult<Comparison>",
-        "pub struct ViolationLog { record/len/total/count_of/peers/public_json }"
+        "pub fn adjust(&PolicyParams, &FeedbackReport, &Signals, &PolicyBounds) -> CoreResult<PolicyAdjustment>"
       ],
       "acceptance": [
-        "confidence_bp < min_confidence_bp → changed=false 且三个杠杆都不动（理由 evidence-below-threshold）",
-        "接受率 3000bp → 降价一步；9800bp → 提价一步；死区内 → 不动",
-        "good.type 偏好上升、bad.type 下降；peer0 上升、peer1 下降；每条理由可追溯到数据",
-        "平滑收益跌破死区 → 反向；收益改善 → 沿原方向继续",
-        "违规协作者偏好单调更低（-2000bp 惩罚），理由含 violations 计数",
-        "边界钳制：价格在上界时移动量为 0；偏好始终在 [bias_min, bias_max]；非法边界/门槛被拒",
-        "公开投影不含 did:au4a:（理由文本用 DID 摘要前缀 peer_tag）",
-        "对照组参数完全冻结；学习组价格 12000→9000bp、3 类任务偏好、8 个协作者偏好",
-        "对照组 2239bp/3240 微积分/21 违规 vs 学习组 4583bp/5105 微积分/12 违规（成功率 +2344bp、收益 +57.6%、违规 -43%）",
-        "两次 ab_test 逐字节一致；不同种子/不同 tick 数的 compare() 返回 InvalidKind"
+        "证据不足 → changed == false（不假装学习）",
+        "接受率高于目标 → 定价上调；低于目标 → 下调（基点整数步长）",
+        "同一场景下学习组与对照组策略参数不同，且改善可量化"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 44,
-        "tests_total": 44,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 9 策略。A/B 数据为 192 tick/组、种子 0x161616 的真实运行输出（日志 1.6-v1.6.3-market.log）。提升结论的适用范围是本仓合成市场，不是真实网络绩效（该主张按 cpu-proto 对待）。第一版用相邻两轮收益比较驱动定价，实测学习组反而更差；改为接受率驱动 + EMA 安全阀后才为正，教训记录在 policy.rs::price_direction。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.3.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.4",
       "title": "学习信号",
-      "goal": "把四类信号（任务完成质量 / 结算金额 / 信誉变化 / 违规记录）折算成统一的整数信号向量，并让它们真的参与决策。",
+      "goal": "把四类信号（任务完成质量 / 结算金额 / 信誉变化 / 违规记录）折算成统一的整数信号向量。",
       "deliverables": [
-        "src/signal.rs: SignalWeights / LearningSignal / VIOLATION_UNIT_BP",
-        "src/policy.rs: 信誉下降时冻结涨价（让信誉信号真的改变行为）",
-        "src/sim.rs: 每轮用 from_store 生成信号并喂给 adjust()，RoundStats.signal_composite_bp 留证",
-        "src/scenario.rs: 端到端摘要输出 learning_signal",
-        "tests/signal.rs: 8 个集成测试"
+        "src/signal.rs: LearningSignal / SignalWeights"
       ],
       "interfaces": [
-        "pub struct SignalWeights { quality_bp, settled_bp, reputation_bp, violation_bp, reward_ref, reputation_ref }",
-        "pub const VIOLATION_UNIT_BP: i64 = 2500",
-        "pub struct LearningSignal { quality_bp, settled, reputation_delta, violations, *_norm_bp, composite_bp }",
-        "pub fn LearningSignal::compute(quality_bp, settled, reputation_delta, violations, &SignalWeights) -> CoreResult<LearningSignal>",
-        "pub fn LearningSignal::from_experience(&Experience, &ViolationLog, &SignalWeights) -> CoreResult<LearningSignal>",
-        "pub fn LearningSignal::from_store(&ExperienceStore, &ViolationLog, reputation_delta, &SignalWeights) -> CoreResult<LearningSignal>",
-        "pub fn LearningSignal::to_signals(&self, sample, accept_rate_bp, mean_reward, prev_mean_reward, prev_price_dir) -> Signals"
+        "pub fn LearningSignal::from_experience(&Experience, &PeerLedger) -> CoreResult<LearningSignal>"
       ],
       "acceptance": [
-        "质量 5000 + 结算 50/100 + 信誉 +50/100 → 归一 (5000,5000,5000,0)、综合 4500bp（精确）",
-        "四类全满 → 9000bp；四类全负 → -2500bp",
-        "质量↑/结算↑/信誉↑ → 综合↑；信誉↓/违规↑ → 综合↓；结算与信誉归一值封顶 10000bp；违规第 4 条起吃满",
-        "from_experience 只统计该条经验参与者的违规",
-        "from_store：质量均值 6250bp、结算求和 100；空库给零信号不是错误",
-        "权重校验：负权重 → NegativeAmount；权重和 >10000 / 分母为 0 → InvalidKind",
-        "reputation_delta=-40 时冻结涨价（price_moved=0，理由含『冻结涨价』），reputation_delta=0 时 +500bp"
+        "四类信号各自的精确取值有断言",
+        "违规记录使综合信号严格下降",
+        "信号→策略输入（Signals）映射无浮点、无饱和歧义"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 52,
-        "tests_total": 52,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 9 策略 + 8 信号。信誉信号在本版仍由调用方显式传入（市场里如实传 0，信誉台账到 v1.6.5 才落地），不假装已有信誉数据。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.4.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.5",
       "title": "模型更新",
-      "goal": "带学习率/动量/阻尼/遗忘/漂移钳制/代际回滚的整数模型更新；落地不可转让、有界的本地信誉台账。",
+      "goal": "带代际、动量、遗忘与回滚的线性整数模型更新；不可转让的本地信誉累计。",
       "deliverables": [
-        "src/model.rs: ReputationLedger / ModelConfig / LearningModel / UpdateRecord",
-        "src/sim.rs: 调整由 LearningModel::apply 落地；每 tick 用信誉台账记录观测；RoundStats 增加 price_drift_bp/reputation_delta/generation",
-        "src/lib.rs: 错误映射补充 InvalidVersion（回滚不存在代际）",
-        "tests/model.rs: 11 个集成测试"
+        "src/model.rs: LearningModel / ReputationLedger"
       ],
       "interfaces": [
-        "pub struct ReputationLedger { score_of / apply_outcome / apply_violation / apply_experience / public_json }",
-        "pub const REPUTATION_MIN: i64 = -1000; pub const REPUTATION_MAX: i64 = 1000",
-        "pub struct ModelConfig { learning_rate_bp, momentum_bp, forgetting_bp, max_drift_bp, max_generations }",
         "pub fn LearningModel::apply(&mut self, &PolicyAdjustment) -> CoreResult<UpdateRecord>",
-        "pub fn LearningModel::rollback(&mut self) -> CoreResult<PolicyParams>",
-        "pub struct UpdateRecord { generation, price_before_bp, price_after_bp, price_drift_bp, momentum_bp, damped, clamped, forgotten_entries, reputation_delta }"
+        "pub fn LearningModel::rollback(&mut self) -> CoreResult<PolicyParams>"
       ],
       "acceptance": [
-        "动量：连续同向意图的实际位移 -350,-455,-486,-495,-498,-499（幅度单调上升，momentum=0 时第一步即 -500）",
-        "阻尼：反转代 damped=true 且幅度减半（+500 → +250）",
-        "遗忘：400bp 偏好 80 代无更新后归零并移除条目；forgetting=0 时不衰减",
-        "漂移钳制：|price_drift| ≤ 1000bp 且偏好单代位移同样被封顶；不越过 PolicyBounds",
-        "回滚：第 0 代 → InvalidVersion；两代后回滚逐字段还原且代际回退",
-        "历史有界：max_generations=4 跑 10 代 → 只能回滚 4 次",
-        "信誉：精确增量 +20/+5/-10/-100；上界 1000、下界 -1000；第三方经历不影响其他协作者（无转让路径）",
-        "信誉只来自被观测经验：apply_experience 对两个参与者各记一次",
-        "非法配置（负学习率/动量>10000/遗忘>10000/max_generations=0/负漂移）→ InvalidKind",
-        "市场闭环：学习组 final_generation == rounds、对照组 == 0；仍有可量化改善（成功率 +1823bp、收益 +43.6%）"
+        "代际严格单调；单次漂移不超过上限；回滚逐字段还原",
+        "信誉不可转让（无转账 API）且被越界钳制",
+        "同种子两次运行模型摘要逐字节一致"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 63,
-        "tests_total": 63,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 11 模型 + 9 策略 + 8 信号。接入模型更新后实测控制组 2239bp/3240/21 违规 vs 学习组 4062bp/4652/15 违规。v1.6.5 期间 au4a-kernel 曾编译失败阻塞约 5 分钟（已由 track-kernel 修复），期间继续写 v1.6.6 代码、未跳过验证。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.5.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.6",
       "title": "隐私保护",
-      "goal": "本地明文经验库 / 本地加密视图 / 对外公开视图三条路径彻底分开：公开视图无上下文原文、无 peer DID、无精确金额，小样本聚合被抑制。",
+      "goal": "本地经验库可加密视图 + 对外公开视图脱敏：不泄露上下文原文与协作者明细，小样本聚合被抑制。",
       "deliverables": [
-        "src/privacy.rs: PrivacyPolicy / PublicAggregate / PublicView / SealedBlob / publish() / seal() / open() / peer_tag()",
-        "src/scenario.rs: 端到端摘要输出 privacy（公开视图 + 加密视图字节数）",
-        "tests/privacy.rs: 8 个集成测试"
+        "src/privacy.rs: PrivacyPolicy / PublicView / SealedBlob / seal() / open()"
       ],
       "interfaces": [
-        "pub const DEFAULT_MIN_BUCKET_SAMPLE: usize = 3; pub const MIN_SALT_LEN: usize = 8",
-        "pub struct PrivacyPolicy { salt, min_bucket_sample, reward_bucket_credits, context_bucket_chars }",
-        "pub struct PublicAggregate { task_type, sample, suppressed, success_bp, mean_reward_bucket, context_bucket, distinct_peers }",
-        "pub fn peer_tag(&PrivacyPolicy, &Did) -> CoreResult<String>",
-        "pub fn publish(&ExperienceStore, &PrivacyPolicy) -> CoreResult<PublicView>",
         "pub fn seal(&ExperienceStore, key: &[u8; 32]) -> CoreResult<SealedBlob>",
-        "pub fn open(&SealedBlob, key: &[u8; 32]) -> CoreResult<ExperienceStore>"
+        "pub fn open(&SealedBlob, key: &[u8; 32]) -> CoreResult<ExperienceStore>",
+        "pub fn publish(&ExperienceStore, &PrivacyPolicy, key: &[u8; 32]) -> CoreResult<PublicView>"
       ],
       "acceptance": [
-        "公开视图不含 SECRET-CONTEXT/不可外泄（上下文原文）、不含 did:au4a:、不含 task_id",
-        "金额只以桶出现（37 → 25）；协作者只以 distinct_peers 计数出现",
-        "阈值 6 → 2 组全抑制且统计字段全为 None；阈值 5 → 只抑制冷门组（>= 边界）；阈值 1 → 无抑制",
-        "密文 ≠ 明文；正确密钥往返摘要一致；同密钥同内容两次加密逐字节一致；不同密钥密文与标签都不同",
-        "错密钥/篡改 → InvalidSignature（先比标签再解码）；长度不一致 → FrameTruncated；非法 hex → Encoding；版本 2 → InvalidVersion",
-        "换盐换标签、同盐稳定、标签不含 DID 片段；公开视图不发布标签明文只发布计数",
-        "盐 <8 / min_bucket_sample=0 → InvalidKind；负金额桶宽 → NegativeAmount；桶宽 0 表示不发布该类信息",
-        "端到端 privacy 投影无 DID、无上下文原文，view.total>0、sealed_bytes>0"
+        "公开视图 JSON 中不出现任何 context 原文、不出现任何 peer DID",
+        "错误密钥打开 → CoreError::InvalidSignature；正确密钥往返摘要一致",
+        "样本数低于阈值的聚合被抑制并计数"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 71,
-        "tests_total": 71,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号。脱敏/抑制/加盐/键流加密与完整性校验为 verified；『生产级机密性』不做主张（原型：SHA-256 计数器模式密钥流 + XOR + 明文摘要标签，无 AEAD/KDF/nonce 管理）→ 该部分 cpu-proto。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.6.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.7",
@@ -243,133 +176,95 @@
         "tests/reproducibility.rs",
         "tests/refusals.rs"
       ],
-      "interfaces": [
-        "tests/invariants.rs: 32 种子不变式扫描（复用 sim::ab_test / MarketConfig / MarketRun）",
-        "tests/reproducibility.rs: 规范 JSON 逐字节复现与摘要敏感性",
-        "tests/refusals.rs: 7 类 CoreError 清单 + 3 类软拒绝 + 300 次畸形输入扫描"
-      ],
+      "interfaces": [],
       "acceptance": [
-        "32 个种子扫描下全部结构性不变式成立（tick/结局/轮内聚合/边界/代际/窗口）",
-        "32 个种子中 29 个成功率与收益同时提升，平均成功率提升 +1025bp",
-        "两次独立流水线（含经验库→反馈→调整→模型→公开视图→加密）规范 JSON 逐字节相同",
-        "默认市场 ab_test 与 scenario 双跑逐字节一致，内核账本视图与逻辑时钟读数也一致",
-        "摘要对追加顺序敏感（[1,2,3] ≠ [3,2,1]），避免把顺序无关误当可复现",
-        "7 类 CoreError 全部有显式触发用例且清单完整无重复（InvalidKind/Encoding/NegativeAmount/Overflow/InvalidSignature/InvalidVersion/FrameTruncated）",
-        "3 类软拒绝（证据不足不学习、小样本抑制、证据闸门拒付）都有断言",
-        "300 次确定性畸形输入扫描无 panic，且合法/非法输入都被覆盖"
+        "64 个种子扫描下全部不变式成立",
+        "两次独立运行规范 JSON 逐字节相同",
+        "每一个 CoreError 路径都被显式触发过"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 81,
-        "tests_total": 81,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号 + 3 不变式 + 4 复现 + 3 拒绝。种子扫描实测 32 种子/29 改善/平均 +1025bp。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.7.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.8",
       "title": "文档",
-      "goal": "让文档与代码不可能分叉：策略解释由与行为相同的函数产出，并发布『解释所蕴含的下一步动作』，测试逐项断言其与实际行为一致。",
+      "goal": "全量 rustdoc + 机器可读的策略解释（explain）：每个参数为什么是这个值，必须由反馈数据推出。",
       "deliverables": [
-        "src/explain.rs: PolicyExplanation / PriceExplanation / BiasExplanation / explain() / explain_peer_tag()",
-        "src/policy.rs: 抽出唯一来源 price_decision() 与 bias_delta_bp()（adjust 与 explain 共用）",
-        "tests/explain.rs: 5 个集成测试",
-        "docs/tracks/1.6.md 与 1.6.json：10 个小版本全部成文"
+        "src/explain.rs: explain() / PolicyExplanation",
+        "docs/tracks/1.6.md 与 1.6.json 全部 10 节"
       ],
       "interfaces": [
-        "pub fn price_decision(&Signals, &PolicyTargets) -> (i64, String)",
-        "pub fn bias_delta_bp(score_bp: i64, overall_bp: i64, &PolicyBounds) -> i64",
-        "pub fn explain(&PolicyParams, &FeedbackReport, &ViolationLog, &Signals, &PolicyBounds, &PolicyTargets) -> CoreResult<PolicyExplanation>",
-        "pub struct PriceExplanation { implied_direction, implied_move_bp, reason, ... }",
-        "pub struct BiasExplanation { target, kind, current_bias_bp, score_bp, overall_bp, violations, implied_delta_bp, reason }",
-        "pub fn PolicyExplanation::summary(&self) -> String",
-        "pub fn explain_peer_tag(&Did) -> String"
+        "pub fn explain(&PolicyParams, &FeedbackReport, &Signals) -> CoreResult<PolicyExplanation>"
       ],
       "acceptance": [
-        "7 种输入矩阵下 explain().price.implied_move_bp == adjust().price_moved_bp",
-        "任务/协作者偏好的 implied_delta_bp（钳制后）与实际移动量逐项相等",
-        "理由引用真实数据：接受率 3000bp、目标 8500bp、死区 ±500bp、样本 8 条、good.type 评分 9333bp、bad.type 评分 0",
-        "样本不足的类型 implied_delta_bp=0 且理由写明不足",
-        "两次 explain 逐字段相等；摘要与 JSON 均不含 did:au4a:；协作者一律 peer:<摘要>",
-        "价格在上界时方向仍为上移但 implied_move_bp=0（与 adjust 一致）"
+        "解释文本与统计一致（接受率高于目标 ⇒ 定价上调的解释）",
+        "解释不含浮点、可规范编码",
+        "文档每条能力都能在代码里找到对应 public 项"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 86,
-        "tests_total": 86,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 5 解释 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号 + 3 不变式 + 4 复现 + 3 拒绝。重构 price_decision 时漏掉『信誉闸作用于最终方向』导致 seed=5654 回归，被 32 种子不变式扫描当场抓到并修复（教训写进文档）。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.8.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.9",
       "title": "示例",
-      "goal": "可运行示例：一个 Agent 跑完整学习循环（六阶段），打印可核对的 JSON 报告；示例不含逻辑，测试断言的就是示例打印的内容。",
+      "goal": "可运行示例：一个 Agent 跑完整学习循环，并打印可核对的 JSON 报告。",
       "deliverables": [
-        "src/demo.rs: demo_report(seed) / demo_report_is_publishable() / DEMO_SEED / DEMO_EXPERIENCES / DEMO_GENERATIONS / DEMO_QUOTES",
-        "examples/learning_loop.rs: 命令行入口（可选种子），打印 pretty JSON",
-        "tests/demo.rs: 4 个集成测试"
+        "examples/learning_loop.rs",
+        "src/demo.rs: demo_report(seed)"
       ],
       "interfaces": [
-        "pub fn demo_report(seed: u64) -> CoreResult<serde_json::Value>",
-        "pub fn demo_report_is_publishable(report: &Value) -> bool",
-        "pub const DEMO_SEED: u64 = 0x160909; DEMO_EXPERIENCES = 18; DEMO_GENERATIONS = 3; DEMO_QUOTES = 24"
+        "pub fn demo_report(seed: u64) -> CoreResult<serde_json::Value>"
       ],
       "acceptance": [
-        "六阶段（经验收集/反馈分析/学习信号/行为调整/模型更新/效果评估）齐全、顺序正确、每段证据非空",
-        "行为调整 changed=true 且 price_moved_bp=-500（接受率 5000bp 低于目标 8500bp）",
-        "模型更新 3 代，第一步位移幅度 < 第三步（动量可见），代际 1→3",
-        "效果评估 improved=true、成功率与收益提升 > 0、params_differ=true",
-        "同种子两次报告完全相等且规范 JSON 一致；换种子得到不同报告；5 个额外种子均成功",
-        "报告不含 did:au4a: 与上下文原文，可被规范 JSON 编码；policy_before.price_bp=12000 且 policy_after≠12000",
-        "cargo run --example learning_loop 退出码 0"
+        "示例编译并被 cargo test 构建",
+        "示例调用的 demo_report 与测试断言同一份输出结构",
+        "两次运行输出逐字节一致"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 90,
-        "tests_total": 90,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 4 示例 + 10 经验库 + 5 解释 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号 + 3 不变式 + 4 复现 + 3 拒绝。附加证据：cargo run -p au4a-learning --example learning_loop → exit 0，实测成功率 2864→5156bp、收益 4692→6700、违规 9→7（日志 1.6-v1.6.9-example.log）。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.9.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     },
     {
       "version": "v1.6.10",
       "title": "评估",
-      "goal": "固定种子的学习组 vs 对照组评估：池化成功率/收益提升 + 跨种子稳健性（中位数、最差种子、负向种子数）+ 消融实验分辨三个杠杆的贡献。",
+      "goal": "学习组 vs 对照组的固定种子评估：输出成功率提升、收益提升与违规下降，并给出多种子稳健性。",
       "deliverables": [
-        "src/eval.rs: EvalConfig / ArmStats / SeedResult / EvalReport / AblationRow / evaluate() / ablations() / EVAL_SEEDS",
-        "src/sim.rs: MarketConfig 增加 learn_price/learn_task/learn_peer 掩码（消融）与矛盾配置拒绝",
-        "tests/eval.rs: 6 个集成测试"
+        "src/eval.rs: evaluate() / EvalReport / ArmStats"
       ],
       "interfaces": [
-        "pub fn evaluate(&EvalConfig) -> CoreResult<EvalReport>",
-        "pub fn ablations(&EvalConfig) -> CoreResult<Vec<AblationRow>>",
-        "pub struct EvalReport { seeds, ticks_per_arm, control, learning, per_seed, success_lift_bp, revenue_lift_bp, revenue_lift_credits, violations_reduction, improved_seeds, negative_seeds, median/min/max_success_lift_bp }",
-        "pub fn EvalReport::improved(&self) -> bool",
-        "pub fn EvalReport::stable(&self) -> bool",
-        "pub fn EvalReport::summary(&self) -> CoreResult<Value>",
-        "pub const EVAL_SEEDS: [u64; 6]"
+        "pub fn evaluate(&EvalConfig) -> CoreResult<EvalReport>"
       ],
       "acceptance": [
-        "6 种子 × 192 tick/组：improved() 与 stable() 均为真，成功率/收益提升 > 0、违规减少 ≥ 0",
-        "中位数提升 > 0、改善种子 ≥ 2/3、最差种子 > -2000bp、负向种子 ≤ 1/3",
-        "每种子 params_differ=true 且学习组定价 <12000bp；对照组 params_changed_runs=0、学习组=种子数",
-        "逐种子收益之和 == 汇总收益（两组都断言）",
-        "两次 evaluate 逐字段/摘要/规范 JSON 逐字节一致；换种子集合换报告",
-        "消融四行：price-only 提升 > 0；all-levers ≥ task-only 与 peer-only；peer-only 违规减少 ≥ 0",
-        "非法配置（空种子 / >64 种子 / 非法市场 / 三杠杆全屏蔽）→ InvalidKind；limited(0) 保留 1 个种子"
+        "同一场景下学习组与对照组策略参数不同（学习真的发生）",
+        "成功率提升 > 0、收益提升 > 0、违规计数下降（有断言与数值输出）",
+        "跨多种子扫描提升仍是正的",
+        "两次评估规范 JSON 逐字节一致"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 96,
-        "tests_total": 96,
-        "grade": "verified",
-        "notes": "本机 Windows 实测：5 单元 + 4 示例 + 6 评估 + 10 经验库 + 5 解释 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号 + 3 不变式 + 4 复现 + 3 拒绝。6 种子实测：成功率 2300→3906bp（+1606bp，中位 +1406bp，最小 +1094bp，6/6 改善），收益 22968→33919（+47.7%），违规 75→40（-47%）；消融：只学定价 +1024bp/+2047bp、只学任务 +226bp/+1244bp、只学协作 +122bp/+548bp、全开 +1268bp/+3425bp。绩效结论的适用范围是本仓合成市场 → 该主张 cpu-proto；代码与断言为 verified。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.10.log、1.6-v1.6.10-eval.log"
+        "tests_passed": 0,
+        "tests_total": 0,
+        "grade": "unverified",
+        "notes": "尚未实现"
       },
-      "status": "done"
+      "status": "planned"
     }
   ]
 }
