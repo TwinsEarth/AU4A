@@ -25,7 +25,8 @@ test('拒绝回到 IDLE；超轮数报错', () => {
   n.propose({ price: 5 });
   n.counter({ price: 4 });
   n.propose({ price: 4 });
-  n.counter({ price: 3 });
+  // maxRounds=2 → 每方至多 2 次报价（总 4 轮），第 5 轮触发限额
+  assert.throws(() => n.counter({ price: 3 }), /轮数/);
   assert.throws(() => n.propose({ price: 3 }), /轮数/);
 });
 
