@@ -1,6 +1,6 @@
 {
   "name": "@twinsearth/agent-universe-for-angent",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "AU4A — 一切为智能体服务，人类兼任观察者。Agent 自主自治经济体（身份/能力图/协商/经济/安全/学习/委员会），人类只读观察。",
   "main": "index.js",
   "scripts": {
