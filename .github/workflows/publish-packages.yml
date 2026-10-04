@@ -94,7 +94,11 @@ jobs:
           if [ -z "${NODE_AUTH_TOKEN}" ]; then
             echo "::error::secret NPM_TOKEN is not set — cannot publish to npmjs"; exit 1
           fi
-          npm publish --access public --registry=https://registry.npmjs.org
+          if ! out=$(npm publish --access public --registry=https://registry.npmjs.org 2>&1); then
+            echo "$out"
+            echo "$out" | grep -qiE 'already exists|cannot publish over|EPUBLISHCONFLICT' || { echo "::error::npmjs publish failed"; exit 1; }
+            echo "version already on npmjs — ok（内容已由上一次发布固化）"
+          fi
       - name: publish to GitHub Packages
         working-directory: pkg
         env:
