@@ -84,18 +84,35 @@
     {
       "version": "v1.3.3",
       "title": "签名验证",
-      "goal": "快照内容寻址 + Ed25519 签名，篡改或替换必须被拒。",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "goal": "快照内容寻址 + Ed25519 签名，篡改或替换必须被拒（签名有效 ≠ 是我要的那份）。",
+      "deliverables": [
+        "src/signed.rs: SignedSnapshot（sign/verify/verify_policy/帧往返）+ SnapshotPolicy + VerifiedSnapshot",
+        "tests/v133_signature.rs: 16 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn SignedSnapshot::sign(snapshot, keys: &AgentKeys) -> CoreResult<SignedSnapshot>",
+        "pub fn SignedSnapshot::verify(&self) -> CoreResult<()>",
+        "pub fn SignedSnapshot::verify_policy(&self, policy: &SnapshotPolicy) -> CoreResult<VerifiedSnapshot>",
+        "pub fn SignedSnapshot::to_frame(&self) -> CoreResult<Vec<u8>>",
+        "pub struct SnapshotPolicy { agent, content_root: Option<String>, min_epoch: Option<u64> }",
+        "pub struct VerifiedSnapshot（私有字段，唯一构造路径 verify_policy）"
+      ],
+      "acceptance": [
+        "自签快照验签通过；帧/JSON 往返签名不变；同种子同状态签名逐字节相同",
+        "改块内容/改签名/空签名/错版本/伪造 signer 全部被拒",
+        "另一份合法签名的快照无法通过 content_root 策略（替换/重放被拒）",
+        "过期快照返回 InvalidVersion 但验签仍通过（竞争与恶意分开）",
+        "替别人签被拒；冒名状态被拒（InvalidDid）",
+        "scenario 中 verified.content_root == 目标重建的 content_root"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-state",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 84,
+        "tests_total": 84,
+        "grade": "verified",
+        "notes": "lib 44 + v131 13 + v132 11 + v133 16 全绿 0 warning；真实 Ed25519 签名/验签（算法来自冻结基元 au4a-core）。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.3.log"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.3.4",

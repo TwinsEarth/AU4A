@@ -8,17 +8,21 @@
 //! v1.3.1 落地的是地基：**三区状态快照 + 内容寻址 + 本地状态存储**。
 //! v1.3.2 让状态能**跨节点移动**：块级增量 diff（三区 set/del）+ 可续跑的本地双节点传输
 //! （证据等级 `cpu-proto`：语义完整、可重放，但没有真实网络）。
+//! v1.3.3 让移动**可追责**：快照由 Agent 自己的 Ed25519 密钥签字，
+//! 验证分两层（签名有效 + 正是我要的那份），篡改与替换都必须被拒。
 //! 之后每一版都在同一 crate 内增量实现，公共 API 只增不改。
 
 pub mod diff;
+pub mod signed;
 pub mod snapshot;
 pub mod store;
 pub mod transfer;
 
-use au4a_core::{AgentKeys, CoreResult, Did, SelfCheck};
+use au4a_core::{AgentKeys, CoreError, CoreResult, Did, SelfCheck};
 use serde_json::{json, Value};
 
 pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
+pub use signed::{SignedSnapshot, SnapshotPolicy, VerifiedSnapshot, SIGNED_VERSION};
 pub use snapshot::{
     StateBlock, StateSnapshot, StateZone, MAX_BLOCKS, MAX_KEY_LEN, MAX_NODE_LEN, MAX_VALUE_LEN,
 };
@@ -85,6 +89,10 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_transfer_resumable());
     // 7) v1.3.2：base 不对（过期/被换）时拒绝应用。
     checks.push(check_stale_base_refused());
+    // 8) v1.3.3：篡改/替换的快照必须被签名验证拒绝。
+    checks.push(check_signature_tamper_refused());
+    // 9) v1.3.3：替别人签、用别人的状态冒充，都必须被拒。
+    checks.push(check_signature_identity_bound());
 
     checks
 }
@@ -340,6 +348,94 @@ fn short(s: &str) -> String {
     s.chars().take(16).collect()
 }
 
+fn check_signature_tamper_refused() -> SelfCheck {
+    let name = "signature.tamper_refused";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(bool, bool, bool)> {
+        let snap = sample_snapshot(&keys.did())?;
+        let signed = SignedSnapshot::sign(snap.clone(), &keys)?;
+        signed.verify()?;
+        // 1) 改签名本身。
+        let mut broken_sig = signed.to_value()?;
+        broken_sig["sig"] = json!("ab".repeat(64));
+        let sig_refused = SignedSnapshot::from_value(&broken_sig).is_err();
+        // 2) 用另一份「自己签名有效」的快照替换（重放）。
+        let other = SignedSnapshot::sign(
+            StateSnapshot::capture(&keys.did(), "node-a", 1, evolved_state()?)?,
+            &keys,
+        )?;
+        other.verify()?;
+        let policy = SnapshotPolicy::for_agent(keys.did())
+            .expecting_content_root(snap.content_root()?);
+        let replaced_refused = other.verify_policy(&policy).is_err()
+            && signed.verify_policy(&policy).is_ok();
+        // 3) 篡改块内容（保留旧签名）→ 反序列化即拒。
+        let mut tampered = signed.to_value()?;
+        if let Some(first) = tampered["snapshot"]["blocks"]
+            .as_array_mut()
+            .and_then(|b| b.first_mut())
+        {
+            first["value"] = json!({"tampered": true});
+        }
+        let body_refused = SignedSnapshot::from_value(&tampered).is_err();
+        Ok((sig_refused, replaced_refused, body_refused))
+    })();
+    match result {
+        Ok((true, true, true)) => SelfCheck::pass(
+            TRACK,
+            name,
+            "改签名 / 换整份快照 / 改块内容，三条路径全部被拒",
+        ),
+        Ok((a, b, c)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("签名为假={a} 替换为假={b} 正文为假={c}（期望全 true）"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("签名流程失败: {e}")),
+    }
+}
+
+fn check_signature_identity_bound() -> SelfCheck {
+    let name = "signature.identity_bound";
+    let owner = track_agent();
+    let impostor = AgentKeys::from_seed(&[0x99; 32]);
+    let result = (|| -> CoreResult<(bool, bool, bool)> {
+        let snap = sample_snapshot(&owner.did())?;
+        // 替别人签：直接拒绝。
+        let cross_sign_refused =
+            SignedSnapshot::sign(snap.clone(), &impostor) == Err(CoreError::InvalidSignature);
+        // 伪造 signer 字段（正文是自己的，签名者的名字被改成别人）→ 拒绝。
+        let signed = SignedSnapshot::sign(snap, &owner)?;
+        let mut forged = signed.to_value()?;
+        forged["signer"] = json!(impostor.did().as_str());
+        let forged_refused = SignedSnapshot::from_value(&forged).is_err();
+        // 用冒名者的状态冒充主人 → 策略拒绝。
+        let impostor_snap = StateSnapshot::capture(
+            &impostor.did(),
+            "node-a",
+            1,
+            vec![StateBlock::new(StateZone::Fs, "/a", json!(1))?],
+        )?;
+        let impostor_signed = SignedSnapshot::sign(impostor_snap, &impostor)?;
+        let policy = SnapshotPolicy::for_agent(owner.did());
+        let impersonation_refused = impostor_signed.verify_policy(&policy).is_err();
+        Ok((cross_sign_refused, forged_refused, impersonation_refused))
+    })();
+    match result {
+        Ok((true, true, true)) => SelfCheck::pass(
+            TRACK,
+            name,
+            "替签 / 伪造 signer / 冒名状态三条路径全部被拒",
+        ),
+        Ok((a, b, c)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("替签={a} 伪造 signer={b} 冒名={c}（期望全 true）"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("身份绑定检查失败: {e}")),
+    }
+}
+
 /// 轨道产物摘要（只读投影的一部分）。
 pub fn results_json() -> CoreResult<Value> {
     let agent = track_agent();
@@ -417,6 +513,58 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     let target = rebuilt.apply_moved(&before, "node-b", epoch)?;
     let network = net.stats();
 
+    // 4) 签名握手：源节点把「迁移时刻的状态」签字后发过去，目标节点按策略验证。
+    let signed = SignedSnapshot::sign(after.clone(), &keys)?;
+    net.deliver(&na, &nb, signed.to_frame()?)?;
+    let inbound = net.take(&nb)?;
+    let received = SignedSnapshot::from_frame(
+        inbound.first().ok_or(au4a_core::CoreError::FrameTruncated)?,
+    )?;
+    let policy = SnapshotPolicy::for_agent(did.clone())
+        .expecting_content_root(after.content_root()?)
+        .with_min_epoch(epoch);
+    let verified = received.verify_policy(&policy)?;
+    // 重建出来的状态必须与 Agent 亲笔签下的状态一致。
+    let target_content_root = target.content_root()?;
+    let signature_ok = verified.content_root() == target_content_root;
+
+    // 5) 拒绝路径：篡改的签名（恶意）与过期的快照（竞争）必须被区分对待。
+    let mut forged = signed.to_value()?;
+    forged["sig"] = json!("cd".repeat(64));
+    let signature_tamper_refused = SignedSnapshot::from_value(&forged).is_err();
+    if signature_tamper_refused {
+        kernel.refuse(
+            &did,
+            au4a_core::RefusalCode::Unauthorized,
+            "signed snapshot presented with a forged signature",
+        );
+    }
+    let stale_policy = SnapshotPolicy::for_agent(did.clone())
+        .expecting_content_root(after.content_root()?)
+        .with_min_epoch(epoch + 1);
+    let stale_refused = received.verify_policy(&stale_policy).is_err();
+    if stale_refused {
+        // 合法但过期 = 竞争语义，只记警告级拒绝，不当成恶意。
+        kernel.refuse(
+            &did,
+            au4a_core::RefusalCode::StaleEpoch,
+            "snapshot epoch below the policy minimum",
+        );
+    }
+    let impostor = AgentKeys::from_seed(&[0x99; 32]);
+    let impostor_signed = SignedSnapshot::sign(
+        StateSnapshot::capture(
+            &impostor.did(),
+            "node-b",
+            epoch,
+            vec![StateBlock::new(StateZone::Fs, "/fake", json!(1))?],
+        )?,
+        &impostor,
+    )?;
+    let impersonation_refused = impostor_signed
+        .verify_policy(&SnapshotPolicy::for_agent(did.clone()))
+        .is_err();
+
     // 4) 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
     let mut tampered = before.to_value()?;
     if let Some(first) = tampered
@@ -460,6 +608,15 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             after.same_content(&target)
         ),
     );
+    kernel.emit(
+        &format!("{TRACK}.signature"),
+        format!(
+            "signer={} verified={} tamper_refused={}",
+            short(signed.signer().as_str()),
+            signature_ok,
+            signature_tamper_refused
+        ),
+    );
 
     Ok(json!({
         "track": TRACK,
@@ -471,7 +628,7 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         "after_root": target.root(),
         "before_content_root": before.content_root()?,
         "source_content_root": after.content_root()?,
-        "target_content_root": target.content_root()?,
+        "target_content_root": target_content_root,
         "identical": before.same_state(&restored),
         "migration_identical": after.same_content(&target),
         "moved_content_root": moved.content_root()?,
@@ -498,10 +655,25 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             "evidence_grade": "cpu-proto",
             "note": "本地双节点内存通道；无真实网络/文件 I/O",
         },
+        "signed_frames": 1,
         "written": written,
         "store_keys": store.len(),
         "tamper_rejected": tamper_rejected,
         "stale_base_refused": stale_refused,
+        "signature": {
+            "signer": signed.signer().as_str(),
+            "sig_len": signed.sig().len(),
+            "verified": signature_ok,
+            "content_root": verified.content_root(),
+            "tamper_refused": signature_tamper_refused,
+            "stale_refused": stale_refused,
+            "impersonation_refused": impersonation_refused,
+            "policy": {
+                "agent": policy.agent.as_str(),
+                "min_epoch": epoch,
+            },
+            "evidence_grade": "verified",
+        },
         "events": 3,
     }))
 }
@@ -522,7 +694,7 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks));
-        assert_eq!(checks.len(), 7);
+        assert_eq!(checks.len(), 9);
     }
 
     #[test]
@@ -550,6 +722,12 @@ mod tests {
         assert_ne!(a["before_root"], a["after_root"]);
         assert_eq!(a["transfer"]["resumed_from"], json!(2));
         assert_eq!(a["transfer"]["dropped_frames"], json!(2));
+        assert_eq!(a["signature"]["verified"], json!(true));
+        assert_eq!(a["signature"]["tamper_refused"], json!(true));
+        assert_eq!(a["signature"]["stale_refused"], json!(true));
+        assert_eq!(a["signature"]["impersonation_refused"], json!(true));
+        assert_eq!(a["signature"]["sig_len"], json!(128));
+        assert_eq!(a["signature"]["content_root"], a["target_content_root"]);
         k1.ledger().check_conservation().unwrap();
     }
 
