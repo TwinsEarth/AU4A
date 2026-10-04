@@ -185,6 +185,42 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 50 + tests/autonomy.rs 4 + tests/council.rs 5 + tests/host_kernel.rs 9 + tests/observer.rs 5 + tests/permission.rs 6 = 79 passed，0 failed，0 warning，exit 0。真实 API 网关注入属 au4a-node / au4a-safety(1.5)。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.6",
+      "title": "PMB协议扩展",
+      "goal": "在冻结线格式上扩展协议语义：消息类型分类、准入、收件人展开、重放保护与逻辑时钟新鲜度，拒绝全部类型化且分类不丢",
+      "deliverables": [
+        "src/pmb.rs: kinds_ext(8 个类型) / MessageClass(6 类) / classify_kind / RouteDecision / RouterStats / PmbRouter / announce_card / progress / settle_request / council_vote / decode_and_verify / encode_checked",
+        "src/lib.rs: 接线协议层，scenario() 新增 pmb 阶段（真信封走准入+重放被拒）",
+        "tests/pmb.rs: 6 个集成测试（准入与内核一致、篡改vs重放、路由不改内核、线格式与上限、治理不得广播、两次运行全等）"
+      ],
+      "interfaces": [
+        "pub mod kinds_ext",
+        "pub enum MessageClass { Announce, Negotiation, Settlement, Governance, Telemetry, Unknown }",
+        "pub fn classify_kind(kind: &str) -> MessageClass",
+        "pub struct RouteDecision { id, kind, class, accepted, recipients, code, reason }",
+        "pub struct PmbRouter; impl PmbRouter { admit(&Kernel, &Envelope) / stats }",
+        "pub fn announce_card / progress / settle_request / council_vote",
+        "pub fn decode_and_verify(frame: &[u8]) -> CoreResult<Envelope>",
+        "pub fn encode_checked(env: &Envelope) -> CoreResult<Vec<u8>>"
+      ],
+      "acceptance": [
+        "经 admit 准入的 4 类消息 Kernel::send 也必须收下（admitted==4, refused==0）",
+        "篡改->unauthorized(恶意)；重放->conflict(非恶意,retryable,replays==1)；未知类型->unsupported；收件人不在册->stale_epoch；落后>64->stale_epoch；治理广播->policy_denied",
+        "admit 前后注册表指纹/观察投影/队列长度不变",
+        "encode_checked 往返 id/sig 一致；改一字节验签失败；超 1 MiB 前缀与截断帧被拒",
+        "4 个在册 Agent 广播展开 recipients.len()==3 且不含发送者；by_class[telemetry]==1",
+        "同序列两次运行 RouteDecision 与 RouterStats 全等；admitted+refused==判定数；direct+broadcasts==admitted"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 92,
+        "tests_total": 92,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 57 + autonomy 4 + council 5 + host_kernel 9 + observer 5 + permission 6 + pmb 6 = 92 passed，0 failed，0 warning，exit 0。真实跨进程传输属 au4a-node / au4a-scale(1.9)，本版只断言协议语义与线格式合规。"
+      },
+      "status": "done"
     }
   ]
 }

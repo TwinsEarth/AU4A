@@ -21,6 +21,7 @@ pub mod autonomy;
 pub mod council;
 pub mod observer;
 pub mod permission;
+pub mod pmb;
 pub mod registry;
 
 pub use audit::{audit_kernel, AuditFinding, HostAudit};
@@ -39,6 +40,10 @@ pub use observer::{
 pub use permission::{
     authority_roots, explain, explain_with_council, Authority, Capability, Denial,
     PermissionReport,
+};
+pub use pmb::{
+    announce_card, classify_kind, council_vote, decode_and_verify, encode_checked, kinds_ext,
+    progress, settle_request, MessageClass, PmbRouter, RouteDecision, RouterStats,
 };
 pub use registry::{AgentRegistry, RegistrySnapshot};
 
@@ -708,7 +713,23 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "fingerprint": host_report.fingerprint()?,
     });
 
-    // 8. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    // 8. PMB 协议层：真签名信封走一遍路由（准入 + 重放保护）。
+    let mut router = PmbRouter::new();
+    let card_env = announce_card(&host_keys, &host, kernel.now() + 1)?;
+    let first_route = router.admit(kernel, &card_env);
+    let replay_route = router.admit(kernel, &card_env);
+    let pmb_json = json!({
+        "class": first_route.class.as_str(),
+        "accepted": first_route.accepted,
+        "recipients": first_route.recipients.len(),
+        "replay_refused": !replay_route.accepted,
+        "replay_code": replay_route.code.map(|c| c.as_str()),
+        "admitted": router.stats().admitted,
+        "refused": router.stats().refused,
+        "replays": router.stats().replays,
+    });
+
+    // 9. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
     let report = Observer::report(kernel);
     let observer_layer = json!({
         "routes": ObserverRoute::ALL.len(),
@@ -724,7 +745,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             .unwrap_or(Value::Null),
     });
 
-    // 9. 审计 + 只读观察。
+    // 10. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -733,7 +754,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": {"host": host.display, "observer": observer.display, "settler": settler.display},
-        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "permission", "observe_layer", "audit", "observe"],
+        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "permission", "pmb", "observe_layer", "audit", "observe"],
         "announced": announced,
         "drained": drained,
         "settled_verified": settled_verified,
@@ -742,6 +763,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "autonomy": autonomy,
         "council": council_json,
         "permission": permission_json,
+        "pmb": pmb_json,
         "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,
@@ -775,6 +797,11 @@ impl Kernel {
 
     pub(crate) fn break_skill_index_for_audit(&mut self) {
         self.agents.break_index();
+    }
+
+    /// 把逻辑时钟推高 n 格（仅自测：协议层需要构造「落后于当前纪元」的信封）。
+    pub(crate) fn clock_advance_for_test(&mut self, n: u64) {
+        self.clock.observe(self.clock.now().saturating_add(n));
     }
 }
 
