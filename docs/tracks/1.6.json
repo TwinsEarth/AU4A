@@ -46,26 +46,37 @@
     {
       "version": "v1.6.2",
       "title": "反馈机制",
-      "goal": "把原始经验聚合成按任务类型与协作者维度的反馈统计（成功率/部分成功/失败、平均收益、信誉变化、违规计数）。",
+      "goal": "把原始经验聚合成按任务类型与协作者维度的反馈统计（成功率/部分成功/失败、平均质量、平均收益、置信度），成功经验通过共享内核账本真实结算。",
       "deliverables": [
-        "src/feedback.rs: Feedback / PeerFeedback / FeedbackReport / FeedbackAnalyser"
+        "src/feedback.rs: Feedback / PeerFeedback / FeedbackReport / FeedbackAnalyser / confidence_of",
+        "src/scenario.rs: 反馈阶段 + cpu-proto 结算阶段（拒绝被计数）",
+        "tests/feedback.rs: 10 个集成测试"
       ],
       "interfaces": [
-        "pub fn FeedbackAnalyser::analyse(&ExperienceStore) -> CoreResult<FeedbackReport>"
+        "pub const MIN_SAMPLES: usize = 4",
+        "pub fn confidence_of(sample: usize) -> i64",
+        "pub struct Feedback { scope, sample, success_bp, partial_bp, failure_bp, quality_bp, reward_total, mean_reward, confidence_bp, sufficient }",
+        "pub struct PeerFeedback { peer, sample, success_bp, quality_bp, mean_reward, confidence_bp, sufficient }",
+        "pub struct FeedbackReport { total, overall, per_type, per_peer }",
+        "pub fn FeedbackReport::public_json(&self) -> CoreResult<Value>",
+        "pub fn FeedbackAnalyser::analyse(store: &ExperienceStore) -> CoreResult<FeedbackReport>"
       ],
       "acceptance": [
-        "已知经验集合 → 精确的 success_bp / partial_bp / failure_bp / 平均收益",
-        "样本不足时 confidence_bp 低且 sufficient == false",
-        "空经验库 → 空报告而不是错误"
+        "4 条混合经验 → success/partial/failure = 5000/2500/2500 bp 且三率和恒为 10000",
+        "quality_bp=6250、reward_total=100、mean_reward=25（整数除法）",
+        "样本 1/4 → sufficient=false 且 confidence_bp=2500；空库 → 零报告不是错误",
+        "协作者维度统计精确（成功/失败/部分各自落在正确 peer 上）",
+        "public_json 不含 did:au4a:、不含上下文原文、不含 per_peer 字段",
+        "端到端 settled_total == successes×40 且账本守恒；cap=0 时拒付被计数"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 25,
+        "tests_total": 25,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：5 单元 + 10 经验库集成 + 10 反馈集成。结算走本地内存账本（无真实链上转账），结算金额受 EvidenceGrade::CpuProto 上限保护。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.2.log"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.6.3",
