@@ -206,19 +206,21 @@
         "pub fn SafetyOffice::resolve(&mut self, kernel, verdict) -> CoreResult<CaseOutcome>"
       ],
       "acceptance": [
-        "非法仲裁者/伪造签名的裁决被拒，账本不变",
-        "UPHELD：罚没执行、状态 arbitrated；REJECTED：罚没归还、状态 arbitrated",
-        "裁决契约可仅用 serde_json 往返（不依赖 au4a-council crate）",
-        "两次裁决后守恒仍成立"
+        "非法仲裁者/伪造签名的裁决被拒（InvalidSignature + unauthorized），账本不变",
+        "UPHELD：罚没执行（受锁定余额封顶）、状态 arbitrated、订阅者收到终局通知",
+        "REJECTED：罚没等额归还并重新锁定（质押回到原值），净罚没归零、守恒成立",
+        "裁决契约可仅用 serde_json 与手写 JSON 往返（不依赖 au4a-council crate）",
+        "理由哈希必须是 64 位 hex 承诺；rejected 不得携带金额",
+        "终局后新证据可再申诉（状态回 appealed），第二次裁决可统一回滚"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.6 全绿后开工"
+        "tests_passed": 113,
+        "tests_total": 113,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测；本 crate 0 warning；日志 _forangent\\logs\\1.5-v1.5.7.log；累计 113 个测试。回滚实现由测试修正：mint 之外必须 lock 回锁定质押"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.8",

@@ -15,6 +15,7 @@
 //! 与 `au4a-council` 的协作只走**数据契约**（可序列化 JSON），不互相依赖 crate。
 
 pub mod appeal;
+pub mod arbitration;
 pub mod case;
 pub mod chain;
 pub mod config;
@@ -26,11 +27,14 @@ pub mod permission;
 pub mod pmb;
 pub mod setup;
 
-use au4a_core::{CoreError, CoreResult, Credits, Did, SelfCheck};
+use au4a_core::{canonical_hash, CoreError, CoreResult, Credits, Did, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
 pub use appeal::Appeal;
+pub use arbitration::{
+    ArbitrationRequest, ArbitrationVerdict, CaseOutcome, VerdictOutcome,
+};
 pub use case::{Case, CaseStatus, ViolationKind, ViolationReport};
 pub use chain::{
     chain_head, verify_chain, ChainBreak, ChainVerdict, SafetyEvent, SafetyEventKind, GENESIS_PREV,
@@ -58,7 +62,7 @@ pub const TITLE: &str = "Safety API 安全 API";
 /// 版本区间。
 pub const RANGE: &str = "v1.5.1 → v1.5.10";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.5.6";
+pub const CURRENT: &str = "v1.5.7";
 
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_safety";
@@ -144,6 +148,18 @@ pub fn self_check() -> Vec<SelfCheck> {
             format!("{receipts} 个回执由服务身份签名并验签通过；经 PMB 的伪造证据被拒 {refused} 次"),
         ),
         Err(err) => SelfCheck::fail(TRACK, "pmb.round_trip", err.to_string()),
+    });
+
+    // 仲裁回滚：rejected 裁决必须把罚没还回去，且守恒式仍成立。
+    checks.push(match arbitration_rollback_probe() {
+        Ok((slashed, refunded)) => SelfCheck::pass(
+            TRACK,
+            "arbitration.rollback",
+            format!(
+                "upheld 罚没 {slashed} → rejected 归还 {refunded}，净罚没归零、守恒成立、案件 arbitrated"
+            ),
+        ),
+        Err(err) => SelfCheck::fail(TRACK, "arbitration.rollback", err.to_string()),
     });
 
     // 证据闸门：伪造摘要必须被拒，且不留下案件与事件。
@@ -575,6 +591,75 @@ fn pmb_probe() -> CoreResult<(usize, usize)> {
     Ok((receipts, refused))
 }
 
+/// 独立实验：仲裁回滚。罚没 → rejected 裁决 → 等额归还、净额归零、守恒成立。
+fn arbitration_rollback_probe() -> CoreResult<(Credits, Credits)> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config, office_keys)?;
+
+    let payload = json!({"probe": "arbitration"});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &payload)?;
+    let report = office.report(
+        &mut kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::NonDelivery,
+        reference,
+        &payload,
+    )?;
+    let request = office.arbitration_request(&report.id)?;
+    if request.case != report.id || request.subject != subject.did() {
+        return Err(CoreError::Encoding);
+    }
+
+    let upheld = ArbitrationVerdict::new(
+        &report.id,
+        VerdictOutcome::Upheld,
+        SanctionKind::StakeSlash,
+        Credits(7),
+        canonical_hash(&json!({"probe": "rationale"}))?,
+        arbiter.did(),
+        kernel.now(),
+    )
+    .sign(&arbiter)?;
+    let outcome = office.resolve(&mut kernel, upheld)?;
+    if outcome.applied != Credits(7) || office.slashed_total()? != Credits(7) {
+        return Err(CoreError::Overflow);
+    }
+    kernel.ledger().check_conservation()?;
+
+    let rejected = ArbitrationVerdict::new(
+        &report.id,
+        VerdictOutcome::Rejected,
+        SanctionKind::Warning,
+        Credits::ZERO,
+        canonical_hash(&json!({"probe": "rationale-2"}))?,
+        arbiter.did(),
+        kernel.now(),
+    )
+    .sign(&arbiter)?;
+    let rolled_back = office.resolve(&mut kernel, rejected)?;
+    if rolled_back.refunded != Credits(7) || office.slashed_total()? != Credits::ZERO {
+        return Err(CoreError::Overflow);
+    }
+    if office.status_of(&report.id) != Some(CaseStatus::Arbitrated) {
+        return Err(CoreError::InvalidKind);
+    }
+    kernel.ledger().check_conservation()?;
+    Ok((outcome.applied, rolled_back.refunded))
+}
+
 /// 轨道产物摘要（只读投影的一部分）。
 pub fn results_json() -> CoreResult<Value> {
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
@@ -700,13 +785,38 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         return Err(CoreError::Overflow);
     }
 
-    // 7) 通知结果：订阅者按状态集合收到快照 + 增量。
+    // 7) 仲裁：案件事实交给仲裁方（数据契约），裁决回来自带仲裁者签名 → 终局。
+    let request = office.arbitration_request(&report.id)?;
+    let verdict = ArbitrationVerdict::new(
+        request.case.clone(),
+        VerdictOutcome::Upheld,
+        SanctionKind::StakeSlash,
+        Credits(2),
+        canonical_hash(&json!({"rationale": "delivery receipt contradicted the appeal"}))?,
+        arbiter.did(),
+        kernel.now(),
+    )
+    .sign(&arbiter)?;
+    let outcome = office.resolve(kernel, verdict)?;
+    let arbitrated = office.status_of(&report.id) == Some(CaseStatus::Arbitrated)
+        && outcome.outcome == VerdictOutcome::Upheld
+        && outcome.applied == Credits(2);
+    if !arbitrated {
+        return Err(CoreError::InvalidKind);
+    }
+    let after_verdict = ledger_snapshot(kernel, &participants);
+    if after_verdict == after_appeal {
+        return Err(CoreError::Overflow);
+    }
+
+    // 8) 通知结果：订阅者按状态集合收到快照 + 增量（含终局 arbitrated）。
     let delivered: Vec<&str> = office
         .inbox(&reporter.did())
         .iter()
         .map(|n| n.status.as_str())
         .collect();
-    let notifications_as_watched = delivered == vec!["reported", "penalized", "appealed"];
+    let notifications_as_watched =
+        delivered == vec!["reported", "penalized", "appealed", "arbitrated"];
     let notifications_private = office.inbox(&subject.did()).is_empty();
     if !notifications_as_watched || !notifications_private {
         return Err(CoreError::InvalidSignature);
@@ -791,11 +901,17 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "case": {
             "id": report.id,
             "status": office.status_of(&report.id).map(|s| s.as_str()),
+            "outcome": office.case(&report.id).and_then(|c| c.outcome).map(|o| o.as_str()),
             "violation": report.violation.as_str(),
             "reporter": report.reporter.as_str(),
             "subject": report.subject.as_str(),
             "appeals": office.case(&report.id).map(|c| c.appeals.len()),
             "penalties": office.case(&report.id).map(|c| c.penalties.len()),
+        },
+        "arbitration": {
+            "request": request.to_json()?,
+            "outcome": outcome.to_json()?,
+            "arbitrated": arbitrated,
         },
         "penalty": {
             "id": penalty.id,
@@ -806,6 +922,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "slashed_total": office.slashed_total()?.get(),
             "moved_ledger": penalty_moved_ledger,
         },
+        "ledger_after_verdict": after_verdict,
         "appeal": {
             "id": appeal.id,
             "appellant": appeal.appellant.as_str(),

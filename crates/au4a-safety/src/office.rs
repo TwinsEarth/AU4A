@@ -14,6 +14,7 @@ use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
 use crate::appeal::Appeal;
+use crate::arbitration::{ArbitrationRequest, ArbitrationVerdict, CaseOutcome, VerdictOutcome};
 use crate::case::{Case, CaseStatus, ViolationKind, ViolationReport};
 use crate::chain::{chain_head, verify_chain, ChainVerdict, SafetyEvent, SafetyEventKind};
 use crate::config::SafetyConfig;
@@ -359,11 +360,31 @@ impl SafetyOffice {
         &self.penalties
     }
 
-    /// 至今净罚没额（Σ执行 − Σ已回滚）。
+    /// 至今**净**罚没额（Σ执行 − Σ已回滚）。
     pub fn slashed_total(&self) -> CoreResult<Credits> {
         let mut total = Credits::ZERO;
         for record in &self.penalties {
             if !record.reversed {
+                total = total.checked_add(record.applied)?;
+            }
+        }
+        Ok(total)
+    }
+
+    /// **历史**罚没总额：与账本 `slashed` 对应（归还不会减少它）。
+    pub fn gross_slashed(&self) -> CoreResult<Credits> {
+        let mut total = Credits::ZERO;
+        for record in &self.penalties {
+            total = total.checked_add(record.applied)?;
+        }
+        Ok(total)
+    }
+
+    /// 已归还总额（`rejected` 裁决回滚的部分）。
+    pub fn refunded_total(&self) -> CoreResult<Credits> {
+        let mut total = Credits::ZERO;
+        for record in &self.penalties {
+            if record.reversed {
                 total = total.checked_add(record.applied)?;
             }
         }
@@ -690,6 +711,149 @@ impl SafetyOffice {
             ),
         );
         Ok(Some(receipt))
+    }
+
+    // ---- v1.5.7 仲裁 ----
+
+    /// 生成交给仲裁方的案件事实（数据契约）。安全服务不关心结论是怎么产生的。
+    pub fn arbitration_request(&self, case_id: &str) -> CoreResult<ArbitrationRequest> {
+        let case = self.cases.get(case_id).ok_or(CoreError::UnknownAgent)?;
+        let requested_at = self
+            .events
+            .last()
+            .map(|event| event.at)
+            .unwrap_or(case.opened_at);
+        Ok(ArbitrationRequest {
+            case: case.id.clone(),
+            reporter: case.reporter.clone(),
+            subject: case.subject.clone(),
+            violation: case.violation,
+            evidence: case.evidence.clone(),
+            appeals: case.appeals.clone(),
+            penalties: case.penalties.clone(),
+            requested_at,
+        })
+    }
+
+    /// 执行一份仲裁裁决，案件进入终局 `arbitrated`。
+    ///
+    /// * `upheld`：执行处罚（罚没同样受锁定余额封顶），追加处罚记录。
+    /// * `rejected`：回滚该案所有未回滚的罚没——按等额重新发行归还，
+    ///   守恒式仍然成立；账本 `slashed` 保留历史值，净额由记录的 `reversed` 推导。
+    pub fn resolve(
+        &mut self,
+        kernel: &mut Kernel,
+        verdict: ArbitrationVerdict,
+    ) -> CoreResult<CaseOutcome> {
+        if verdict.verify_against(&self.config).is_err() {
+            kernel.refuse(
+                &verdict.arbiter,
+                RefusalCode::Unauthorized,
+                "verdict is not signed by a trusted arbiter",
+            );
+            return Err(CoreError::InvalidSignature);
+        }
+        let case = match self.cases.get(&verdict.case) {
+            Some(case) => case.clone(),
+            None => {
+                kernel.refuse(
+                    &verdict.arbiter,
+                    RefusalCode::StaleEpoch,
+                    "verdict references an unknown case",
+                );
+                return Err(CoreError::UnknownAgent);
+            }
+        };
+
+        let at = kernel.tick();
+        let seq = self.events.len() as u64;
+        let mut applied = Credits::ZERO;
+        let mut refunded = Credits::ZERO;
+
+        match verdict.outcome {
+            VerdictOutcome::Upheld => {
+                if verdict.sanction.moves_ledger() {
+                    let locked = kernel.ledger().balance(&case.subject).locked;
+                    let take = if verdict.amount > locked {
+                        locked
+                    } else {
+                        verdict.amount
+                    };
+                    if take > Credits::ZERO {
+                        kernel.ledger_mut().slash(&case.subject, take)?;
+                        applied = take;
+                    }
+                }
+                let record = PenaltyRecord {
+                    id: verdict.id.clone(),
+                    case: verdict.case.clone(),
+                    subject: case.subject.clone(),
+                    sanction: verdict.sanction,
+                    requested: verdict.amount,
+                    applied,
+                    arbiter: verdict.arbiter.clone(),
+                    at,
+                    reversed: false,
+                };
+                self.penalties.push(record.clone());
+                if let Some(target) = self.cases.get_mut(&verdict.case) {
+                    target.penalties.push(record.id.clone());
+                }
+            }
+            VerdictOutcome::Rejected => {
+                // 误判必须能还钱：账本没有「反罚没」，归还以等额重新发行实现。
+                // 罚没取自**锁定质押**，所以归还也必须回到锁定质押——否则被误判的
+                // Agent 拿回了钱却丢了权限（质押低于下限就连举报都做不了），等于二次误伤。
+                let subject = case.subject.clone();
+                for record in self.penalties.iter_mut() {
+                    if record.case == verdict.case
+                        && !record.reversed
+                        && record.applied > Credits::ZERO
+                    {
+                        kernel.ledger_mut().mint(&subject, record.applied)?;
+                        kernel.ledger_mut().lock(&subject, record.applied)?;
+                        refunded = refunded.checked_add(record.applied)?;
+                        record.reversed = true;
+                    }
+                }
+            }
+        }
+
+        if let Some(target) = self.cases.get_mut(&verdict.case) {
+            target.status = CaseStatus::Arbitrated;
+            target.status_seq = seq;
+            target.outcome = Some(verdict.outcome);
+            target.arbitrated_at = Some(at);
+        }
+        self.append(
+            kernel,
+            SafetyEventKind::Arbitrated,
+            json!({
+                "case": verdict.case,
+                "verdict": verdict.to_json()?,
+                "applied": applied,
+                "refunded": refunded,
+            }),
+        )?;
+        self.deliver(&verdict.case, CaseStatus::Arbitrated, seq, at);
+        kernel.emit(
+            &format!("{}.arbitrated", crate::TRACK),
+            format!(
+                "案件 {} 裁决 {}（新增罚没 {}，归还 {}）",
+                au4a_core::short_id(&verdict.case),
+                verdict.outcome.as_str(),
+                applied,
+                refunded
+            ),
+        );
+        Ok(CaseOutcome {
+            case: verdict.case,
+            outcome: verdict.outcome,
+            verdict: verdict.id,
+            applied,
+            refunded,
+            status: CaseStatus::Arbitrated,
+        })
     }
 }
 
@@ -1829,5 +1993,257 @@ mod tests {
         let (_, refusal) = w.kernel.refusals().last().unwrap();
         assert_eq!(refusal.code, RefusalCode::Unauthorized);
         assert!(refusal.code.is_misconduct(), "篡改信封是单次即恶意的拒绝码");
+    }
+
+    // ---- v1.5.7 仲裁 ----
+
+    fn rationale() -> String {
+        au4a_core::canonical_hash(&json!({"reason": "appeal evidence checked"})).unwrap()
+    }
+
+    fn upheld(case_id: &str, amount: i64, arbiter: &AgentKeys) -> ArbitrationVerdict {
+        ArbitrationVerdict::new(
+            case_id,
+            VerdictOutcome::Upheld,
+            SanctionKind::StakeSlash,
+            Credits(amount),
+            rationale(),
+            arbiter.did(),
+            0,
+        )
+        .sign(arbiter)
+        .unwrap()
+    }
+
+    fn rejected(case_id: &str, arbiter: &AgentKeys) -> ArbitrationVerdict {
+        ArbitrationVerdict::new(
+            case_id,
+            VerdictOutcome::Rejected,
+            SanctionKind::Warning,
+            Credits::ZERO,
+            rationale(),
+            arbiter.did(),
+            0,
+        )
+        .sign(arbiter)
+        .unwrap()
+    }
+
+    #[test]
+    fn the_arbitration_request_carries_the_case_facts() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "arb-1");
+        let (references, payloads) = appeal_evidence("arb-1");
+        let appeal = w
+            .office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        let record = w
+            .office
+            .apply_penalty_order(
+                &mut w.kernel,
+                slash_order(&case_id, &w.subject.did(), 4, &w.arbiter)
+                    .sign(&w.arbiter)
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let request = w.office.arbitration_request(&case_id).unwrap();
+        assert_eq!(request.case, case_id);
+        assert_eq!(request.subject, w.subject.did());
+        assert_eq!(request.reporter, w.reporter.did());
+        assert_eq!(request.violation, ViolationKind::NonDelivery);
+        assert_eq!(request.appeals, vec![appeal.id]);
+        assert_eq!(request.penalties, vec![record.id]);
+        assert_eq!(
+            ArbitrationRequest::from_json(&request.to_json().unwrap()).unwrap(),
+            request
+        );
+        assert_eq!(
+            w.office.arbitration_request("no-such-case"),
+            Err(CoreError::UnknownAgent)
+        );
+    }
+
+    #[test]
+    fn an_upheld_verdict_applies_the_sanction_and_finalizes_the_case() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "arb-2");
+        let (references, payloads) = appeal_evidence("arb-2");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        w.office
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Arbitrated],
+            )
+            .unwrap();
+
+        let locked_before = w.kernel.ledger().balance(&w.subject.did()).locked;
+        let verdict = upheld(&case_id, 6, &w.arbiter);
+        let verdict_id = verdict.id.clone();
+        let outcome = w.office.resolve(&mut w.kernel, verdict).unwrap();
+
+        assert_eq!(outcome.outcome, VerdictOutcome::Upheld);
+        assert_eq!(outcome.applied, Credits(6));
+        assert_eq!(outcome.refunded, Credits::ZERO);
+        assert_eq!(outcome.status, CaseStatus::Arbitrated);
+        assert_eq!(outcome.verdict, verdict_id);
+
+        let case = w.office.case(&case_id).unwrap();
+        assert_eq!(case.status, CaseStatus::Arbitrated);
+        assert_eq!(case.outcome, Some(VerdictOutcome::Upheld));
+        assert!(case.arbitrated_at.is_some());
+        assert_eq!(
+            w.kernel.ledger().balance(&w.subject.did()).locked,
+            locked_before.checked_sub(Credits(6)).unwrap()
+        );
+        assert_eq!(w.office.gross_slashed().unwrap(), Credits(6));
+        assert_eq!(w.office.slashed_total().unwrap(), Credits(6));
+        assert_eq!(w.office.refunded_total().unwrap(), Credits::ZERO);
+        w.kernel.ledger().check_conservation().unwrap();
+
+        assert_eq!(
+            w.office.events().last().unwrap().kind,
+            SafetyEventKind::Arbitrated
+        );
+        assert!(w.office.verify_chain().ok);
+        // 订阅了 arbitrated 的举报人收到终局通知。
+        let inbox = w.office.inbox(&w.reporter.did());
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].status, CaseStatus::Arbitrated);
+    }
+
+    #[test]
+    fn a_rejected_verdict_refunds_the_slash_and_finalizes_the_case() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "arb-3");
+        let locked_before = w.kernel.ledger().balance(&w.subject.did()).locked;
+        let record = w
+            .office
+            .apply_penalty_order(
+                &mut w.kernel,
+                slash_order(&case_id, &w.subject.did(), 8, &w.arbiter)
+                    .sign(&w.arbiter)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(w.kernel.ledger().balance(&w.subject.did()).locked, locked_before.checked_sub(Credits(8)).unwrap());
+        let minted_before = w.kernel.ledger().minted();
+
+        let outcome = w
+            .office
+            .resolve(&mut w.kernel, rejected(&case_id, &w.arbiter))
+            .unwrap();
+        assert_eq!(outcome.outcome, VerdictOutcome::Rejected);
+        assert_eq!(outcome.refunded, Credits(8));
+        assert_eq!(outcome.applied, Credits::ZERO);
+
+        // 罚没被等额归还：锁定质押回到原值，净罚没为 0，历史罚没留痕。
+        assert_eq!(
+            w.kernel.ledger().balance(&w.subject.did()).locked,
+            locked_before
+        );
+        assert_eq!(
+            w.kernel.ledger().minted(),
+            minted_before.checked_add(Credits(8)).unwrap()
+        );
+        assert_eq!(w.office.refunded_total().unwrap(), Credits(8));
+        assert_eq!(w.office.slashed_total().unwrap(), Credits::ZERO);
+        assert_eq!(w.office.gross_slashed().unwrap(), Credits(8));
+        assert!(w.office.penalty(&record.id).unwrap().reversed);
+        w.kernel.ledger().check_conservation().unwrap();
+
+        let case = w.office.case(&case_id).unwrap();
+        assert_eq!(case.status, CaseStatus::Arbitrated);
+        assert_eq!(case.outcome, Some(VerdictOutcome::Rejected));
+    }
+
+    #[test]
+    fn an_untrusted_or_tampered_verdict_is_refused_and_changes_nothing() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "arb-4");
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+
+        let outsider = AgentKeys::from_seed(&[0x81; 32]);
+        let rogue = ArbitrationVerdict::new(
+            &case_id,
+            VerdictOutcome::Upheld,
+            SanctionKind::StakeSlash,
+            Credits(5),
+            rationale(),
+            outsider.did(),
+            0,
+        )
+        .sign(&outsider)
+        .unwrap();
+        assert_eq!(
+            w.office.resolve(&mut w.kernel, rogue),
+            Err(CoreError::InvalidSignature)
+        );
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::Unauthorized);
+
+        let mut tampered = upheld(&case_id, 5, &w.arbiter);
+        tampered.amount = Credits(19);
+        assert_eq!(
+            w.office.resolve(&mut w.kernel, tampered),
+            Err(CoreError::InvalidSignature)
+        );
+
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Reported));
+        assert_eq!(w.office.penalty_count(), 0);
+        w.kernel.ledger().check_conservation().unwrap();
+    }
+
+    #[test]
+    fn a_verdict_for_an_unknown_case_is_refused() {
+        let mut w = world();
+        assert_eq!(
+            w.office.resolve(&mut w.kernel, upheld("no-such-case", 5, &w.arbiter)),
+            Err(CoreError::UnknownAgent)
+        );
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::StaleEpoch);
+        assert_eq!(w.office.event_count(), 0);
+    }
+
+    #[test]
+    fn an_appeal_after_arbitration_reopens_the_case_and_a_second_verdict_settles_it() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "arb-5");
+        w.office
+            .apply_penalty_order(
+                &mut w.kernel,
+                slash_order(&case_id, &w.subject.did(), 3, &w.arbiter)
+                    .sign(&w.arbiter)
+                    .unwrap(),
+            )
+            .unwrap();
+        w.office
+            .resolve(&mut w.kernel, upheld(&case_id, 2, &w.arbiter))
+            .unwrap();
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Arbitrated));
+
+        // 终局性属于裁决，不属于申诉人：新证据可以再次申诉。
+        let (references, payloads) = appeal_evidence("arb-5");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Appealed));
+
+        let outcome = w
+            .office
+            .resolve(&mut w.kernel, rejected(&case_id, &w.arbiter))
+            .unwrap();
+        assert_eq!(outcome.refunded, Credits(5), "两次罚没（3 + 2）应一起归还");
+        assert_eq!(w.office.slashed_total().unwrap(), Credits::ZERO);
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Arbitrated));
+        w.kernel.ledger().check_conservation().unwrap();
+        assert!(w.office.verify_chain().ok);
     }
 }
