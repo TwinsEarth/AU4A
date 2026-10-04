@@ -179,6 +179,20 @@ pub fn overhead_ratio_bp(n: u64, params: &ScalingParams) -> CoreResult<i64> {
     clamp_i64(overhead.saturating_mul(10_000) / aggregate)
 }
 
+/// `R_ppm(n) = 1000000·O(n)/T(n)`（百万分之一）。
+///
+/// **为什么需要它**：当吞吐远大于开销时，基点分辨率会把占比截断成 0
+/// （例如 `O/T = 1e-5` → 0 bp），于是「峰值后开销恶化」这类**比较**会失效。
+/// 因此：**报告**用 bp（人类可读），**比较**用 ppm（保留分辨率）。
+pub fn overhead_ratio_ppm(n: u64, params: &ScalingParams) -> CoreResult<i64> {
+    let aggregate = aggregate_throughput_milli(n, params)?.max(0) as u128;
+    let overhead = orchestration_overhead_milli(n, params)?.max(0) as u128;
+    if aggregate == 0 {
+        return Ok(1_000_000);
+    }
+    clamp_i64(overhead.saturating_mul(1_000_000) / aggregate)
+}
+
 /// `ΔT(n) = T(n+1) − T(n)`：正数表示还在变大，负数表示已经过了顶点。
 pub fn marginal_gain_milli(n: u64, params: &ScalingParams) -> CoreResult<i64> {
     let here = aggregate_throughput_milli(n, params)?;

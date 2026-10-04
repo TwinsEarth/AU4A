@@ -110,19 +110,20 @@
       ],
       "acceptance": [
         "α=2 场景判定 VertexFound 且顶点与解析式相差 ≤ 1 个步长",
-        "峰值后开销占比严格上升（OverheadWorsened 原因码）",
+        "峰值后开销占比严格上升（OverheadWorsened，比较用 ppm 保留分辨率）",
         "边际收益在顶点后转负（MarginalTurnedNegative，含具体起始 n）",
+        "收益转负：交互成本 10 任务时 net_negative_from 给出首次转负点，该点净收益 < 0 且起点 > 0",
         "α=1 场景判定 MonotonicNoVertex；区间过窄判定 InsufficientRange",
-        "同一输入裁决结果可复现（两次调用相等）"
+        "同一输入裁决结果可复现（两次调用相等），JSON 可规范化"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-scale",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.9.3 全绿后开工"
+        "tests_passed": 26,
+        "tests_total": 26,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.4.log；开销占比比较改用 ppm（bp 在 O/T≈1e-5 时截断为 0，由测试发现）"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.9.5",

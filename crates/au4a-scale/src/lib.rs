@@ -17,6 +17,7 @@
 pub mod cluster;
 pub mod harness;
 pub mod metrics;
+pub mod verdict;
 
 use au4a_core::{CoreResult, SelfCheck};
 use au4a_kernel::Kernel;
@@ -27,6 +28,7 @@ pub use cluster::{
     MAX_SCAN_SAMPLES, TIERS,
 };
 pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
+pub use verdict::{adjudicate, CapacityVerdict, VerdictKind, VerdictReason};
 pub use metrics::{
     aggregate_throughput_milli, analytic_vertex_floor, completion_bp, coordination_base,
     effective_per_node_milli, interaction_complexity, marginal_gain_milli, net_throughput_milli,
@@ -40,7 +42,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.3";
+pub const CURRENT: &str = "v1.9.4";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -116,6 +118,46 @@ pub fn self_check() -> Vec<SelfCheck> {
                 "metrics.analytic_vertex",
                 format!("解析顶点 {analytic}，期望 1000"),
             )
+        }
+    });
+
+    // v1.9.4：容量顶点裁决必须复现，且原因码与数值一致。
+    checks.push({
+        let params = ScalingParams::new(1_000, 2, 1_000_000, 1);
+        match (
+            adjudicate(&params, 100_000, 1, 4_000),
+            adjudicate(&params, 100_000, 1, 4_000),
+        ) {
+            (Ok(first), Ok(second)) => {
+                let analytic = analytic_vertex_floor(params.n0, params.alpha);
+                if first == second
+                    && first.kind == VerdictKind::VertexFound
+                    && first.has(VerdictReason::MarginalTurnedNegative)
+                    && first.vertex_nodes.abs_diff(analytic) <= first.step
+                {
+                    SelfCheck::pass(
+                        TRACK,
+                        "verdict.capacity_vertex",
+                        format!(
+                            "顶点 {}（解析 {analytic}，步长 {}），边际收益自 {} 起转负，开销占比 {} → {} ppm",
+                            first.vertex_nodes,
+                            first.step,
+                            first.marginal_negative_from.unwrap_or(0),
+                            first.overhead_ratio_at_peak_ppm,
+                            first.overhead_ratio_after_peak_ppm
+                        ),
+                    )
+                } else {
+                    SelfCheck::fail(
+                        TRACK,
+                        "verdict.capacity_vertex",
+                        format!("裁决不符合预期：{:?}", first.kind),
+                    )
+                }
+            }
+            (Err(err), _) | (_, Err(err)) => {
+                SelfCheck::fail(TRACK, "verdict.capacity_vertex", err.to_string())
+            }
         }
     });
 
@@ -196,13 +238,14 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     config.validate()?;
     let report = run_experiment(&config)?;
     let tiers = tier_report(&config.params, config.demand_milli)?;
+    let verdict = adjudicate(&config.params, config.demand_milli, 1, 4 * config.params.n0)?;
 
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "{CURRENT} 实验框架 + 档位评估：{} 个档位，顶点 {}，求值 {} 次（预算 {}）",
-            report.rows.len(),
-            tiers.vertex.vertex_nodes,
+            "{CURRENT} 档位评估 + 容量裁决：顶点 {}（{:?}），求值 {} 次（预算 {}）",
+            verdict.vertex_nodes,
+            verdict.kind,
             tiers.evaluations,
             evaluation_budget()
         ),
@@ -219,6 +262,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "first_negative_net_nodes": report.first_negative_net().map(|row| row.nodes),
         "analytic_vertex": analytic_vertex_floor(config.params.n0, config.params.alpha),
         "tiers": tiers.to_json()?,
+        "verdict": verdict.to_json()?,
+        "verdict_kind": match verdict.kind {
+            VerdictKind::VertexFound => "vertex_found",
+            VerdictKind::MonotonicNoVertex => "monotonic_no_vertex",
+            VerdictKind::InsufficientRange => "insufficient_range",
+        },
         "evaluation_budget": evaluation_budget(),
         "note": "确定性聚合模型（解析式实现），非真实分布式压测",
     }))
