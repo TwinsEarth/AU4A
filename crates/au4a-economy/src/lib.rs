@@ -17,6 +17,7 @@
 pub mod balance;
 pub mod fx;
 pub mod pricing;
+pub mod stake;
 
 use au4a_core::{AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, Ledger, RefusalCode, SelfCheck};
 use au4a_kernel::Kernel;
@@ -28,6 +29,7 @@ pub use fx::{
     RouteAction, RoutePlan, RouteTable, Urgency, Venue,
 };
 pub use pricing::{unit_price, PriceComponents, PriceInputs, PriceKnobs, PriceQuote};
+pub use stake::{StakeBook, StakePosition, StakeTerms, Unbonding};
 
 /// 轨道号。
 pub const TRACK: &str = "1.4";
@@ -272,6 +274,36 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("stake.self_custody", || {
+        let who = agent(11).did();
+        let mut ledger = Ledger::new();
+        ledger.mint(&who, Credits(1_000)).map_err(|e| e.to_string())?;
+        let terms = StakeTerms::DEFAULT;
+        let mut book = StakeBook::new();
+        book.stake(&mut ledger, &terms, &who, Credits(300))
+            .map_err(|e| format!("自主质押被拒绝：{e}"))?;
+        // 解质押 100（≥ 准入线 10），冷静期 3 个时间片。
+        let entry = book
+            .request_unstake(&terms, &who, Credits(100), 20)
+            .map_err(|e| format!("解质押被拒绝：{e}"))?;
+        let early = book
+            .release_matured(&mut ledger, &who, entry.release_at - 1)
+            .map_err(|e| e.to_string())?;
+        if early != Credits::ZERO {
+            return Err(format!("冷静期未满却释放了 {early}"));
+        }
+        let released = book
+            .release_matured(&mut ledger, &who, entry.release_at)
+            .map_err(|e| e.to_string())?;
+        book.assert_consistent(&ledger).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "质押 300 → 解质押 100（{} 到点）→ 提前释放 0、到点释放 {released}；锁定 {} 可用 {}",
+            entry.release_at,
+            ledger.balance(&who).locked,
+            ledger.balance(&who).available
+        ))
+    }));
+
     checks
 }
 
@@ -291,7 +323,7 @@ pub fn results_json() -> CoreResult<Value> {
         "checks_total": checks.len(),
         "checks_passed": passed,
         "all_passed": au4a_core::all_passed(&checks),
-        "modules": ["balance", "pricing", "fx"],
+        "modules": ["balance", "pricing", "fx", "stake"],
         "invariants": [
             "Σ可用 + Σ锁定 + 罚没 == 发行",
             "整数微积分与基点运算，规范 JSON 禁浮点",
@@ -350,7 +382,7 @@ fn parse_announcement(env: &Envelope) -> Option<Announcement> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：余额管理 + 自主定价 + 兑换路由决策（v1.4.3）"),
+        format!("{TITLE} {RANGE}：余额 + 定价 + 兑换路由 + 质押管理（v1.4.4）"),
     );
 
     let seller_keys = agent(41);
@@ -528,6 +560,40 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         return Err(CoreError::InvalidKind);
     }
 
+    // 自主质押管理：认领注册时自带的质押 → 自主解质押 → 冷静期到点后释放。
+    let terms = StakeTerms::DEFAULT;
+    let mut stakes = StakeBook::new();
+    stakes.adopt(kernel.ledger(), &terms, &seller, Credits(100))?;
+    let unbond = stakes.request_unstake(&terms, &seller, Credits(40), kernel.now())?;
+    kernel.emit(
+        "economy.unstake_requested",
+        format!(
+            "卖方自主解质押 {}，冷静期至 {}（t={}）",
+            unbond.amount, unbond.release_at, unbond.requested_at
+        ),
+    );
+    // 没有头寸的 Agent 不能解质押：类型化拒绝留痕。
+    let stranger_verdict = stakes.request_unstake(&terms, &buyer, Credits(10), kernel.now());
+    if stranger_verdict.is_ok() {
+        return Err(CoreError::InvalidKind);
+    }
+    kernel.refuse(
+        &buyer,
+        RefusalCode::PolicyDenied,
+        "unstake without a stake position",
+    );
+    // 冷静期按**逻辑时钟**推进，不读墙钟。
+    for _ in 0..terms.cooldown_ticks {
+        kernel.tick();
+    }
+    let matured_at = kernel.now();
+    let released = stakes.release_matured(kernel.ledger_mut(), &seller, matured_at)?;
+    stakes.assert_consistent(kernel.ledger())?;
+    kernel.emit(
+        "economy.unstaked",
+        format!("冷静期到点，释放 {released} 回可用；质押簿与账本一致"),
+    );
+
     // 守恒断言 + 余额变动投影。
     balance::assert_conserved(kernel.ledger())?;
     let after = kernel.ledger().view();
@@ -548,7 +614,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.4.3 余额管理 + 自主定价 + 兑换路由决策",
+        "scenario": "v1.4.4 余额 + 定价 + 兑换路由 + 质押管理",
         "agents": [row(&seller)?, row(&buyer)?, row(&rival)?],
         "pricing": {
             "knobs": PriceKnobs::DEFAULT,
@@ -567,8 +633,20 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "book": exchange.to_json(),
             "chain_executed": false,
         },
+        "stake": {
+            "terms": terms,
+            "positions": stakes.to_json(),
+            "unbond_requested": unbond.amount,
+            "release_at": unbond.release_at,
+            "released": released,
+            "refused_stranger": true,
+            "consistent": true,
+        },
         "settled": [{ "from": buyer.as_str(), "to": seller.as_str(), "amount": price, "gate": "ledger-direct" }],
-        "refusals": [{ "code": RefusalCode::PolicyDenied.as_str(), "verdict": verdict.as_str(), "amount": overreach }],
+        "refusals": [
+            { "code": RefusalCode::PolicyDenied.as_str(), "verdict": verdict.as_str(), "amount": overreach },
+            { "code": RefusalCode::PolicyDenied.as_str(), "verdict": "unstake_without_position", "amount": Credits(10) },
+        ],
         "staked": locked,
         "conservation": {
             "ok": true,
@@ -624,6 +702,14 @@ mod tests {
             a["exchange"]["book"]["intents"][0]["status"],
             json!("awaiting_chain_execution")
         );
+        assert_eq!(a["conservation"]["ok"], json!(true));
+        // 质押管理：认领 100 → 解质押 40 → 冷静期到点释放 40。
+        assert_eq!(a["stake"]["positions"]["positions"][0]["locked"], json!(60));
+        assert_eq!(a["stake"]["unbond_requested"], json!(40));
+        assert_eq!(a["stake"]["released"], json!(40));
+        assert_eq!(a["stake"]["refused_stranger"], json!(true));
+        assert_eq!(a["stake"]["consistent"], json!(true));
+        assert_eq!(a["refusals"][1]["verdict"], json!("unstake_without_position"));
         assert_eq!(a["conservation"]["ok"], json!(true));
         assert!(first.ledger().check_conservation().is_ok());
         assert!(second.ledger().check_conservation().is_ok());

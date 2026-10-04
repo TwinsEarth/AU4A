@@ -98,6 +98,37 @@
         "notes": "决策与账务本机实测；链上执行未做（属 v1.8），类型层无法表达链上成功；日志 _forangent\\logs\\1.4-v1.4.3.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.4",
+      "title": "质押管理",
+      "goal": "Agent 自主质押/解质押/冷静期解锁；罚没与质押簿同步；准入线与份额上限校验；不变式为「簿记承诺量 ≤ 账本锁定量」。",
+      "deliverables": [
+        "src/stake.rs: StakeTerms / Unbonding / StakePosition / StakeBook(adopt, stake, request_unstake, release_matured, absorb_slash, assert_consistent, to_json)",
+        "src/lib.rs: scenario 认领质押-自主解质押-无头寸被拒-冷静期释放；self_check stake.self_custody"
+      ],
+      "interfaces": [
+        "pub fn stake(&mut self, ledger: &mut Ledger, terms: &StakeTerms, who: &Did, amount: Credits) -> CoreResult<StakePosition>",
+        "pub fn request_unstake(&mut self, terms: &StakeTerms, who: &Did, amount: Credits, now: u64) -> CoreResult<Unbonding>",
+        "pub fn release_matured(&mut self, ledger: &mut Ledger, who: &Did, now: u64) -> CoreResult<Credits>",
+        "pub fn absorb_slash(&mut self, who: &Did, amount: Credits) -> CoreResult<Credits>",
+        "pub fn assert_consistent(&self, ledger: &Ledger) -> CoreResult<()>"
+      ],
+      "acceptance": [
+        "质押 200 → 可用 800/锁定 200；99 < 下限 100 → InsufficientStake；501 > 上限 500 → InsufficientStake",
+        "解质押 150 后账本锁定不变，头寸 locked=250 / unbonding=150 / committed=400",
+        "release_at=25 时 t=24 释放 0、t=25 释放 100；无头寸者解质押 → UnknownAgent",
+        "罚没 10000 被锁定余额约束为 300 且簿记同步归零；外部解锁后 assert_consistent 报错",
+        "认领 150 不重复锁定，认领 151 被拒；JSON 投影无浮点"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-economy)",
+        "tests_passed": 45,
+        "tests_total": 45,
+        "grade": "verified",
+        "notes": "质押/解质押/冷静期/罚没同步均走真实 Ledger 写路径；日志 _forangent\\logs\\1.4-v1.4.4.log"
+      },
+      "status": "done"
     }
   ]
 }
