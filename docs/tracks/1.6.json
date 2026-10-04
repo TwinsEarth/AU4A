@@ -270,27 +270,38 @@
     {
       "version": "v1.6.8",
       "title": "文档",
-      "goal": "全量 rustdoc + 机器可读的策略解释（explain）：每个参数为什么是这个值，必须由反馈数据推出。",
+      "goal": "让文档与代码不可能分叉：策略解释由与行为相同的函数产出，并发布『解释所蕴含的下一步动作』，测试逐项断言其与实际行为一致。",
       "deliverables": [
-        "src/explain.rs: explain() / PolicyExplanation",
-        "docs/tracks/1.6.md 与 1.6.json 全部 10 节"
+        "src/explain.rs: PolicyExplanation / PriceExplanation / BiasExplanation / explain() / explain_peer_tag()",
+        "src/policy.rs: 抽出唯一来源 price_decision() 与 bias_delta_bp()（adjust 与 explain 共用）",
+        "tests/explain.rs: 5 个集成测试",
+        "docs/tracks/1.6.md 与 1.6.json：10 个小版本全部成文"
       ],
       "interfaces": [
-        "pub fn explain(&PolicyParams, &FeedbackReport, &Signals) -> CoreResult<PolicyExplanation>"
+        "pub fn price_decision(&Signals, &PolicyTargets) -> (i64, String)",
+        "pub fn bias_delta_bp(score_bp: i64, overall_bp: i64, &PolicyBounds) -> i64",
+        "pub fn explain(&PolicyParams, &FeedbackReport, &ViolationLog, &Signals, &PolicyBounds, &PolicyTargets) -> CoreResult<PolicyExplanation>",
+        "pub struct PriceExplanation { implied_direction, implied_move_bp, reason, ... }",
+        "pub struct BiasExplanation { target, kind, current_bias_bp, score_bp, overall_bp, violations, implied_delta_bp, reason }",
+        "pub fn PolicyExplanation::summary(&self) -> String",
+        "pub fn explain_peer_tag(&Did) -> String"
       ],
       "acceptance": [
-        "解释文本与统计一致（接受率高于目标 ⇒ 定价上调的解释）",
-        "解释不含浮点、可规范编码",
-        "文档每条能力都能在代码里找到对应 public 项"
+        "7 种输入矩阵下 explain().price.implied_move_bp == adjust().price_moved_bp",
+        "任务/协作者偏好的 implied_delta_bp（钳制后）与实际移动量逐项相等",
+        "理由引用真实数据：接受率 3000bp、目标 8500bp、死区 ±500bp、样本 8 条、good.type 评分 9333bp、bad.type 评分 0",
+        "样本不足的类型 implied_delta_bp=0 且理由写明不足",
+        "两次 explain 逐字段相等；摘要与 JSON 均不含 did:au4a:；协作者一律 peer:<摘要>",
+        "价格在上界时方向仍为上移但 implied_move_bp=0（与 adjust 一致）"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 86,
+        "tests_total": 86,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 5 解释 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号 + 3 不变式 + 4 复现 + 3 拒绝。重构 price_decision 时漏掉『信誉闸作用于最终方向』导致 seed=5654 回归，被 32 种子不变式扫描当场抓到并修复（教训写进文档）。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.8.log"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.6.9",

@@ -28,6 +28,7 @@
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 
 pub mod experience;
+pub mod explain;
 pub mod feedback;
 pub mod model;
 pub mod policy;
@@ -39,6 +40,7 @@ pub mod sim;
 pub mod violation;
 
 pub use experience::{Experience, ExperienceStore, Outcome, RecordOutcome, StoreStats};
+pub use explain::{explain, explain_peer_tag, BiasExplanation, PolicyExplanation, PriceExplanation};
 pub use feedback::{
     confidence_of, Feedback, FeedbackAnalyser, FeedbackReport, PeerFeedback, MIN_SAMPLES,
 };
@@ -46,7 +48,10 @@ pub use model::{
     LearningModel, ModelConfig, ReputationLedger, UpdateRecord, REPUTATION_MAX, REPUTATION_MIN,
     REPUTATION_VIOLATION,
 };
-pub use policy::{adjust, PolicyAdjustment, PolicyBounds, PolicyParams, PolicyTargets, Signals};
+pub use policy::{
+    adjust, bias_delta_bp, price_decision, price_direction, task_score_bp, PolicyAdjustment,
+    PolicyBounds, PolicyParams, PolicyTargets, Signals,
+};
 pub use privacy::{open, peer_tag, publish, seal, PrivacyPolicy, PublicAggregate, PublicView, SealedBlob};
 pub use rng::{hash64, SplitMix64};
 pub use signal::{LearningSignal, SignalWeights, VIOLATION_UNIT_BP};
@@ -66,7 +71,7 @@ pub const TITLE: &str = "Individual Learning 个体学习";
 /// 版本区间。
 pub const RANGE: &str = "v1.6.1 → v1.6.10";
 /// 已实现到的小版本（每落地一版就前移一格）。
-pub const VERSION: &str = "v1.6.7";
+pub const VERSION: &str = "v1.6.8";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_learning";
 
@@ -82,6 +87,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(signal::self_check());
     checks.extend(model::self_check());
     checks.extend(privacy::self_check());
+    checks.extend(explain::self_check());
     checks.extend(sim::self_check());
     checks.extend(scenario::self_check());
     checks
