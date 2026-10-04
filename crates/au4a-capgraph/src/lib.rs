@@ -30,6 +30,7 @@ pub mod capability;
 pub mod declaration;
 pub mod graph;
 pub mod index;
+pub mod planner;
 
 pub use broadcast::{
     announce, announce_to, ingest, parse_announcement, parse_query, pump, query_skill,
@@ -43,6 +44,10 @@ pub use declaration::{Declaration, SignedDeclaration};
 pub use graph::{AgentCapabilityGraph, CapGraphConfig, DeclareOutcome, NeighborRecord};
 pub use index::{
     CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats,
+};
+pub use planner::{
+    plan, NoPath, NoPathReason, Pipeline, PipelineNode, PipelineRequest, PipelineStep, PlanCost,
+    PlanOutcome, SearchStats,
 };
 
 use au4a_core::{AgentKeys, CoreResult, Credits, SelfCheck};
@@ -516,6 +521,126 @@ fn checks_v115() -> Vec<SelfCheck> {
     checks
 }
 
+/// 用演示角色搭一张 alice 视角的图（不经过内核），供自检与场景复用。
+fn demo_graph() -> Result<AgentCapabilityGraph, String> {
+    let agents = demo_agents().map_err(show)?;
+    let mut graph = AgentCapabilityGraph::new(agents[0].keys.did(), CapGraphConfig::default());
+    let own = Declaration::new(agents[0].keys.did(), 1, 0, agents[0].capabilities.clone())
+        .map_err(show)?
+        .sign(&agents[0].keys)
+        .map_err(show)?;
+    graph.apply(&own, 0);
+    for agent in &agents[1..] {
+        let signed = Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone())
+            .map_err(show)?
+            .sign(&agent.keys)
+            .map_err(show)?;
+        graph.apply(&signed, 0);
+    }
+    Ok(graph)
+}
+
+/// 演示请求：`text/plain` 进，先英译中再情感分析。
+fn demo_request() -> Result<PipelineRequest, String> {
+    Ok(PipelineRequest::new(
+        FormatId::new("text/plain").map_err(show)?,
+        vec![
+            PipelineStep::new(SkillId::new("translate.en-zh").map_err(show)?),
+            PipelineStep::new(SkillId::new("sentiment.analyze").map_err(show)?),
+        ],
+    ))
+}
+
+/// v1.1.6：真图搜索，能跑通的链、贪心的反例、无路径的类型化原因。
+fn checks_v116() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.6.format_compatible_path", || {
+        let mut graph = demo_graph()?;
+        let request = demo_request()?;
+        let outcome = graph.plan(&request, &PlanCost::default(), 0);
+        let pipeline = outcome.pipeline().ok_or_else(|| format!("{:?}", outcome.to_value()))?;
+        let agents = demo_agents().map_err(show)?;
+        let first = pipeline.nodes.first().ok_or("流水线为空")?;
+        let second = pipeline.nodes.get(1).ok_or("流水线只有一步")?;
+        if first.did != agents[1].keys.did() || second.did != agents[2].keys.did() {
+            return Err("规划给出的不是 bob → carol".into());
+        }
+        if pipeline.total_price != Credits(5) {
+            return Err(format!("总价应为 5，实测 {}", pipeline.total_price));
+        }
+        Ok("断言：text/plain 进、translate+sentiment 两步 → bob(→application/json) → carol，总价 5 微积分".into())
+    }));
+    checks.push(verdict("1.1.6.search_beats_greedy", || {
+        let mut graph = demo_graph()?;
+        let request = demo_request()?;
+        let outcome = graph.plan(&request, &PlanCost::default(), 0);
+        let pipeline = outcome.pipeline().ok_or("应有可行路径")?;
+        let agents = demo_agents().map_err(show)?;
+        // 贪心会选 dave（1 微积分）——他的产出是 text/html，接不上任何情感分析。
+        let cheapest = agents[3].keys.did();
+        if pipeline.nodes[0].did == cheapest {
+            return Err("规划选了贪心的死路".into());
+        }
+        let dave = &agents[3].capabilities[0];
+        let continuations = graph
+            .query(
+                &CapabilityQuery::new(SkillId::new("sentiment.analyze").map_err(show)?).with_limit(0),
+                0,
+            )
+            .matches
+            .iter()
+            .filter(|m| dave.handoff_format(&m.capability).is_some())
+            .count();
+        if continuations != 0 {
+            return Err("dave 的产出竟然能接上后续步骤".into());
+        }
+        Ok("断言：最便宜的第一步（dave，1 微积分）产出 text/html 无任何后续可接，规划改选 bob（3 微积分）".into())
+    }));
+    checks.push(verdict("1.1.6.no_path_is_typed", || {
+        let mut graph = demo_graph()?;
+        let reversed = PipelineRequest::new(
+            FormatId::new("text/plain").map_err(show)?,
+            vec![
+                PipelineStep::new(SkillId::new("sentiment.analyze").map_err(show)?),
+                PipelineStep::new(SkillId::new("translate.en-zh").map_err(show)?),
+            ],
+        );
+        match graph.plan(&reversed, &PlanCost::default(), 0) {
+            PlanOutcome::NoPath(no_path) => {
+                let ok = matches!(no_path.reason, NoPathReason::NoCompatibleFormat { step: 1, .. })
+                    && no_path.refusal_code() == au4a_core::RefusalCode::Unsupported;
+                if !ok {
+                    return Err(format!("无路径原因不精确：{:?}", no_path.reason));
+                }
+                Ok("断言：情感分析→翻译 无路径，原因精确到 step 1 的格式接不上，拒绝码 unsupported".into())
+            }
+            PlanOutcome::Path(pipeline) => Err(format!("不该有路径：{:?}", pipeline.to_value())),
+        }
+    }));
+    checks.push(verdict("1.1.6.budget_and_deadline_are_distinguishable", || {
+        let mut graph = demo_graph()?;
+        let request = demo_request()?;
+        let poor = request.clone().with_budget(Credits(4));
+        let slow = request.clone().with_deadline_ms(150);
+        let poor_reason = match graph.plan(&poor, &PlanCost::default(), 0) {
+            PlanOutcome::NoPath(no_path) => no_path.reason,
+            PlanOutcome::Path(p) => return Err(format!("预算 4 不该可行：{:?}", p.to_value())),
+        };
+        let slow_reason = match graph.plan(&slow, &PlanCost::default(), 0) {
+            PlanOutcome::NoPath(no_path) => no_path.reason,
+            PlanOutcome::Path(p) => return Err(format!("150ms 不该可行：{:?}", p.to_value())),
+        };
+        if poor_reason != (NoPathReason::BudgetExceeded { allowed: 4 }) {
+            return Err(format!("预算原因不精确：{poor_reason:?}"));
+        }
+        if slow_reason != (NoPathReason::DeadlineExceeded { allowed_ms: 150 }) {
+            return Err(format!("期限原因不精确：{slow_reason:?}"));
+        }
+        Ok("断言：预算 4 → BudgetExceeded{4}；期限 150ms → DeadlineExceeded{150}（两者可区分）".into())
+    }));
+    checks
+}
+
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
     Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
@@ -604,6 +729,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(checks_v113());
     checks.extend(checks_v114());
     checks.extend(checks_v115());
+    checks.extend(checks_v116());
     checks
 }
 
@@ -615,7 +741,7 @@ pub fn results_json() -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5"],
+        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5", "v1.1.6"],
         "checks": checks.len(),
         "checks_passed": passed,
         "schema": {
@@ -704,22 +830,49 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             .unwrap_or(false)
     };
 
+    // v1.1.6：alice 用索引查询 + 图搜索规划出流水线。
+    let request = PipelineRequest::new(
+        FormatId::new("text/plain")?,
+        vec![
+            PipelineStep::new(translate.clone()),
+            PipelineStep::new(sentiment.clone()),
+        ],
+    );
+    let outcome = graph.plan(&request, &PlanCost::default(), 1);
+    let pipeline = outcome.pipeline().cloned();
+
+    // 无路径的现场演示：把两步调换，格式接不上（情感分析产出 json，翻译只吃 text/plain）。
+    let reversed = PipelineRequest::new(
+        FormatId::new("text/plain")?,
+        vec![
+            PipelineStep::new(sentiment.clone()),
+            PipelineStep::new(translate.clone()),
+        ],
+    );
+    let reversed_outcome = graph.plan(&reversed, &PlanCost::default(), 1);
+
+    let pipeline_agents: Vec<String> = pipeline
+        .as_ref()
+        .map(|p| p.agents().iter().map(|d| d.as_str().to_string()).collect())
+        .unwrap_or_default();
+    let pipeline_price = pipeline.as_ref().map(|p| p.total_price.get()).unwrap_or(0);
+
     let rejected = usize::from(!own_outcome.is_applied());
+    let no_path_code = reversed_outcome
+        .refusal_code()
+        .map(|c| c.as_str().to_string())
+        .unwrap_or_default();
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "v1.1.5 查询接口：translate 命中 {} 条（扫 {} / 全图 {}）、sentiment 命中 {} 条；索引一致={index_consistent}",
-            translate_hits.matches.len(),
-            translate_hits.stats.scanned,
-            translate_hits.stats.nodes_total,
-            sentiment_hits.matches.len()
+            "v1.1.6 路径规划：流水线 {pipeline_agents:?} 总价 {pipeline_price}；反向请求无路径（{no_path_code}）"
         ),
     );
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "version": "v1.1.5",
+        "version": "v1.1.6",
         "agents_in_kernel": kernel.agent_count(),
         "newly_registered": newly_registered,
         "announcements_sent": sent,
@@ -732,6 +885,8 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             {"skill": "sentiment.analyze", "best": best_sentiment, "result": sentiment_hits.to_value()},
         ],
         "index_consistent": index_consistent,
+        "plan": outcome.to_value(),
+        "no_path_demo": reversed_outcome.to_value(),
         "bounded_cache": {
             "capacity": 2,
             "ttl_ticks": 30,

@@ -463,6 +463,18 @@ impl AgentCapabilityGraph {
         self.index.writes()
     }
 
+    /// 路径规划（v1.1.6）：候选来自 v1.1.5 的索引，搜索是多准则标签设定。
+    ///
+    /// 图只负责「有哪些能力」；「怎么串起来最划算」由 [`crate::planner`] 回答。
+    pub fn plan(
+        &mut self,
+        request: &crate::planner::PipelineRequest,
+        cost: &crate::planner::PlanCost,
+        now: u64,
+    ) -> crate::planner::PlanOutcome {
+        crate::planner::plan(self, request, cost, now)
+    }
+
     /// 视图里的 Agent 数量（含自己）。
     pub fn known_agents(&self) -> usize {
         self.neighbors.len() + 1

@@ -184,17 +184,38 @@
       "version": "v1.1.6",
       "title": "路径规划",
       "goal": "真图搜索：给定技能序列与格式，返回最小代价流水线或明确的「无路径」",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/planner.rs: PipelineRequest/PipelineStep/PlanCost/PlanOutcome/Pipeline/PipelineNode/NoPath/NoPathReason/SearchStats + 多准则标签设定搜索",
+        "src/graph.rs: AgentCapabilityGraph::plan(request, cost, now)",
+        "tests/planner.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn plan(graph: &mut AgentCapabilityGraph, request: &PipelineRequest, cost: &PlanCost, now: u64) -> PlanOutcome",
+        "pub fn AgentCapabilityGraph::plan(&mut self, request, cost, now) -> PlanOutcome",
+        "pub struct PlanCost { latency_price_per_ms: i64, handoff_price: i64 }",
+        "pub enum PlanOutcome { Path(Pipeline), NoPath(NoPath) }",
+        "pub enum NoPathReason { EmptyRequest, NoProvider, NoCompatibleFormat, ConstraintRejected, BudgetExceeded, DeadlineExceeded }",
+        "pub struct SearchStats { settled, dominance_pruned, constraint_pruned, labels_capped, candidates }"
+      ],
+      "acceptance": [
+        "text/plain + translate+sentiment → bob(→application/json) → carol，总价 5、总延迟 200ms、1 次换手",
+        "贪心反例：最便宜的第一步 dave(1 微积分, text/html) 的可接续下一步数==0，规划改选 bob(3)",
+        "强制中间格式 text/html → NoCompatibleFormat{step:1} + unsupported，且 search.settled>0",
+        "预算 4 → BudgetExceeded{4}+policy_denied；期限 150ms → DeadlineExceeded{150}+timeout；预算 5/期限 200ms 恰好可行",
+        "未知技能 → NoProvider{step:0}；空请求 → EmptyRequest+malformed",
+        "载荷 >1MiB 上限 → ConstraintRejected{step:0}+policy_denied；1KiB 可行",
+        "三步链 audio/wav→text/plain→application/json 绕开 1 微积分诱饵，总价 14、换手 2",
+        "两个相同图的规划输出逐字节相同（含无路径）",
+        "scenario 返回 plan.outcome==path（bob→carol、总价 5）与 no_path_demo（unsupported）"
+      ],
       "evidence": {
-        "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 101,
+        "tests_total": 101,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 50 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + planner 9 + query_index 8 = 101，0 failed，0 warning（含依赖）。注：CARGO_INCREMENTAL=0 用于规避 Windows 增量目录复制失败（os error 5）产生的非代码警告。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.7",
