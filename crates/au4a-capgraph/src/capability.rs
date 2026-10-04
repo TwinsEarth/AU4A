@@ -104,7 +104,7 @@ impl<'de> Deserialize<'de> for FormatId {
 
 /// `text/plain` 的常量构造：它是编译期已知合法的字面量，
 /// 走 `FormatId::new` 只会在库里多出一个不可能失败的错误分支。
-pub(crate) fn text_plain() -> FormatId {
+fn text_plain() -> FormatId {
     FormatId(String::from("text/plain"))
 }
 
