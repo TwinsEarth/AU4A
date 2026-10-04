@@ -63,8 +63,8 @@ fn scene() -> Scene {
         .propose(&mut kernel, &identity, draft)
         .expect("propose");
     let round = council.open_round(&mut kernel, &first.id).expect("open");
-    for i in 0..3 {
-        let vote = Vote::cast(&agents[i], &first.id, round.round, Choice::Yes).expect("cast");
+    for agent in agents.iter().take(3) {
+        let vote = Vote::cast(agent, &first.id, round.round, Choice::Yes).expect("cast");
         council.cast_vote(&mut kernel, vote).expect("vote");
     }
     council
@@ -86,8 +86,8 @@ fn scene() -> Scene {
         .propose(&mut kernel, &identity, draft)
         .expect("propose");
     let round = council.open_round(&mut kernel, &second.id).expect("open");
-    for i in 0..3 {
-        let vote = Vote::cast(&agents[i], &second.id, round.round, Choice::Yes).expect("cast");
+    for agent in agents.iter().take(3) {
+        let vote = Vote::cast(agent, &second.id, round.round, Choice::Yes).expect("cast");
         council.cast_vote(&mut kernel, vote).expect("vote");
     }
     let human = HumanObserver::new("auditor");

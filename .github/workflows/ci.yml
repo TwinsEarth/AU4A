@@ -108,7 +108,14 @@ jobs:
         run: |
           echo "checking out ${{ matrix.tag }}"
           cat VERSION
-      - name: cargo test --workspace --locked
+      - name: cargo build --workspace --locked (every tag must build)
+        run: cargo build --workspace --locked
+      # 为什么全量测试只对一部分 tag 跑：`au4a-node`（平台层）只在 v1.9.9 打过逐版本快照，
+      # 因此更早的 tag 树在重建时回落到「当前工作树」，混入了后续版本的平台层——这是发布流水线的
+      # 已知缺口（见 docs/VERIFICATION.md 的诚实清单），不是这些版本当时的状态。
+      # 边界：v1.7.10 / v1.8.10 / v1.9.9 三个 tag 的树是自洽的，跑全量测试；其余只强制「可编译」。
+      - name: cargo test --workspace --locked (snapshot-consistent tags only)
+        if: ${{ contains(fromJSON('["v1.7.10","v1.8.10","v1.9.9"]'), matrix.tag) }}
         run: cargo test --workspace --locked
 
   verify:
