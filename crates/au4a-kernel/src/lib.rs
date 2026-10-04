@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 pub mod audit;
 pub mod autonomy;
 pub mod council;
+pub mod harness;
 pub mod lifecycle;
 pub mod migration;
 pub mod observer;
@@ -35,6 +36,7 @@ pub use council::{
     motions_for_kernel, Ballot, Council, CouncilConfig, CouncilFailure, Decision, Motion,
     MotionKind, Tally, Verdict, Vote,
 };
+pub use harness::{invariant_suite, Harness, Journal, JournalEntry, JournalStep, ReplayOutcome};
 pub use lifecycle::{
     next_state, AgentState, Lifecycle, LifecycleBook, LifecycleEvent, LifecycleOutcome, Transition,
 };
@@ -853,7 +855,23 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "operator_dependency": legacy_refusal,
     });
 
-    // 11. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    // 11. 测试框架：把同样的小脚本跑一遍，并用日志重放出同一个世界（不读墙钟、不做 I/O）。
+    let mut rehearsal = Harness::new(KernelConfig::default(), 0x10);
+    rehearsal.add_agents(2, &["kernel.host"], Credits(20))?;
+    rehearsal.announce(0)?;
+    rehearsal.offer(0, 1, "kernel.host", Credits(2))?;
+    let _ = rehearsal.settle(0, 1, Credits(2), EvidenceGrade::Verified)?;
+    rehearsal.autonomy_turn(0, AutonomyPolicy::default())?;
+    let replay = rehearsal.verify_replay();
+    let harness_json = json!({
+        "journal_len": rehearsal.journal().len(),
+        "journal_fingerprint": rehearsal.journal_fingerprint()?,
+        "replay_ok": replay.is_ok(),
+        "replay_registry": replay.as_ref().map(|o| o.registry_fingerprint.clone()).unwrap_or_default(),
+        "invariants_all_passed": all_passed(&invariant_suite(rehearsal.kernel())),
+    });
+
+    // 12. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
     let report = Observer::report(kernel);
     let observer_layer = json!({
         "routes": ObserverRoute::ALL.len(),
@@ -869,7 +887,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             .unwrap_or(Value::Null),
     });
 
-    // 11. 审计 + 只读观察。
+    // 13. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -878,7 +896,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": {"host": host.display, "observer": observer.display, "settler": settler.display},
-        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "permission", "pmb", "lifecycle", "observe_layer", "audit", "observe"],
+        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "permission", "pmb", "lifecycle", "migration", "harness", "observe_layer", "audit", "observe"],
         "announced": announced,
         "drained": drained,
         "settled_verified": settled_verified,
@@ -890,6 +908,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "pmb": pmb_json,
         "lifecycle": lifecycle_json,
         "migration": migration_json,
+        "harness": harness_json,
         "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,
@@ -928,6 +947,12 @@ impl Kernel {
     /// 把逻辑时钟推高 n 格（仅自测：协议层需要构造「落后于当前纪元」的信封）。
     pub(crate) fn clock_advance_for_test(&mut self, n: u64) {
         self.clock.observe(self.clock.now().saturating_add(n));
+    }
+
+    /// 直接摆成「被隔离」但没有任何据（仅自测：不变式套件必须发现它）。
+    pub(crate) fn force_quarantine_for_test(&mut self, did: &Did) {
+        self.lifecycles
+            .force_state_for_test(did, crate::AgentState::Quarantined);
     }
 }
 

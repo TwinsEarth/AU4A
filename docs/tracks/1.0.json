@@ -292,6 +292,39 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 73 + autonomy 4 + council 5 + host_kernel 9 + lifecycle 6 + migration 6 + observer 5 + permission 6 + pmb 6 = 120 passed，0 failed，0 warning，exit 0。不执行插件字节码（WASM 运行时不在本 crate），故适配产物标注 cpu-proto。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.9",
+      "title": "测试框架",
+      "goal": "把「同样的种子给同样的结果」变成可复用工具：确定性仿真台 + 可重放日志 + 不变式套件（含无据隔离检测）",
+      "deliverables": [
+        "src/harness.rs: JournalStep(8 种) / JournalEntry / Journal / Harness(add_agents/announce/offer/settle/attempt_forgery/autonomy_turn/lifecycle/journal_fingerprint/replay/verify_replay) / ReplayOutcome / invariant_suite()",
+        "src/lib.rs: 接线测试框架，scenario() 新增 harness 阶段（跑脚本 + 自校验重放）",
+        "tests/harness.rs: 5 个集成测试（同脚本同世界、重放重建、不变式覆盖、真实内核效果、日志可序列化）"
+      ],
+      "interfaces": [
+        "pub enum JournalStep { Register{display,skills,stake}, Announce, Offer{to,skill,price}, Settle{to,amount,grade}, Forgery, AutonomyTurn{planned}, Lifecycle{event} }",
+        "pub struct JournalEntry { at, actor, step, ok }",
+        "pub struct Harness; impl Harness { new / add_agents / announce / offer / settle / attempt_forgery / autonomy_turn / lifecycle / journal_fingerprint / replay / outcome / verify_replay }",
+        "pub struct ReplayOutcome { registry_fingerprint, lifecycle_fingerprint, minted, slashed, refusals, journal_len }",
+        "pub fn invariant_suite(kernel: &Kernel) -> Vec<SelfCheck>"
+      ],
+      "acceptance": [
+        "同 base_tag 两次同脚本：日志指纹/注册表/生命周期/发行量/拒绝数全等，且日志含 ok=false",
+        "verify_replay() 四个面全等；重放内核通过 invariant_suite 且发行量一致（双轨守恒）",
+        "套件含 >=10 项具名检查（宿主 7 + harness 3：quarantine_justified / registry_lifecycle_bijection / queue_sealed），全 passed 且 detail 非空",
+        "脚本后 3 Agent 在册、3 条生命周期、队列全部验签通过、发行量>0、含恶意拒绝、genesis 事件在案、audit 干净",
+        "journal_json 长度==日志长度且每条含 step/at/ok；两次运行 JSON 全等",
+        "did_of(99) 返回 Err 而非 panic"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 130,
+        "tests_total": 130,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 78 + autonomy 4 + council 5 + harness 5 + host_kernel 9 + lifecycle 6 + migration 6 + observer 5 + permission 6 + pmb 6 = 130 passed，0 failed，0 warning，exit 0。框架是单进程内存仿真，跨节点重放属 au4a-state(1.3)。"
+      },
+      "status": "done"
     }
   ]
 }
