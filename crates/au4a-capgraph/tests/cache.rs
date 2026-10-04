@@ -107,17 +107,32 @@ fn an_expired_neighbor_is_removed_from_the_cache() {
             ..CapGraphConfig::default()
         },
     );
-    let first = declare(&peer, 3, &["translate.en-zh"]).sign(&peer).expect("signed");
+    let first = declare(&peer, 3, &["translate.en-zh"])
+        .sign(&peer)
+        .expect("signed");
     assert!(graph.apply(&first, 100).is_applied());
     // 同 epoch 异内容：没过期时是 conflict。
-    let changed = declare(&peer, 3, &["sentiment.analyze"]).sign(&peer).expect("signed");
-    assert_eq!(graph.apply(&changed, 105).refusal(), Some(au4a_core::RefusalCode::Conflict));
+    let changed = declare(&peer, 3, &["sentiment.analyze"])
+        .sign(&peer)
+        .expect("signed");
+    assert_eq!(
+        graph.apply(&changed, 105).refusal(),
+        Some(au4a_core::RefusalCode::Conflict)
+    );
     // 过期之后缓存里没有数据了 —— 但 v1.1.7 起版本历史仍然记得 v3 的内容，
     // 所以「同版本异内容」依旧被拒；要换内容必须递增版本。
     assert_eq!(graph.expire_neighbors(200), vec![peer.did()]);
-    assert!(graph.capabilities_of(&peer.did()).is_none(), "缓存确实被清掉了");
-    assert_eq!(graph.apply(&changed, 200).refusal(), Some(au4a_core::RefusalCode::Conflict));
-    let upgraded = declare(&peer, 4, &["sentiment.analyze"]).sign(&peer).expect("signed");
+    assert!(
+        graph.capabilities_of(&peer.did()).is_none(),
+        "缓存确实被清掉了"
+    );
+    assert_eq!(
+        graph.apply(&changed, 200).refusal(),
+        Some(au4a_core::RefusalCode::Conflict)
+    );
+    let upgraded = declare(&peer, 4, &["sentiment.analyze"])
+        .sign(&peer)
+        .expect("signed");
     assert!(graph.apply(&upgraded, 201).is_applied());
     assert_eq!(
         graph
@@ -160,8 +175,14 @@ fn a_cache_of_zero_capacity_refuses_with_a_capacity_code() {
     );
     let signed = declare(&peer, 1, &["x"]).sign(&peer).expect("signed");
     let outcome = graph.apply(&signed, 0);
-    assert_eq!(outcome.refusal(), Some(au4a_core::RefusalCode::ResourceExhausted));
-    assert!(!outcome.refusal().expect("code").is_misconduct(), "容量是竞争语义，不是恶意");
+    assert_eq!(
+        outcome.refusal(),
+        Some(au4a_core::RefusalCode::ResourceExhausted)
+    );
+    assert!(
+        !outcome.refusal().expect("code").is_misconduct(),
+        "容量是竞争语义，不是恶意"
+    );
     assert_eq!(graph.neighbor_count(), 0);
 }
 
@@ -192,7 +213,8 @@ fn a_small_cache_bounds_the_graph_under_a_real_broadcast() {
     for agent in &agents[1..] {
         let env = announce(
             &agent.keys,
-            &Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone()).expect("coherent"),
+            &Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone())
+                .expect("coherent"),
             1,
         )
         .expect("announce");
@@ -227,7 +249,8 @@ fn a_small_cache_bounds_the_graph_under_a_real_broadcast() {
     for agent in &agents[1..] {
         let env = announce(
             &agent.keys,
-            &Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone()).expect("coherent"),
+            &Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone())
+                .expect("coherent"),
             1,
         )
         .expect("announce");

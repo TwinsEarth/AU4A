@@ -46,7 +46,10 @@ impl CapabilityIndex {
         self.remove_agent(did);
         for (slot, cap) in capabilities.iter().enumerate() {
             let key = (did.clone(), slot);
-            self.by_skill.entry(cap.skill.clone()).or_default().insert(key.clone());
+            self.by_skill
+                .entry(cap.skill.clone())
+                .or_default()
+                .insert(key.clone());
             for format in &cap.supported_formats {
                 self.by_input_format
                     .entry(format.clone())
@@ -411,8 +414,14 @@ mod tests {
         let mut index = CapabilityIndex::new();
         let a = did(1);
         index.insert_agent(&a, &[cap("x", 1), cap("y", 2)]);
-        assert_eq!(index.candidates_for_skill(&skill("x")), vec![(a.clone(), 0)]);
-        assert_eq!(index.candidates_for_skill(&skill("y")), vec![(a.clone(), 1)]);
+        assert_eq!(
+            index.candidates_for_skill(&skill("x")),
+            vec![(a.clone(), 0)]
+        );
+        assert_eq!(
+            index.candidates_for_skill(&skill("y")),
+            vec![(a.clone(), 1)]
+        );
         assert_eq!(index.candidates_for_skill(&skill("z")), Vec::new());
         assert_eq!(index.indexed_entries(), 2);
         assert_eq!(index.indexed_agents(), 1);
@@ -433,8 +442,18 @@ mod tests {
         let a = did(1);
         let b = did(2);
         let json = FormatId::new("application/json").expect("valid");
-        index.insert_agent(&a, &[cap("t", 1).with_formats(&["text/plain"], &["application/json"]).expect("v")]);
-        index.insert_agent(&b, &[cap("t", 1).with_formats(&["application/json"], &["application/json"]).expect("v")]);
+        index.insert_agent(
+            &a,
+            &[cap("t", 1)
+                .with_formats(&["text/plain"], &["application/json"])
+                .expect("v")],
+        );
+        index.insert_agent(
+            &b,
+            &[cap("t", 1)
+                .with_formats(&["application/json"], &["application/json"])
+                .expect("v")],
+        );
         assert_eq!(index.candidates_for(&skill("t"), None).len(), 2);
         assert_eq!(
             index.candidates_for(&skill("t"), Some(&json)),
@@ -455,13 +474,22 @@ mod tests {
         assert!(base.matches(&base_cap));
         assert!(!base.clone().with_max_price(Credits(4)).matches(&base_cap));
         assert!(base.clone().with_max_price(Credits(5)).matches(&base_cap));
-        assert!(!base.clone().with_min_reliability_bp(9_001).matches(&base_cap));
+        assert!(!base
+            .clone()
+            .with_min_reliability_bp(9_001)
+            .matches(&base_cap));
         assert!(!base.clone().with_max_latency_p99_ms(299).matches(&base_cap));
         assert!(!base.clone().with_min_throughput(61).matches(&base_cap));
         assert!(!base.clone().with_min_available_bp(8_001).matches(&base_cap));
         assert!(base.clone().with_min_available_bp(8_000).matches(&base_cap));
-        assert!(base.clone().with_region("eu-west").matches(&base_cap), "空白名单=不限区域，故任何区域都受理");
-        assert!(!base.clone().with_output_format(FormatId::new("application/json").expect("v")).matches(&base_cap));
+        assert!(
+            base.clone().with_region("eu-west").matches(&base_cap),
+            "空白名单=不限区域，故任何区域都受理"
+        );
+        assert!(!base
+            .clone()
+            .with_output_format(FormatId::new("application/json").expect("v"))
+            .matches(&base_cap));
         assert!(base
             .clone()
             .with_input_format(FormatId::new("text/plain").expect("v"))
@@ -500,7 +528,10 @@ mod tests {
     fn query_fingerprints_are_stable_and_differ_on_any_field() {
         let q = CapabilityQuery::new(skill("x")).with_max_price(Credits(5));
         let same = CapabilityQuery::new(skill("x")).with_max_price(Credits(5));
-        assert_eq!(q.fingerprint().expect("hash"), same.fingerprint().expect("hash"));
+        assert_eq!(
+            q.fingerprint().expect("hash"),
+            same.fingerprint().expect("hash")
+        );
         assert_ne!(
             q.fingerprint().expect("hash"),
             q.clone().with_limit(1).fingerprint().expect("hash")

@@ -18,7 +18,7 @@
 
 use std::collections::BinaryHeap;
 
-use crate::index::{CapabilityMatch, CapKey, CapabilityIndex, QueryResult};
+use crate::index::{CapKey, CapabilityIndex, CapabilityMatch, QueryResult};
 
 /// 累计查询性能计数（每个图一份，全部是整数计数）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -66,7 +66,11 @@ pub(crate) fn rank_key(m: &CapabilityMatch) -> (i64, u64, i64, String, usize) {
 /// 有界 top-k 选择：`k == 0` 或 `k >= 候选数` 时退化为全排序（并计数）。
 ///
 /// 返回值与「全排序后截断到 k」逐位相同——这是优化的**语义不变式**。
-pub fn rank_top_k(matches: Vec<CapabilityMatch>, k: usize, perf: &mut QueryPerf) -> Vec<CapabilityMatch> {
+pub fn rank_top_k(
+    matches: Vec<CapabilityMatch>,
+    k: usize,
+    perf: &mut QueryPerf,
+) -> Vec<CapabilityMatch> {
     if k == 0 || k >= matches.len() {
         perf.full_sorts += 1;
         let mut all = matches;
@@ -213,11 +217,7 @@ impl QueryCache {
             let victim = self
                 .entries
                 .iter()
-                .min_by(|a, b| {
-                    a.1.last_used
-                        .cmp(&b.1.last_used)
-                        .then_with(|| a.0.cmp(b.0))
-                })
+                .min_by(|a, b| a.1.last_used.cmp(&b.1.last_used).then_with(|| a.0.cmp(b.0)))
                 .map(|(k, _)| k.clone());
             match victim {
                 Some(key) => {

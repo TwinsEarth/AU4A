@@ -186,7 +186,10 @@ mod tests {
             Permission::ALL.len()
         );
         assert_eq!(
-            schema["permission"]["denial_codes"].as_array().unwrap().len(),
+            schema["permission"]["denial_codes"]
+                .as_array()
+                .unwrap()
+                .len(),
             4
         );
     }
@@ -194,23 +197,35 @@ mod tests {
     #[test]
     fn the_schema_names_match_the_code_and_the_frozen_primitive() {
         let schema = schema_json().unwrap();
-        assert_eq!(schema["pmb"]["kinds"]["report"], json!(kinds::SAFETY_REPORT));
+        assert_eq!(
+            schema["pmb"]["kinds"]["report"],
+            json!(kinds::SAFETY_REPORT)
+        );
         assert_eq!(
             schema["pmb"]["kinds"]["report"],
             json!(au4a_core::kinds::SAFETY_REPORT)
         );
         assert_eq!(schema["chain"]["genesis_prev"], json!(GENESIS_PREV));
-        assert_eq!(schema["pmb"]["max_frame_bytes"], json!(au4a_core::MAX_FRAME));
+        assert_eq!(
+            schema["pmb"]["max_frame_bytes"],
+            json!(au4a_core::MAX_FRAME)
+        );
 
         // 每个事件种类都必须在 schema 里出现且只出现一次。
         for kind in SafetyEventKind::ALL {
             let listed = schema["chain"]["event_kinds"].as_array().unwrap();
-            let hits = listed.iter().filter(|v| v.as_str() == Some(kind.as_str())).count();
+            let hits = listed
+                .iter()
+                .filter(|v| v.as_str() == Some(kind.as_str()))
+                .count();
             assert_eq!(hits, 1, "{} 在 schema 中应恰好出现一次", kind.as_str());
         }
         for point in Permission::ALL {
             let listed = schema["permission"]["points"].as_array().unwrap();
-            let hits = listed.iter().filter(|v| v.as_str() == Some(point.as_str())).count();
+            let hits = listed
+                .iter()
+                .filter(|v| v.as_str() == Some(point.as_str()))
+                .count();
             assert_eq!(hits, 1, "{} 在 schema 中应恰好出现一次", point.as_str());
         }
     }
@@ -245,7 +260,10 @@ mod tests {
             core_error_kind_name(&CoreError::InvalidSignature),
             "invalid_signature"
         );
-        assert_eq!(core_error_kind_name(&CoreError::UnknownAgent), "unknown_agent");
+        assert_eq!(
+            core_error_kind_name(&CoreError::UnknownAgent),
+            "unknown_agent"
+        );
         assert_eq!(core_error_kind_name(&CoreError::Encoding), "encoding");
     }
 }

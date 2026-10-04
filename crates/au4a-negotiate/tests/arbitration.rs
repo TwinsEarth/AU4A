@@ -28,8 +28,10 @@ fn roster(k: &mut Kernel) -> (AgentKeys, AgentKeys, AgentKeys, AgentKeys) {
     let provider = agent(2);
     let arb1 = agent(3);
     let arb2 = agent(4);
-    k.register(&client, "client", &["summarize.zh"], Credits(50)).unwrap();
-    k.register(&provider, "provider", &["summarize.zh"], Credits(50)).unwrap();
+    k.register(&client, "client", &["summarize.zh"], Credits(50))
+        .unwrap();
+    k.register(&provider, "provider", &["summarize.zh"], Credits(50))
+        .unwrap();
     k.register(&arb1, "arbiter.1", &[], Credits(20)).unwrap();
     k.register(&arb2, "arbiter.2", &[], Credits(20)).unwrap();
     (client, provider, arb1, arb2)
@@ -98,7 +100,10 @@ fn the_whole_arbitration_flow_keeps_the_ledger_conserved() {
 
     let after = k.ledger().view();
     assert_eq!(after.minted, before.minted, "罚没是销毁，不是转移给谁");
-    assert_eq!(after.slashed, before.slashed.checked_add(Credits(20)).unwrap());
+    assert_eq!(
+        after.slashed,
+        before.slashed.checked_add(Credits(20)).unwrap()
+    );
     let provider_after = &after.accounts[provider.did().as_str()];
     assert_eq!(provider_after.locked, Credits(30), "锁定质押 50 - 罚没 20");
     assert_eq!(
@@ -204,9 +209,13 @@ fn parties_and_single_arbiters_cannot_decide_the_case() {
     n.open_case(&[arb1.did(), arb2.did()], k.tick()).unwrap();
     let price = n.contract().unwrap().terms.price;
     assert_eq!(
-        n.case_mut()
-            .unwrap()
-            .rule(&ArbitrationPolicy::default(), &[&arb1], price, "solo", k.tick()),
+        n.case_mut().unwrap().rule(
+            &ArbitrationPolicy::default(),
+            &[&arb1],
+            price,
+            "solo",
+            k.tick()
+        ),
         Err(CoreError::InvalidKind)
     );
     assert!(n.case().unwrap().ruling().is_none());
@@ -265,7 +274,10 @@ fn the_evidence_gate_blocks_an_oversized_cpu_proto_payout() {
     let after = k.ledger().view();
     assert_eq!(after.accounts, before.accounts);
     assert_eq!(after.slashed, before.slashed);
-    assert_eq!(k.refusals().last().unwrap().1.code, RefusalCode::PolicyDenied);
+    assert_eq!(
+        k.refusals().last().unwrap().1.code,
+        RefusalCode::PolicyDenied
+    );
     k.ledger().check_conservation().unwrap();
 }
 
@@ -335,10 +347,8 @@ fn cases_are_content_addressed_per_claim() {
     )
     .unwrap();
 
-    let case_a =
-        ArbitrationCase::file(&claim_a, &contract, &[arb1.did(), arb2.did()], 3).unwrap();
-    let case_b =
-        ArbitrationCase::file(&claim_b, &contract, &[arb1.did(), arb2.did()], 3).unwrap();
+    let case_a = ArbitrationCase::file(&claim_a, &contract, &[arb1.did(), arb2.did()], 3).unwrap();
+    let case_b = ArbitrationCase::file(&claim_b, &contract, &[arb1.did(), arb2.did()], 3).unwrap();
     assert_ne!(case_a.case_id(), case_b.case_id(), "不同申诉 → 不同案件");
     assert_eq!(case_a.contract_hash, contract.hash);
     case_a.summary();

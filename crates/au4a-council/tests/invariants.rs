@@ -27,7 +27,9 @@ fn built_scene() -> (Kernel, Council) {
     });
     let agents: Vec<_> = (0..4u8).map(keys).collect();
     for k in &agents {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
         council.note_reputation(&k.did(), 5_000);
         council.note_uptime(&k.did(), 200);
     }
@@ -36,17 +38,28 @@ fn built_scene() -> (Kernel, Council) {
         .iter()
         .map(|k| ElectionBallot::cast(k, CommitteeKind::Task, &picks).expect("cast"))
         .collect();
-    council.elect(&mut kernel, CommitteeKind::Task, &ballots).expect("elect");
+    council
+        .elect(&mut kernel, CommitteeKind::Task, &ballots)
+        .expect("elect");
     (kernel, council)
 }
 
-fn propose(kernel: &mut Kernel, council: &mut Council, agents: &[au4a_core::AgentKeys], title: &str, key: &str) -> String {
+fn propose(
+    kernel: &mut Kernel,
+    council: &mut Council,
+    agents: &[au4a_core::AgentKeys],
+    title: &str,
+    key: &str,
+) -> String {
     let identity = AgentIdentity::from_keys(&agents[0]);
     let draft = ProposalDraft::by(
         &agents[0],
         CommitteeKind::Task,
         title,
-        Action::SetPolicy { key: key.to_string(), value: 7 },
+        Action::SetPolicy {
+            key: key.to_string(),
+            value: 7,
+        },
     )
     .expect("draft");
     council
@@ -136,7 +149,11 @@ fn the_invariant_list_is_exactly_what_is_enforced() {
     let checks = check_all(&council);
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     // 清单 ↔ 实现严格相等（两个方向都断言）：删掉或新增不变式都必须同步改清单。
-    assert_eq!(names.len(), INVARIANT_NAMES.len(), "不变式数量与清单不一致：{names:?}");
+    assert_eq!(
+        names.len(),
+        INVARIANT_NAMES.len(),
+        "不变式数量与清单不一致：{names:?}"
+    );
     for expected in INVARIANT_NAMES {
         assert!(names.contains(&expected), "清单里的 {expected} 没有实现");
     }
@@ -175,20 +192,26 @@ fn zero_steps_is_a_valid_no_op() {
 #[test]
 fn self_check_reports_the_replay_evidence() {
     let checks = au4a_council::self_check();
-    assert!(au4a_core::all_passed(&checks), "self_check 未全绿：{checks:?}");
+    assert!(
+        au4a_core::all_passed(&checks),
+        "self_check 未全绿：{checks:?}"
+    );
     let replay_check = checks
         .iter()
         .find(|c| c.name == "council.replay.invariants")
         .expect("缺少重放自检项");
-    assert!(replay_check.detail.contains("不变式"), "{}", replay_check.detail);
+    assert!(
+        replay_check.detail.contains("不变式"),
+        "{}",
+        replay_check.detail
+    );
     assert!(checks.iter().any(|c| c.name == "council.replay.coverage"));
 
     let results = au4a_council::results_json().expect("results");
     assert_eq!(results["invariants"]["names"], INVARIANT_NAMES.len());
     assert_eq!(results["invariants"]["replay"]["total_violations"], 0);
     assert_ne!(
-        results["invariants"]["state_digest"],
-        results["invariants"]["vetoed_digest"],
+        results["invariants"]["state_digest"], results["invariants"]["vetoed_digest"],
         "不同治理现场必须给出不同摘要"
     );
     assert!(invariants::replay_report(&[1], 12).is_ok());

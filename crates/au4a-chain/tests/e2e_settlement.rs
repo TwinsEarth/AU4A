@@ -4,7 +4,7 @@
 //! `real_network` 是否为 false、同一内核是否逐字节可复现、自检是否接线。
 
 use au4a_chain::testnet::{ChainId, ChainTx, Testnet, ONCHAIN_GRADE};
-use au4a_chain::{results_json, scenario, self_check, TRACK, TITLE};
+use au4a_chain::{results_json, scenario, self_check, TITLE, TRACK};
 use au4a_core::{all_passed, canonicalize};
 use au4a_kernel::{Kernel, KernelConfig};
 use serde_json::{json, Value};
@@ -114,7 +114,10 @@ fn the_pinned_numbers_of_the_end_to_end_flow_hold() {
     assert_eq!(value["routing"]["decision"]["rail"], json!("x402"));
     assert_eq!(value["routing"]["decision"]["fee"], json!(2));
     assert_eq!(value["routing"]["decision"]["net"], json!(398));
-    assert_eq!(value["routing"]["blocked_decision"]["reason"], json!("reconciliation_failed"));
+    assert_eq!(
+        value["routing"]["blocked_decision"]["reason"],
+        json!("reconciliation_failed")
+    );
     // 信誉：两个事件 → 6600/7000/5000/6600，综合 6300。
     assert_eq!(value["reputation"]["applied_events"], json!(2));
     assert_eq!(value["reputation"]["alice"]["overall_bp"], json!(6_300));
@@ -125,7 +128,11 @@ fn the_pinned_numbers_of_the_end_to_end_flow_hold() {
     assert_eq!(value["audit"]["all_attacks_blocked"], json!(true));
     assert_eq!(value["audit"]["grade"], json!("cpu-proto"));
     assert!(
-        value["audit"]["risks"].as_array().map(Vec::len).unwrap_or(0) >= 8,
+        value["audit"]["risks"]
+            .as_array()
+            .map(Vec::len)
+            .unwrap_or(0)
+            >= 8,
         "风险登记表过短"
     );
     assert!(
@@ -151,8 +158,14 @@ fn the_observable_layer_sees_the_named_refusals() {
         .iter()
         .map(|(_, r)| r.code.as_str())
         .collect();
-    assert!(codes.contains(&"timeout"), "应有未达最终性的拒绝：{codes:?}");
-    assert!(codes.contains(&"unsupported"), "应有不支持操作的拒绝：{codes:?}");
+    assert!(
+        codes.contains(&"timeout"),
+        "应有未达最终性的拒绝：{codes:?}"
+    );
+    assert!(
+        codes.contains(&"unsupported"),
+        "应有不支持操作的拒绝：{codes:?}"
+    );
     assert!(codes.contains(&"policy_denied"), "应有策略拒绝：{codes:?}");
     // 每条拒绝都带原因，没有空 detail。
     for (_, refusal) in kernel.refusals() {
@@ -181,7 +194,14 @@ fn self_check_and_results_are_wired_and_all_pass() {
 #[test]
 fn a_tampered_chain_tx_is_refused_before_it_reaches_any_adapter() {
     let mut net = Testnet::new(ChainId::BtcRegtest, 1);
-    let mut tx = ChainTx::new(ChainId::BtcRegtest, "rgb.issue", &au4a_core::AgentKeys::from_seed(&[1; 32]).did(), 1, json!({ "supply": 10 })).unwrap();
+    let mut tx = ChainTx::new(
+        ChainId::BtcRegtest,
+        "rgb.issue",
+        &au4a_core::AgentKeys::from_seed(&[1; 32]).did(),
+        1,
+        json!({ "supply": 10 }),
+    )
+    .unwrap();
     tx.payload = json!({ "supply": 1_000_000 });
     let err = net.accept(&tx).unwrap_err();
     assert_eq!(err.op, "rgb.issue");

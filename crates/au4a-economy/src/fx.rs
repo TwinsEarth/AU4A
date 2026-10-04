@@ -544,7 +544,11 @@ mod tests {
 
     #[test]
     fn small_amounts_stay_off_chain() {
-        let plan = route(&request(199, Urgency::Standard, 100, None), &RouteTable::DEFAULT).unwrap();
+        let plan = route(
+            &request(199, Urgency::Standard, 100, None),
+            &RouteTable::DEFAULT,
+        )
+        .unwrap();
         assert_eq!(plan.action, RouteAction::KeepInternal);
         assert_eq!(plan.venue, Venue::Internal);
         assert_eq!(plan.reason, DecisionReason::BelowOnchainMinimum);
@@ -555,8 +559,11 @@ mod tests {
 
     #[test]
     fn the_cheapest_venue_wins_with_integer_fee_math() {
-        let plan =
-            route(&request(1_000, Urgency::Standard, 100, None), &RouteTable::DEFAULT).unwrap();
+        let plan = route(
+            &request(1_000, Urgency::Standard, 100, None),
+            &RouteTable::DEFAULT,
+        )
+        .unwrap();
         assert_eq!(plan.action, RouteAction::RouteOnchain);
         assert_eq!(plan.venue, Venue::Ethereum); // 80bp < 120bp
         assert_eq!(plan.reason, DecisionReason::CheapestVenue);
@@ -605,14 +612,20 @@ mod tests {
 
     #[test]
     fn a_tight_deadline_defers_without_touching_the_ledger() {
-        let plan =
-            route(&request(1_000, Urgency::Standard, 19, None), &RouteTable::DEFAULT).unwrap();
+        let plan = route(
+            &request(1_000, Urgency::Standard, 19, None),
+            &RouteTable::DEFAULT,
+        )
+        .unwrap();
         assert_eq!(plan.action, RouteAction::Defer);
         assert_eq!(plan.reason, DecisionReason::DeadlineTooTight);
         assert_eq!(plan.required_slack_ticks, 20);
         assert_eq!(plan.chain_execution, ChainExecution::NotRequested);
-        let expedited =
-            route(&request(1_000, Urgency::Expedited, 30, None), &RouteTable::DEFAULT).unwrap();
+        let expedited = route(
+            &request(1_000, Urgency::Expedited, 30, None),
+            &RouteTable::DEFAULT,
+        )
+        .unwrap();
         assert_eq!(expedited.action, RouteAction::Defer);
         assert_eq!(expedited.required_slack_ticks, 60);
 
@@ -752,7 +765,10 @@ mod tests {
     #[test]
     fn degenerate_requests_and_tables_are_refused() {
         assert_eq!(
-            route(&request(0, Urgency::Standard, 100, None), &RouteTable::DEFAULT),
+            route(
+                &request(0, Urgency::Standard, 100, None),
+                &RouteTable::DEFAULT
+            ),
             Err(CoreError::ZeroAmount)
         );
         let bad = RouteTable {
@@ -775,8 +791,11 @@ mod tests {
 
     #[test]
     fn the_plan_is_content_addressed_and_float_free() {
-        let plan =
-            route(&request(1_234, Urgency::Expedited, 99, None), &RouteTable::DEFAULT).unwrap();
+        let plan = route(
+            &request(1_234, Urgency::Expedited, 99, None),
+            &RouteTable::DEFAULT,
+        )
+        .unwrap();
         let value = serde_json::to_value(plan.clone()).unwrap();
         let canonical = au4a_core::canonicalize(&value).unwrap();
         assert!(!canonical.contains('.'));

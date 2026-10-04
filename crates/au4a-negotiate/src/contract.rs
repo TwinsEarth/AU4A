@@ -377,7 +377,10 @@ mod tests {
 
         let tampered = text.replace("\"price\":100", "\"price\":7");
         assert_ne!(tampered, text);
-        assert_eq!(Contract::decode(&tampered), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            Contract::decode(&tampered),
+            Err(CoreError::InvalidSignature)
+        );
 
         // 破坏签名后不能通过 decode（decode 会 verify）。
         let broken = text.replace(&c.signatures[0].sig, &"00".repeat(64));

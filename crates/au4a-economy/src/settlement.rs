@@ -256,7 +256,10 @@ pub fn split_weights(total: Credits, weights_bp: &[i64]) -> CoreResult<Vec<Credi
         allocated = allocated.checked_add(base).ok_or(CoreError::Overflow)?;
         remainders.push((product % 10_000, i));
     }
-    let mut leftover = total.get().checked_sub(allocated).ok_or(CoreError::Overflow)?;
+    let mut leftover = total
+        .get()
+        .checked_sub(allocated)
+        .ok_or(CoreError::Overflow)?;
     // 余数大的先拿；余数相同按下标升序（确定性）。
     remainders.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     let mut cursor = 0usize;
@@ -462,7 +465,13 @@ mod tests {
         AgentKeys::from_seed(&[seed; 32]).did()
     }
 
-    fn request(payer: &Did, payee: &Did, total: i64, evidence: EvidenceGrade, disputed: bool) -> SettlementRequest {
+    fn request(
+        payer: &Did,
+        payee: &Did,
+        total: i64,
+        evidence: EvidenceGrade,
+        disputed: bool,
+    ) -> SettlementRequest {
         SettlementRequest {
             payer: payer.clone(),
             payee: payee.clone(),
@@ -487,7 +496,10 @@ mod tests {
         let (payer, payee) = (did(1), did(2));
         let policy = SettlementPolicy::DEFAULT;
         assert_eq!(
-            route(&request(&payer, &payee, 0, EvidenceGrade::Verified, false), &policy),
+            route(
+                &request(&payer, &payee, 0, EvidenceGrade::Verified, false),
+                &policy
+            ),
             Err(CoreError::ZeroAmount)
         );
         let withheld = route(
@@ -571,17 +583,33 @@ mod tests {
     #[test]
     fn direct_settlement_moves_funds_through_the_evidence_gate() {
         let mut kernel = Kernel::new(KernelConfig::default());
-        let (payer_keys, p1_keys, p2_keys) = (AgentKeys::from_seed(&[1; 32]), AgentKeys::from_seed(&[2; 32]), AgentKeys::from_seed(&[3; 32]));
-        kernel.register(&payer_keys, "payer", &["buy"], Credits(10)).unwrap();
-        kernel.register(&p1_keys, "p1", &["compute"], Credits(10)).unwrap();
-        kernel.register(&p2_keys, "p2", &["data"], Credits(10)).unwrap();
+        let (payer_keys, p1_keys, p2_keys) = (
+            AgentKeys::from_seed(&[1; 32]),
+            AgentKeys::from_seed(&[2; 32]),
+            AgentKeys::from_seed(&[3; 32]),
+        );
+        kernel
+            .register(&payer_keys, "payer", &["buy"], Credits(10))
+            .unwrap();
+        kernel
+            .register(&p1_keys, "p1", &["compute"], Credits(10))
+            .unwrap();
+        kernel
+            .register(&p2_keys, "p2", &["data"], Credits(10))
+            .unwrap();
         let shares = vec![
             share(&p1_keys.did(), 7_000, ProviderRole::Compute),
             share(&p2_keys.did(), 3_000, ProviderRole::Data),
         ];
         let outcome = pay_split(
             &mut kernel,
-            &request(&payer_keys.did(), &p1_keys.did(), 200, EvidenceGrade::Verified, false),
+            &request(
+                &payer_keys.did(),
+                &p1_keys.did(),
+                200,
+                EvidenceGrade::Verified,
+                false,
+            ),
             &shares,
             &SettlementPolicy::DEFAULT,
         )
@@ -595,9 +623,18 @@ mod tests {
             }
             other => panic!("期望直接结算，实际 {other:?}"),
         }
-        assert_eq!(kernel.ledger().balance(&payer_keys.did()).available, Credits(790));
-        assert_eq!(kernel.ledger().balance(&p1_keys.did()).available, Credits(1_130));
-        assert_eq!(kernel.ledger().balance(&p2_keys.did()).available, Credits(1_050));
+        assert_eq!(
+            kernel.ledger().balance(&payer_keys.did()).available,
+            Credits(790)
+        );
+        assert_eq!(
+            kernel.ledger().balance(&p1_keys.did()).available,
+            Credits(1_130)
+        );
+        assert_eq!(
+            kernel.ledger().balance(&p2_keys.did()).available,
+            Credits(1_050)
+        );
         kernel.ledger().check_conservation().unwrap();
     }
 
@@ -606,15 +643,25 @@ mod tests {
         let mut kernel = Kernel::new(KernelConfig::default());
         let payer_keys = AgentKeys::from_seed(&[4; 32]);
         let payee_keys = AgentKeys::from_seed(&[5; 32]);
-        kernel.register(&payer_keys, "payer", &["buy"], Credits(10)).unwrap();
-        kernel.register(&payee_keys, "payee", &["skill"], Credits(10)).unwrap();
+        kernel
+            .register(&payer_keys, "payer", &["buy"], Credits(10))
+            .unwrap();
+        kernel
+            .register(&payee_keys, "payee", &["skill"], Credits(10))
+            .unwrap();
         let shares = vec![share(&payee_keys.did(), 10_000, ProviderRole::Skill)];
         let before = kernel.ledger().balance(&payer_keys.did());
 
         // Unverified → 拒付，账本不动，并留下类型化拒绝记录。
         let outcome = pay_split(
             &mut kernel,
-            &request(&payer_keys.did(), &payee_keys.did(), 50, EvidenceGrade::Unverified, false),
+            &request(
+                &payer_keys.did(),
+                &payee_keys.did(),
+                50,
+                EvidenceGrade::Unverified,
+                false,
+            ),
             &shares,
             &SettlementPolicy::DEFAULT,
         )
@@ -622,12 +669,21 @@ mod tests {
         assert!(matches!(outcome, SettlementOutcome::Withheld(_)));
         assert_eq!(kernel.ledger().balance(&payer_keys.did()), before);
         assert_eq!(kernel.refusals().len(), 1);
-        assert_eq!(kernel.refusals()[0].1.code, au4a_core::RefusalCode::PolicyDenied);
+        assert_eq!(
+            kernel.refusals()[0].1.code,
+            au4a_core::RefusalCode::PolicyDenied
+        );
 
         // 收款方有未结争议 → 托管，同样不动账本。
         let outcome = pay_split(
             &mut kernel,
-            &request(&payer_keys.did(), &payee_keys.did(), 50, EvidenceGrade::Verified, true),
+            &request(
+                &payer_keys.did(),
+                &payee_keys.did(),
+                50,
+                EvidenceGrade::Verified,
+                true,
+            ),
             &shares,
             &SettlementPolicy::DEFAULT,
         )
@@ -689,16 +745,28 @@ mod tests {
         let payer_keys = AgentKeys::from_seed(&[10; 32]);
         let p1_keys = AgentKeys::from_seed(&[11; 32]);
         let p2_keys = AgentKeys::from_seed(&[12; 32]);
-        kernel.register(&payer_keys, "payer", &["buy"], Credits(10)).unwrap();
-        kernel.register(&p1_keys, "p1", &["compute"], Credits(10)).unwrap();
-        kernel.register(&p2_keys, "p2", &["data"], Credits(10)).unwrap();
+        kernel
+            .register(&payer_keys, "payer", &["buy"], Credits(10))
+            .unwrap();
+        kernel
+            .register(&p1_keys, "p1", &["compute"], Credits(10))
+            .unwrap();
+        kernel
+            .register(&p2_keys, "p2", &["data"], Credits(10))
+            .unwrap();
         let shares = vec![
             share(&p1_keys.did(), 10_000, ProviderRole::Compute),
             share(&p2_keys.did(), 0, ProviderRole::Data),
         ];
         let outcome = pay_split(
             &mut kernel,
-            &request(&payer_keys.did(), &p1_keys.did(), 60, EvidenceGrade::Verified, false),
+            &request(
+                &payer_keys.did(),
+                &p1_keys.did(),
+                60,
+                EvidenceGrade::Verified,
+                false,
+            ),
             &shares,
             &SettlementPolicy::DEFAULT,
         )
@@ -710,12 +778,21 @@ mod tests {
             }
             other => panic!("期望直接结算，实际 {other:?}"),
         }
-        assert_eq!(kernel.ledger().balance(&p2_keys.did()).available, Credits(990));
+        assert_eq!(
+            kernel.ledger().balance(&p2_keys.did()).available,
+            Credits(990)
+        );
         // 空分成表是调用错误。
         assert_eq!(
             pay_split(
                 &mut kernel,
-                &request(&payer_keys.did(), &p1_keys.did(), 60, EvidenceGrade::Verified, false),
+                &request(
+                    &payer_keys.did(),
+                    &p1_keys.did(),
+                    60,
+                    EvidenceGrade::Verified,
+                    false
+                ),
                 &[],
                 &SettlementPolicy::DEFAULT,
             ),

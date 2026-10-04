@@ -3,12 +3,12 @@
 //! 要证明：扩展后的协议**仍然是冻结基元的信封**（真签名、真分帧、真上限），
 //! 而且路由判定的拒绝分类与内核一致——准入通过的，内核也必须收下。
 
+use au4a_core::{AgentKeys, Envelope};
 use au4a_core::{Credits, EvidenceGrade, RefusalCode, MAX_FRAME};
 use au4a_kernel::{
     announce_card, classify_kind, council_vote, decode_and_verify, encode_checked, kinds_ext,
     progress, settle_request, Kernel, KernelConfig, MessageClass, PmbRouter,
 };
-use au4a_core::{AgentKeys, Envelope};
 
 fn keys(tag: u8) -> AgentKeys {
     AgentKeys::from_seed(&[tag; 32])
@@ -17,8 +17,13 @@ fn keys(tag: u8) -> AgentKeys {
 fn seeded(n: u8) -> Kernel {
     let mut k = Kernel::new(KernelConfig::default());
     for i in 0..n {
-        k.register(&keys(150 + i), format!("agent-{i}"), &["skill.a"], Credits(20))
-            .unwrap();
+        k.register(
+            &keys(150 + i),
+            format!("agent-{i}"),
+            &["skill.a"],
+            Credits(20),
+        )
+        .unwrap();
     }
     k
 }
@@ -29,7 +34,14 @@ fn anything_the_router_admits_the_kernel_also_accepts() {
     let card = k.card(&keys(150).did()).cloned().unwrap();
     let envelopes = vec![
         announce_card(&keys(150), &card, 0).unwrap(),
-        progress(&keys(150), None, 0, "heartbeat", serde_json::json!({"ok": true})).unwrap(),
+        progress(
+            &keys(150),
+            None,
+            0,
+            "heartbeat",
+            serde_json::json!({"ok": true}),
+        )
+        .unwrap(),
         settle_request(
             &keys(150),
             keys(151).did(),
@@ -43,7 +55,12 @@ fn anything_the_router_admits_the_kernel_also_accepts() {
     let mut router = PmbRouter::new();
     for env in &envelopes {
         let decision = router.admit(&k, env);
-        assert!(decision.accepted, "{} 应当准入：{}", env.kind.as_str(), decision.reason);
+        assert!(
+            decision.accepted,
+            "{} 应当准入：{}",
+            env.kind.as_str(),
+            decision.reason
+        );
         // 路由通过 ⇒ 内核也必须收下（否则两条路径的语义就不一致了）。
         assert!(
             k.send(env).is_ok(),
@@ -61,7 +78,8 @@ fn tampering_is_misconduct_while_replaying_is_competition() {
     let k = seeded(2);
     let mut router = PmbRouter::new();
 
-    let mut tampered = announce_card(&keys(150), &k.card(&keys(150).did()).cloned().unwrap(), 0).unwrap();
+    let mut tampered =
+        announce_card(&keys(150), &k.card(&keys(150).did()).cloned().unwrap(), 0).unwrap();
     tampered.body = serde_json::json!({"skills": ["everything"]});
     let decision = router.admit(&k, &tampered);
     assert_eq!(decision.code, Some(RefusalCode::Unauthorized));
@@ -71,8 +89,14 @@ fn tampering_is_misconduct_while_replaying_is_competition() {
     assert!(router.admit(&k, &good).accepted);
     let replay = router.admit(&k, &good);
     assert_eq!(replay.code, Some(RefusalCode::Conflict));
-    assert!(!replay.code.map(|c| c.is_misconduct()).unwrap_or(true), "重传不是恶意");
-    assert!(replay.code.map(|c| c.retryable()).unwrap_or(false), "冲突可重试");
+    assert!(
+        !replay.code.map(|c| c.is_misconduct()).unwrap_or(true),
+        "重传不是恶意"
+    );
+    assert!(
+        replay.code.map(|c| c.retryable()).unwrap_or(false),
+        "冲突可重试"
+    );
     assert_eq!(router.stats().replays, 1);
 }
 
@@ -121,7 +145,10 @@ fn wire_format_is_the_frozen_frame_with_real_signatures() {
 fn governance_must_be_direct_while_telemetry_may_broadcast() {
     let k = seeded(3);
     let mut router = PmbRouter::new();
-    assert_eq!(classify_kind(kinds_ext::COUNCIL_VOTE), MessageClass::Governance);
+    assert_eq!(
+        classify_kind(kinds_ext::COUNCIL_VOTE),
+        MessageClass::Governance
+    );
     assert!(!MessageClass::Governance.broadcastable());
     let broadcast_motion = Envelope::new(
         keys(150).did(),
@@ -148,19 +175,43 @@ fn identical_runs_produce_identical_decisions_and_stats() {
         let k = seeded(4);
         let mut router = PmbRouter::new();
         let mut decisions = Vec::new();
-        decisions.push(router.admit(&k, &progress(&keys(150), None, 0, "a", serde_json::json!({})).unwrap()));
-        decisions.push(router.admit(&k, &progress(&keys(150), None, 0, "a", serde_json::json!({})).unwrap()));
         decisions.push(router.admit(
             &k,
-            &settle_request(&keys(151), keys(152).did(), 0, Credits(2), EvidenceGrade::CpuProto).unwrap(),
+            &progress(&keys(150), None, 0, "a", serde_json::json!({})).unwrap(),
         ));
         decisions.push(router.admit(
             &k,
-            &Envelope::new(keys(152).did(), None, "nope.nope", 0, None, serde_json::json!({}))
+            &progress(&keys(150), None, 0, "a", serde_json::json!({})).unwrap(),
+        ));
+        decisions.push(
+            router.admit(
+                &k,
+                &settle_request(
+                    &keys(151),
+                    keys(152).did(),
+                    0,
+                    Credits(2),
+                    EvidenceGrade::CpuProto,
+                )
+                .unwrap(),
+            ),
+        );
+        decisions.push(
+            router.admit(
+                &k,
+                &Envelope::new(
+                    keys(152).did(),
+                    None,
+                    "nope.nope",
+                    0,
+                    None,
+                    serde_json::json!({}),
+                )
                 .unwrap()
                 .seal(&keys(152))
                 .unwrap(),
-        ));
+            ),
+        );
         (decisions, router.stats().clone())
     };
     let a = run();

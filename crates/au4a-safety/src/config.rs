@@ -66,7 +66,10 @@ mod tests {
     fn only_listed_arbiters_pass_the_trust_gate() {
         let config = SafetyConfig::single_arbiter(did(1), did(2));
         assert!(config.require_arbiter(&did(2)).is_ok());
-        assert_eq!(config.require_arbiter(&did(3)), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            config.require_arbiter(&did(3)),
+            Err(CoreError::InvalidSignature)
+        );
         assert!(!config.is_arbiter(&did(3)));
     }
 

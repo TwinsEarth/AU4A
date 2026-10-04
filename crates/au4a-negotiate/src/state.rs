@@ -582,13 +582,34 @@ mod tests {
         assert_eq!(LEGAL_TRANSITIONS.len(), 10);
         assert_eq!(Phase::ALL.len(), 7);
         assert_eq!(Event::ALL.len(), 9);
-        assert_eq!(transition(Phase::Idle, Event::Request).unwrap(), Phase::Negotiating);
-        assert_eq!(transition(Phase::Negotiating, Event::Accept).unwrap(), Phase::Accepted);
-        assert_eq!(transition(Phase::Accepted, Event::Sign).unwrap(), Phase::ContractSigned);
-        assert_eq!(transition(Phase::ContractSigned, Event::Execute).unwrap(), Phase::Executing);
-        assert_eq!(transition(Phase::Executing, Event::Settle).unwrap(), Phase::Settled);
-        assert_eq!(transition(Phase::Executing, Event::Breach).unwrap(), Phase::Arbitration);
-        assert_eq!(transition(Phase::Arbitration, Event::Resolve).unwrap(), Phase::Settled);
+        assert_eq!(
+            transition(Phase::Idle, Event::Request).unwrap(),
+            Phase::Negotiating
+        );
+        assert_eq!(
+            transition(Phase::Negotiating, Event::Accept).unwrap(),
+            Phase::Accepted
+        );
+        assert_eq!(
+            transition(Phase::Accepted, Event::Sign).unwrap(),
+            Phase::ContractSigned
+        );
+        assert_eq!(
+            transition(Phase::ContractSigned, Event::Execute).unwrap(),
+            Phase::Executing
+        );
+        assert_eq!(
+            transition(Phase::Executing, Event::Settle).unwrap(),
+            Phase::Settled
+        );
+        assert_eq!(
+            transition(Phase::Executing, Event::Breach).unwrap(),
+            Phase::Arbitration
+        );
+        assert_eq!(
+            transition(Phase::Arbitration, Event::Resolve).unwrap(),
+            Phase::Settled
+        );
     }
 
     #[test]
@@ -622,7 +643,10 @@ mod tests {
             assert!(!phase.is_terminal());
         }
         for event in Event::ALL {
-            assert_eq!(transition(Phase::Settled, event), Err(CoreError::InvalidKind));
+            assert_eq!(
+                transition(Phase::Settled, event),
+                Err(CoreError::InvalidKind)
+            );
         }
         assert!(!Phase::Idle.has_contract());
         assert!(Phase::ContractSigned.has_contract());
@@ -657,7 +681,10 @@ mod tests {
         // 签名顺序不影响记录字节（确定性来自排序，而不是运气）。
         let mut ordered = m.history()[0].clone();
         ordered.sigs.reverse();
-        assert_eq!(ordered.record_hash().unwrap(), m.history()[0].record_hash().unwrap());
+        assert_eq!(
+            ordered.record_hash().unwrap(),
+            m.history()[0].record_hash().unwrap()
+        );
         ordered.sigs.reverse();
         assert_eq!(ordered, m.history()[0]);
     }
@@ -710,13 +737,19 @@ mod tests {
         StateMachine::co_sign(&mut tampered, &b).unwrap();
         tampered.event = Event::Settle;
         assert_eq!(tampered.verify(), Err(CoreError::InvalidSignature));
-        assert_eq!(m.commit(tampered, &parties, None), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            m.commit(tampered, &parties, None),
+            Err(CoreError::InvalidSignature)
+        );
 
         // 签名后篡改相位。
         let mut moved = m.stage(Event::Request, &a, 1).unwrap();
         StateMachine::co_sign(&mut moved, &b).unwrap();
         moved.to = Phase::Settled;
-        assert_eq!(m.commit(moved, &parties, None), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            m.commit(moved, &parties, None),
+            Err(CoreError::InvalidSignature)
+        );
     }
 
     #[test]
@@ -838,14 +871,9 @@ mod tests {
         m.transact(Event::Request, &a, &b, 1, &parties).unwrap();
         m.transact(Event::Accept, &b, &a, 2, &parties).unwrap();
 
-        let rebuilt = StateMachine::from_parts(
-            "s-parts",
-            Phase::Accepted,
-            2,
-            0,
-            m.history().to_vec(),
-        )
-        .unwrap();
+        let rebuilt =
+            StateMachine::from_parts("s-parts", Phase::Accepted, 2, 0, m.history().to_vec())
+                .unwrap();
         assert_eq!(rebuilt.phase(), Phase::Accepted);
 
         assert_eq!(

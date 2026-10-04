@@ -148,11 +148,7 @@ impl Ruling {
                 .ok_or(CoreError::NotSealed)?;
             arbiter.verify(bytes.as_bytes(), &signature.sig)?;
         }
-        if self
-            .signatures
-            .iter()
-            .any(|s| !arbiters.contains(&s.did))
-        {
+        if self.signatures.iter().any(|s| !arbiters.contains(&s.did)) {
             return Err(CoreError::UnknownAgent);
         }
         Ok(())
@@ -343,9 +339,16 @@ impl ArbitrationCase {
         kernel.ledger().check_conservation()?;
         let available = kernel.ledger().balance(&self.accused).available;
         let nominal = ruling.compensate;
-        let effective = if nominal > available { available } else { nominal };
+        let effective = if nominal > available {
+            available
+        } else {
+            nominal
+        };
         if ruling.verdict == Verdict::Upheld
-            && !self.claim.evidence.settleable(effective, kernel.config().cpu_proto_settle_cap)
+            && !self
+                .claim
+                .evidence
+                .settleable(effective, kernel.config().cpu_proto_settle_cap)
         {
             // 证据等级不足或超出原型结算上限：整案拒绝执行，不动账本。
             kernel.refuse(
@@ -365,7 +368,12 @@ impl ArbitrationCase {
             }
             if effective > Credits::ZERO {
                 // 赔付走内核结算路径：证据闸门与余额检查都在里面。
-                kernel.settle(&self.accused, &self.claimant, effective, self.claim.evidence)?;
+                kernel.settle(
+                    &self.accused,
+                    &self.claimant,
+                    effective,
+                    self.claim.evidence,
+                )?;
                 compensated = effective;
             }
         }
@@ -439,15 +447,16 @@ mod tests {
             2,
         )
         .unwrap();
-        let case =
-            ArbitrationCase::file(&claim, &contract, &[arb1.did(), arb2.did()], 3).unwrap();
+        let case = ArbitrationCase::file(&claim, &contract, &[arb1.did(), arb2.did()], 3).unwrap();
         (case, arb1, arb2)
     }
 
     fn registered_kernel(client: &AgentKeys, provider: &AgentKeys) -> Kernel {
         let mut k = Kernel::new(KernelConfig::default());
-        k.register(client, "client", &["summarize.zh"], Credits(50)).unwrap();
-        k.register(provider, "provider", &["summarize.zh"], Credits(50)).unwrap();
+        k.register(client, "client", &["summarize.zh"], Credits(50))
+            .unwrap();
+        k.register(provider, "provider", &["summarize.zh"], Credits(50))
+            .unwrap();
         k
     }
 
@@ -466,8 +475,7 @@ mod tests {
     fn parties_and_duplicate_arbiters_are_refused() {
         let client = agent(1);
         let provider = agent(2);
-        let mut contract =
-            Contract::draft(&client, &provider.did(), &terms(100), "s", 1).unwrap();
+        let mut contract = Contract::draft(&client, &provider.did(), &terms(100), "s", 1).unwrap();
         contract.sign(&client).unwrap();
         contract.sign(&provider).unwrap();
         let claim = BreachClaim::file(
@@ -496,7 +504,9 @@ mod tests {
             Err(CoreError::InvalidKind)
         );
         // 第三方两名：接受。
-        assert!(ArbitrationCase::file(&claim, &contract, &[agent(3).did(), agent(4).did()], 3).is_ok());
+        assert!(
+            ArbitrationCase::file(&claim, &contract, &[agent(3).did(), agent(4).did()], 3).is_ok()
+        );
     }
 
     #[test]
@@ -517,7 +527,13 @@ mod tests {
         );
         // 两名仲裁员都签：成立。
         let ruling = case
-            .rule(&policy, &[&arb1, &arb2], Credits(100), "provider never delivered", 4)
+            .rule(
+                &policy,
+                &[&arb1, &arb2],
+                Credits(100),
+                "provider never delivered",
+                4,
+            )
             .unwrap();
         assert_eq!(ruling.verdict, Verdict::Upheld);
         assert_eq!(ruling.signatures.len(), 2);
@@ -583,16 +599,41 @@ mod tests {
 
         // 罚没销毁：被诉方锁定 50 → 30；发行量不变，销毁量 +20。
         let after = k.ledger().view();
-        assert_eq!(after.slashed, before.slashed.checked_add(Credits(20)).unwrap());
+        assert_eq!(
+            after.slashed,
+            before.slashed.checked_add(Credits(20)).unwrap()
+        );
         assert_eq!(after.minted, before.minted);
-        let accused_before = before.accounts.get(provider.did().as_str()).cloned().unwrap_or_default();
-        let accused_after = after.accounts.get(provider.did().as_str()).cloned().unwrap_or_default();
+        let accused_before = before
+            .accounts
+            .get(provider.did().as_str())
+            .cloned()
+            .unwrap_or_default();
+        let accused_after = after
+            .accounts
+            .get(provider.did().as_str())
+            .cloned()
+            .unwrap_or_default();
         assert_eq!(accused_after.locked.get(), accused_before.locked.get() - 20);
-        assert_eq!(accused_after.available.get(), accused_before.available.get() - 50);
+        assert_eq!(
+            accused_after.available.get(),
+            accused_before.available.get() - 50
+        );
         // 赔付到账：申诉方可用 +50。
-        let claimant_before = before.accounts.get(client.did().as_str()).cloned().unwrap_or_default();
-        let claimant_after = after.accounts.get(client.did().as_str()).cloned().unwrap_or_default();
-        assert_eq!(claimant_after.available.get(), claimant_before.available.get() + 50);
+        let claimant_before = before
+            .accounts
+            .get(client.did().as_str())
+            .cloned()
+            .unwrap_or_default();
+        let claimant_after = after
+            .accounts
+            .get(client.did().as_str())
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(
+            claimant_after.available.get(),
+            claimant_before.available.get() + 50
+        );
 
         // 执行过的事件进进度流。
         assert!(k
@@ -643,8 +684,14 @@ mod tests {
         let provider = AgentKeys::from_seed(&[2u8; 32]);
         let mut k = registered_kernel(&client, &provider);
         let before = k.ledger().view();
-        case.rule(&ArbitrationPolicy::default(), &[&arb1, &arb2], Credits(100), "no proof", 5)
-            .unwrap();
+        case.rule(
+            &ArbitrationPolicy::default(),
+            &[&arb1, &arb2],
+            Credits(100),
+            "no proof",
+            5,
+        )
+        .unwrap();
         let report = case.enforce(&mut k, 6).unwrap();
         assert_eq!(report.verdict, Verdict::Rejected);
         assert_eq!(report.slashed, Credits::ZERO);

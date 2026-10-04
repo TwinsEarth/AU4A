@@ -24,8 +24,10 @@ fn archived_session() -> (Journal, AgentKeys, AgentKeys, Vec<Did>) {
     let mut k = kernel();
     let a = agent(11);
     let b = agent(12);
-    k.register(&a, "proposer", &["summarize.zh"], Credits(20)).unwrap();
-    k.register(&b, "responder", &["summarize.zh"], Credits(20)).unwrap();
+    k.register(&a, "proposer", &["summarize.zh"], Credits(20))
+        .unwrap();
+    k.register(&b, "responder", &["summarize.zh"], Credits(20))
+        .unwrap();
     let parties = vec![a.did(), b.did()];
     let session = au4a_negotiate::msg::session_id(&a.did(), &b.did(), &terms(120)).unwrap();
 
@@ -41,9 +43,15 @@ fn archived_session() -> (Journal, AgentKeys, AgentKeys, Vec<Did>) {
     k.send(&counter_env).unwrap();
 
     let mut machine = StateMachine::open(&session).unwrap();
-    let r1 = machine.transact(Event::Request, &a, &b, k.tick(), &parties).unwrap();
-    let r2 = machine.transact(Event::Counter, &b, &a, k.tick(), &parties).unwrap();
-    let r3 = machine.transact(Event::Accept, &a, &b, k.tick(), &parties).unwrap();
+    let r1 = machine
+        .transact(Event::Request, &a, &b, k.tick(), &parties)
+        .unwrap();
+    let r2 = machine
+        .transact(Event::Counter, &b, &a, k.tick(), &parties)
+        .unwrap();
+    let r3 = machine
+        .transact(Event::Accept, &a, &b, k.tick(), &parties)
+        .unwrap();
 
     let mut journal = Journal::open(&session, &parties).unwrap();
     for env in k.drain() {
@@ -63,9 +71,16 @@ fn archive_roundtrips_byte_exactly_and_replays_the_same_state() {
     assert!(!bytes.contains('\n'), "规范 JSON 不允许空白");
 
     let restored = Journal::decode(&bytes).unwrap();
-    assert_eq!(restored.encode().unwrap(), bytes, "encode→decode→encode 必须定点");
+    assert_eq!(
+        restored.encode().unwrap(),
+        bytes,
+        "encode→decode→encode 必须定点"
+    );
     assert_eq!(restored, journal);
-    assert_eq!(restored.replay_digest().unwrap(), journal.replay_digest().unwrap());
+    assert_eq!(
+        restored.replay_digest().unwrap(),
+        journal.replay_digest().unwrap()
+    );
 
     let replayed = restored.replay().unwrap();
     assert_eq!(replayed.phase(), Phase::Accepted);
@@ -116,7 +131,10 @@ fn archiving_requires_verified_messages_and_dual_signed_transitions() {
         au4a_negotiate::kinds::NEGOTIATE_REJECT,
         1,
         None,
-        NegotiationMsg::reject(journal.session(), 1, "nope").unwrap().body().unwrap(),
+        NegotiationMsg::reject(journal.session(), 1, "nope")
+            .unwrap()
+            .body()
+            .unwrap(),
     )
     .unwrap();
     let mut j = journal.clone();
@@ -124,11 +142,15 @@ fn archiving_requires_verified_messages_and_dual_signed_transitions() {
     assert_eq!(j.messages().len(), journal.messages().len());
 
     // 单签转换：不能归档。（归档到 ACCEPTED 后，合法事件是 SIGN。）
-    let machine = StateMachine::rebuild(journal.session(), &parties, journal.transitions()).unwrap();
+    let machine =
+        StateMachine::rebuild(journal.session(), &parties, journal.transitions()).unwrap();
     assert_eq!(machine.phase(), Phase::Accepted);
     let staged = machine.stage(Event::Sign, &a, 99).unwrap();
     let mut j = journal.clone();
-    assert_eq!(j.append_transition(&staged, None), Err(CoreError::NotSealed));
+    assert_eq!(
+        j.append_transition(&staged, None),
+        Err(CoreError::NotSealed)
+    );
     assert_eq!(j.transitions().len(), journal.transitions().len());
 
     // 补上对端签名后可以归档，相位推进到 CONTRACT_SIGNED。

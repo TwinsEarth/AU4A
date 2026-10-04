@@ -271,8 +271,10 @@ mod tests {
     fn alpha_two_has_a_peak_while_alpha_one_does_not() {
         let peaked = ScalingParams::new(100, 2, 1_000, 1);
         assert!(peaked.has_interior_vertex());
-        assert!(aggregate_throughput_milli(100, &peaked).unwrap()
-            > aggregate_throughput_milli(1_000, &peaked).unwrap());
+        assert!(
+            aggregate_throughput_milli(100, &peaked).unwrap()
+                > aggregate_throughput_milli(1_000, &peaked).unwrap()
+        );
 
         // α=1：严格单调（用较大 p0 让向下取整的影响可忽略，见模块文档的取整说明）。
         let flat = ScalingParams::new(100, 1, 1_000_000, 1);
@@ -355,10 +357,22 @@ mod tests {
 
     #[test]
     fn parameters_are_validated_and_serialize_without_floats() {
-        assert_eq!(ScalingParams::new(0, 2, 1_000, 1).validate(), Err(CoreError::InvalidKind));
-        assert_eq!(ScalingParams::new(10, 0, 1_000, 1).validate(), Err(CoreError::InvalidKind));
-        assert_eq!(ScalingParams::new(10, 4, 1_000, 1).validate(), Err(CoreError::InvalidKind));
-        assert_eq!(ScalingParams::new(10, 2, 0, 1).validate(), Err(CoreError::NegativeAmount));
+        assert_eq!(
+            ScalingParams::new(0, 2, 1_000, 1).validate(),
+            Err(CoreError::InvalidKind)
+        );
+        assert_eq!(
+            ScalingParams::new(10, 0, 1_000, 1).validate(),
+            Err(CoreError::InvalidKind)
+        );
+        assert_eq!(
+            ScalingParams::new(10, 4, 1_000, 1).validate(),
+            Err(CoreError::InvalidKind)
+        );
+        assert_eq!(
+            ScalingParams::new(10, 2, 0, 1).validate(),
+            Err(CoreError::NegativeAmount)
+        );
         let json = params().to_json().unwrap();
         au4a_core::canonicalize(&json).unwrap();
         assert_eq!(ScalingParams::from_json(&json).unwrap(), params());

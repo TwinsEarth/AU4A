@@ -9,7 +9,9 @@
 
 use std::collections::BTreeMap;
 
-use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, RefusalCode};
+use au4a_core::{
+    canonical_hash, AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, RefusalCode,
+};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
@@ -126,14 +128,8 @@ impl SafetyOffice {
         payload: &Value,
     ) -> CoreResult<ViolationReport> {
         let at = kernel.tick();
-        let report = ViolationReport::new(
-            keys.did(),
-            subject.clone(),
-            violation,
-            evidence,
-            at,
-        )
-        .sign(keys)?;
+        let report = ViolationReport::new(keys.did(), subject.clone(), violation, evidence, at)
+            .sign(keys)?;
         self.accept_report(kernel, &report, payload)?;
         Ok(report)
     }
@@ -513,10 +509,7 @@ impl SafetyOffice {
 
     /// 某 Agent 的通知收件箱（按投递顺序）。
     pub fn inbox(&self, did: &Did) -> Vec<&Notification> {
-        self.notifications
-            .iter()
-            .filter(|n| &n.to == did)
-            .collect()
+        self.notifications.iter().filter(|n| &n.to == did).collect()
     }
 
     pub fn notifications_of_case(&self, case_id: &str) -> Vec<&Notification> {
@@ -598,7 +591,14 @@ impl SafetyOffice {
             json!({"case": case_id, "subscription": subscription.to_json()?}),
         )?;
         if subscription.watches(status) {
-            self.notify_one(&subscription.id, &subscriber, case_id, status, status_seq, at);
+            self.notify_one(
+                &subscription.id,
+                &subscriber,
+                case_id,
+                status,
+                status_seq,
+                at,
+            );
         }
         kernel.emit(
             &format!("{}.subscribed", crate::TRACK),
@@ -664,11 +664,7 @@ impl SafetyOffice {
     /// * `Ok(Some(receipt))`：受理成功；回执由**服务身份**签名并带 `in_reply_to`。
     /// * `Err(_)`：格式、签名、身份或证据不成立。拒绝不产生回执，但服务侧会留下
     ///   一条类型化拒绝记录（`kernel.refusals()`），因此拒绝本身同样可审计。
-    pub fn handle(
-        &mut self,
-        kernel: &mut Kernel,
-        env: &Envelope,
-    ) -> CoreResult<Option<Envelope>> {
+    pub fn handle(&mut self, kernel: &mut Kernel, env: &Envelope) -> CoreResult<Option<Envelope>> {
         if let Some(to) = &env.to {
             if to != &self.service.did() {
                 return Ok(None);
@@ -1173,7 +1169,10 @@ mod tests {
             ledger_fingerprint(&w.kernel, &w.participants).unwrap(),
             before_fingerprint
         );
-        assert_eq!(w.kernel.card(&w.subject.did()).cloned(), subject_card_before);
+        assert_eq!(
+            w.kernel.card(&w.subject.did()).cloned(),
+            subject_card_before
+        );
         assert_eq!(
             w.kernel.card(&w.reporter.did()).cloned(),
             reporter_card_before
@@ -1353,7 +1352,10 @@ mod tests {
         let service = setup::keys(setup::ROLE_SERVICE);
         let service_did = service.did();
         let impostor = setup::keys(0x7f);
-        let config = SafetyConfig::single_arbiter(service_did.clone(), setup::keys(setup::ROLE_ARBITER).did());
+        let config = SafetyConfig::single_arbiter(
+            service_did.clone(),
+            setup::keys(setup::ROLE_ARBITER).did(),
+        );
         assert_eq!(
             SafetyOffice::new(config.clone(), impostor).err(),
             Some(CoreError::InvalidSignature)
@@ -1459,7 +1461,10 @@ mod tests {
             ledger_fingerprint(&w.kernel, &w.participants).unwrap(),
             fingerprint_before
         );
-        assert_eq!(w.kernel.card(&w.subject.did()).cloned(), subject_card_before);
+        assert_eq!(
+            w.kernel.card(&w.subject.did()).cloned(),
+            subject_card_before
+        );
         assert_eq!(w.kernel.ledger().slashed(), Credits::ZERO);
         w.kernel.ledger().check_conservation().unwrap();
     }
@@ -1487,8 +1492,13 @@ mod tests {
         let mut w = world();
         let (references, payloads) = appeal_evidence("appeal-4");
         assert_eq!(
-            w.office
-                .appeal(&mut w.kernel, &w.subject, "no-such-case", references, &payloads),
+            w.office.appeal(
+                &mut w.kernel,
+                &w.subject,
+                "no-such-case",
+                references,
+                &payloads
+            ),
             Err(CoreError::UnknownAgent)
         );
         let (_, refusal) = &w.kernel.refusals()[0];
@@ -1503,8 +1513,13 @@ mod tests {
         let (references, _) = appeal_evidence("appeal-5");
         let other_payloads = vec![json!({"tag": "appeal-5", "forged": true})];
         assert_eq!(
-            w.office
-                .appeal(&mut w.kernel, &w.subject, &case_id, references, &other_payloads),
+            w.office.appeal(
+                &mut w.kernel,
+                &w.subject,
+                &case_id,
+                references,
+                &other_payloads
+            ),
             Err(CoreError::InvalidSignature)
         );
         assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Reported));
@@ -1525,8 +1540,13 @@ mod tests {
         );
         let (references, payloads) = appeal_evidence("appeal-6");
         assert_eq!(
-            w.office
-                .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads[..1]),
+            w.office.appeal(
+                &mut w.kernel,
+                &w.subject,
+                &case_id,
+                references,
+                &payloads[..1]
+            ),
             Err(CoreError::InvalidSignature)
         );
         assert_eq!(w.office.appeal_count(), 0);
@@ -1605,7 +1625,10 @@ mod tests {
         assert_eq!(w.office.penalty_count(), 1);
         assert_eq!(w.office.penalty(&record.id), Some(&record));
         assert_eq!(w.office.slashed_total().unwrap(), Credits(5));
-        assert_eq!(w.office.events().last().unwrap().kind, SafetyEventKind::Penalized);
+        assert_eq!(
+            w.office.events().last().unwrap().kind,
+            SafetyEventKind::Penalized
+        );
         assert!(w.office.verify_chain().ok);
     }
 
@@ -1663,7 +1686,10 @@ mod tests {
         let record = w.office.apply_penalty_order(&mut w.kernel, order).unwrap();
         assert_eq!(record.requested, Credits(10_000));
         assert_eq!(record.applied, locked_before);
-        assert_eq!(w.kernel.ledger().balance(&subject_did).locked, Credits::ZERO);
+        assert_eq!(
+            w.kernel.ledger().balance(&subject_did).locked,
+            Credits::ZERO
+        );
         assert_eq!(w.kernel.ledger().slashed(), locked_before);
         assert_eq!(w.office.slashed_total().unwrap(), locked_before);
         w.kernel.ledger().check_conservation().unwrap();
@@ -1802,7 +1828,10 @@ mod tests {
         let inbox = w.office.inbox(&w.reporter.did());
         assert_eq!(inbox.len(), 2);
         assert_eq!(inbox[1].status, CaseStatus::Appealed);
-        assert_eq!(inbox[1].seq, 2, "seq 指向 appealed 事件（0=reported,1=subscribed,2=appealed）");
+        assert_eq!(
+            inbox[1].seq, 2,
+            "seq 指向 appealed 事件（0=reported,1=subscribed,2=appealed）"
+        );
         assert_eq!(w.office.subscription_count(), 1);
         assert!(w.office.verify_chain().ok);
     }
@@ -1813,7 +1842,12 @@ mod tests {
         let case_id = open_case(&mut w, "notify-2");
         // 只关心 arbitrated：当前是 reported（不投递快照），后续 appealing/penalized 也不投递。
         w.office
-            .subscribe(&mut w.kernel, &w.reporter, &case_id, vec![CaseStatus::Arbitrated])
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Arbitrated],
+            )
             .unwrap();
         assert_eq!(w.office.inbox(&w.reporter.did()).len(), 0);
 
@@ -1864,11 +1898,7 @@ mod tests {
         w.office
             .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
             .unwrap();
-        assert_eq!(
-            w.office.inbox(&w.reporter.did()).len(),
-            1,
-            "退订后不再投递"
-        );
+        assert_eq!(w.office.inbox(&w.reporter.did()).len(), 1, "退订后不再投递");
     }
 
     #[test]
@@ -1877,7 +1907,12 @@ mod tests {
         let case_id = open_case(&mut w, "notify-4");
         let subscription = w
             .office
-            .subscribe(&mut w.kernel, &w.reporter, &case_id, vec![CaseStatus::Appealed])
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Appealed],
+            )
             .unwrap();
         assert_eq!(
             w.office
@@ -1900,8 +1935,12 @@ mod tests {
     fn unknown_cases_and_unknown_subscriptions_are_refused() {
         let mut w = world();
         assert_eq!(
-            w.office
-                .subscribe(&mut w.kernel, &w.reporter, "no-such-case", vec![CaseStatus::Reported]),
+            w.office.subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                "no-such-case",
+                vec![CaseStatus::Reported]
+            ),
             Err(CoreError::UnknownAgent)
         );
         let (_, refusal) = w.kernel.refusals().last().unwrap();
@@ -1920,7 +1959,8 @@ mod tests {
         let mut w = world();
         let case_id = open_case(&mut w, "notify-5");
         assert_eq!(
-            w.office.subscribe(&mut w.kernel, &w.reporter, &case_id, Vec::new()),
+            w.office
+                .subscribe(&mut w.kernel, &w.reporter, &case_id, Vec::new()),
             Err(CoreError::InvalidKind)
         );
         let (_, refusal) = w.kernel.refusals().last().unwrap();
@@ -1936,7 +1976,12 @@ mod tests {
         let case_id = open_case(&mut w, "notify-6");
         let first = w
             .office
-            .subscribe(&mut w.kernel, &w.reporter, &case_id, vec![CaseStatus::Appealed])
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Appealed],
+            )
             .unwrap();
         let second = w
             .office
@@ -2031,7 +2076,10 @@ mod tests {
             receipt.body["in_reply_kind"],
             json!(crate::pmb::kinds::SAFETY_QUERY)
         );
-        assert_eq!(receipt.body["result"]["boundary"]["registered"], json!(true));
+        assert_eq!(
+            receipt.body["result"]["boundary"]["registered"],
+            json!(true)
+        );
         assert_eq!(
             receipt.body["result"]["boundary"]["allowed"]
                 .as_array()
@@ -2312,7 +2360,10 @@ mod tests {
                     .unwrap(),
             )
             .unwrap();
-        assert_eq!(w.kernel.ledger().balance(&w.subject.did()).locked, locked_before.checked_sub(Credits(8)).unwrap());
+        assert_eq!(
+            w.kernel.ledger().balance(&w.subject.did()).locked,
+            locked_before.checked_sub(Credits(8)).unwrap()
+        );
         let minted_before = w.kernel.ledger().minted();
 
         let outcome = w
@@ -2385,7 +2436,8 @@ mod tests {
     fn a_verdict_for_an_unknown_case_is_refused() {
         let mut w = world();
         assert_eq!(
-            w.office.resolve(&mut w.kernel, upheld("no-such-case", 5, &w.arbiter)),
+            w.office
+                .resolve(&mut w.kernel, upheld("no-such-case", 5, &w.arbiter)),
             Err(CoreError::UnknownAgent)
         );
         let (_, refusal) = w.kernel.refusals().last().unwrap();
@@ -2539,7 +2591,10 @@ mod tests {
         assert_eq!(rebuilt.penalty_count(), w.office.penalty_count());
         assert_eq!(rebuilt.appeal_count(), w.office.appeal_count());
         assert_eq!(rebuilt.status_of(&case_id), Some(CaseStatus::Arbitrated));
-        assert_eq!(rebuilt.slashed_total().unwrap(), w.office.slashed_total().unwrap());
+        assert_eq!(
+            rebuilt.slashed_total().unwrap(),
+            w.office.slashed_total().unwrap()
+        );
         // 重建实例的审计同样干净：链是唯一事实来源。
         let report = rebuilt.audit(&w.kernel);
         assert!(report.ok, "findings: {:?}", report.findings);
@@ -2600,7 +2655,8 @@ mod tests {
         assert!(!report.ok);
         assert!(report.has(AuditCode::CaseMissing));
         assert!(report.findings.iter().any(|finding| {
-            finding.code == AuditCode::CaseMissing && finding.detail["case"] == json!("missing-case")
+            finding.code == AuditCode::CaseMissing
+                && finding.detail["case"] == json!("missing-case")
         }));
     }
 }

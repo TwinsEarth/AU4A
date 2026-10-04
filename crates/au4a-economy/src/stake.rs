@@ -229,7 +229,11 @@ impl StakeBook {
     /// [`StakeBook::assert_consistent`] 会立刻抓到。
     pub fn absorb_slash(&mut self, who: &Did, amount: Credits) -> CoreResult<Credits> {
         let pos = self.positions.get_mut(who).ok_or(CoreError::UnknownAgent)?;
-        let take = if pos.locked < amount { pos.locked } else { amount };
+        let take = if pos.locked < amount {
+            pos.locked
+        } else {
+            amount
+        };
         pos.locked = pos.locked.checked_sub(take)?;
         Ok(take)
     }
@@ -408,11 +412,17 @@ mod tests {
         let t = terms(100, 5, 5_000);
         book.stake(&mut ledger, &t, &a, Credits(300)).unwrap();
         book.request_unstake(&t, &a, Credits(100), 20).unwrap(); // release_at = 25
-        // 未到点：不解锁。
-        assert_eq!(book.release_matured(&mut ledger, &a, 24).unwrap(), Credits::ZERO);
+                                                                 // 未到点：不解锁。
+        assert_eq!(
+            book.release_matured(&mut ledger, &a, 24).unwrap(),
+            Credits::ZERO
+        );
         assert_eq!(ledger.balance(&a).locked, Credits(300));
         // 到点：精确解锁 100。
-        assert_eq!(book.release_matured(&mut ledger, &a, 25).unwrap(), Credits(100));
+        assert_eq!(
+            book.release_matured(&mut ledger, &a, 25).unwrap(),
+            Credits(100)
+        );
         assert_eq!(ledger.balance(&a).locked, Credits(200));
         assert_eq!(ledger.balance(&a).available, Credits(800));
         assert_eq!(book.position(&a).unbonding.len(), 0);
@@ -425,7 +435,8 @@ mod tests {
         let mut ledger = Ledger::new();
         ledger.mint(&a, Credits(1_000)).unwrap();
         let mut book = StakeBook::new();
-        book.stake(&mut ledger, &StakeTerms::DEFAULT, &a, Credits(300)).unwrap();
+        book.stake(&mut ledger, &StakeTerms::DEFAULT, &a, Credits(300))
+            .unwrap();
         // 罚没 10_000 被锁定余额约束为 300（账本层），簿记同步削减。
         ledger.slash(&a, Credits(10_000)).unwrap();
         let absorbed = book.absorb_slash(&a, Credits(10_000)).unwrap();
@@ -435,7 +446,10 @@ mod tests {
         assert_eq!(ledger.balance(&a).available, Credits(700));
         book.assert_consistent(&ledger).unwrap();
         // 没有头寸的账户不能同步罚没。
-        assert_eq!(book.absorb_slash(&did(9), Credits(1)), Err(CoreError::UnknownAgent));
+        assert_eq!(
+            book.absorb_slash(&did(9), Credits(1)),
+            Err(CoreError::UnknownAgent)
+        );
     }
 
     #[test]
@@ -444,7 +458,8 @@ mod tests {
         let mut ledger = Ledger::new();
         ledger.mint(&a, Credits(1_000)).unwrap();
         let mut book = StakeBook::new();
-        book.stake(&mut ledger, &StakeTerms::DEFAULT, &a, Credits(200)).unwrap();
+        book.stake(&mut ledger, &StakeTerms::DEFAULT, &a, Credits(200))
+            .unwrap();
         book.assert_consistent(&ledger).unwrap();
         // 账本被外部改动（簿记没有跟随）→ 不变式必须抓到。
         ledger.unlock(&a, Credits(200)).unwrap();
@@ -461,7 +476,9 @@ mod tests {
         ledger.mint(&a, Credits(1_000)).unwrap();
         ledger.lock(&a, Credits(150)).unwrap(); // 例如内核注册时自带的质押
         let mut book = StakeBook::new();
-        let pos = book.adopt(&ledger, &StakeTerms::DEFAULT, &a, Credits(150)).unwrap();
+        let pos = book
+            .adopt(&ledger, &StakeTerms::DEFAULT, &a, Credits(150))
+            .unwrap();
         assert_eq!(pos.locked, Credits(150));
         assert_eq!(ledger.balance(&a).locked, Credits(150)); // 没有重复锁定
         assert_eq!(ledger.balance(&a).available, Credits(850));

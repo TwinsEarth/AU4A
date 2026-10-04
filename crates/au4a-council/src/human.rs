@@ -125,7 +125,9 @@ pub struct HumanObserver {
 impl HumanObserver {
     /// 创建一个只读观察者。人类不需要、也拿不到任何密钥。
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into() }
+        Self {
+            label: label.into(),
+        }
     }
 
     /// 观察者标签。
@@ -213,7 +215,10 @@ impl std::fmt::Display for HumanObserver {
 }
 
 /// 便捷函数：把观察结果直接转成 JSON（观察面板用）。
-pub fn observe_json(observer: &HumanObserver, council: &Council) -> au4a_core::CoreResult<serde_json::Value> {
+pub fn observe_json(
+    observer: &HumanObserver,
+    council: &Council,
+) -> au4a_core::CoreResult<serde_json::Value> {
     serde_json::to_value(observer.observe(council)).map_err(|_| au4a_core::CoreError::Encoding)
 }
 

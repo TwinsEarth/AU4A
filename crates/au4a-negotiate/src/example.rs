@@ -27,7 +27,12 @@ fn agent(seed: &[u8; 32]) -> au4a_core::AgentKeys {
 }
 
 fn terms(price: i64, deadline: u64) -> CoreResult<Terms> {
-    Terms::new("summarize.zh", Credits(price), deadline, EvidenceGrade::Verified)
+    Terms::new(
+        "summarize.zh",
+        Credits(price),
+        deadline,
+        EvidenceGrade::Verified,
+    )
 }
 
 /// 把内核队列里的消息收成一份可断言的转录。
@@ -50,8 +55,13 @@ fn transcript(kernel: &mut Kernel) -> CoreResult<Vec<Value>> {
 pub fn success_path(kernel: &mut Kernel) -> CoreResult<Value> {
     let (proposer, responder) = crate::scenario_agents(kernel)?;
 
-    let mut negotiation =
-        Negotiation::open(kernel, &proposer, &responder, terms(120, 40)?, DEFAULT_MAX_ROUNDS)?;
+    let mut negotiation = Negotiation::open(
+        kernel,
+        &proposer,
+        &responder,
+        terms(120, 40)?,
+        DEFAULT_MAX_ROUNDS,
+    )?;
     negotiation.counter(kernel, &responder, &proposer, terms(100, 40)?)?;
     negotiation.reject(kernel, &proposer, &responder, "deadline too tight")?;
     negotiation.counter(kernel, &proposer, &responder, terms(95, 42)?)?;
@@ -111,8 +121,13 @@ pub fn breach_path(kernel: &mut Kernel) -> CoreResult<Value> {
     crate::ensure_agent(kernel, &arbiter1, "negotiate.arbiter.1", &[])?;
     crate::ensure_agent(kernel, &arbiter2, "negotiate.arbiter.2", &[])?;
 
-    let mut negotiation =
-        Negotiation::open(kernel, &client, &provider, terms(80, 40)?, DEFAULT_MAX_ROUNDS)?;
+    let mut negotiation = Negotiation::open(
+        kernel,
+        &client,
+        &provider,
+        terms(80, 40)?,
+        DEFAULT_MAX_ROUNDS,
+    )?;
     negotiation.counter(kernel, &provider, &client, terms(75, 40)?)?;
     negotiation.accept(kernel, &client, &provider)?;
     negotiation.sign_contract(kernel, &client, &provider)?;
@@ -253,7 +268,10 @@ mod tests {
         assert_eq!(summary["ruling"]["verdict"], "upheld");
         assert_eq!(summary["ruling"]["signatures"], 2);
         assert_eq!(summary["ruling"]["slash"], 15, "75 的 2000bp");
-        assert_eq!(summary["ruling"]["compensate"], 37, "75 的 5000bp（向下取整）");
+        assert_eq!(
+            summary["ruling"]["compensate"], 37,
+            "75 的 5000bp（向下取整）"
+        );
         assert_eq!(summary["enforcement"]["slashed"], 15);
         assert_eq!(summary["enforcement"]["compensated"], 37);
         assert_eq!(summary["enforcement"]["conservation_ok"], true);

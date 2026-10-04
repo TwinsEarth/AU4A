@@ -94,7 +94,14 @@ fn every_adapter_refuses_unknown_operations_by_name() {
     // Taproot
     let mut net = Testnet::new(ChainId::BtcRegtest, 1);
     let mut tap = TaprootAdapter::new();
-    let tx = ChainTx::new(ChainId::BtcRegtest, "taproot.mystery", &did(1), 1, json!({})).unwrap();
+    let tx = ChainTx::new(
+        ChainId::BtcRegtest,
+        "taproot.mystery",
+        &did(1),
+        1,
+        json!({}),
+    )
+    .unwrap();
     assert_eq!(
         tap.execute(&mut net, &tx).unwrap_err().code,
         RefusalCode::Unsupported
@@ -162,7 +169,10 @@ fn every_successful_receipt_is_cpu_proto() {
     // 所有适配器的投影都标注 real_network = false / grade = cpu-proto。
     assert_eq!(net.to_json()["real_network"], json!(false));
     assert_eq!(eth.to_json()["grade"], json!("cpu-proto"));
-    assert_eq!(rgb.contract().unwrap().to_json()["grade"], json!("cpu-proto"));
+    assert_eq!(
+        rgb.contract().unwrap().to_json()["grade"],
+        json!("cpu-proto")
+    );
     assert_eq!(x.to_json()["real_network"], json!(false));
 }
 
@@ -177,7 +187,10 @@ fn dual_track_conservation_survives_a_random_bridge_sequence() {
     for _ in 0..200 {
         let amount = Credits((rng.below(300) + 1) as i64);
         if rng.below(2) == 0 {
-            if book.bridge_out(&mut ledger, &who, amount, "rgb:USDT", "rgb").is_ok() {
+            if book
+                .bridge_out(&mut ledger, &who, amount, "rgb:USDT", "rgb")
+                .is_ok()
+            {
                 transitions += 1;
             }
         } else if book
@@ -203,7 +216,14 @@ fn dual_track_conservation_survives_a_random_bridge_sequence() {
 fn double_spending_and_replaying_are_impossible() {
     // 1) 测试网级重放：同一笔交易二次提交。
     let mut net = Testnet::new(ChainId::BtcRegtest, 1);
-    let tx = ChainTx::new(ChainId::BtcRegtest, "rgb.transfer", &did(5), 1, json!({ "x": 1 })).unwrap();
+    let tx = ChainTx::new(
+        ChainId::BtcRegtest,
+        "rgb.transfer",
+        &did(5),
+        1,
+        json!({ "x": 1 }),
+    )
+    .unwrap();
     net.accept(&tx).unwrap();
     assert_eq!(net.accept(&tx).unwrap_err().code, RefusalCode::Conflict);
 
@@ -311,7 +331,11 @@ fn the_fail_closed_gate_covers_every_rail() {
     book.force_chain_supply(Credits(999_999));
     let request = SettlementRequest::new(&payer, &payee, 1_000).unwrap();
     assert!(settle(&mut ledger, &mut book, &request, &table).is_err());
-    assert_eq!(ledger.balance(&payer).locked, Credits(10), "账本不得被链上数字改写");
+    assert_eq!(
+        ledger.balance(&payer).locked,
+        Credits(10),
+        "账本不得被链上数字改写"
+    );
 }
 
 #[test]
@@ -322,8 +346,8 @@ fn reputation_updates_stay_bounded_and_non_transferable() {
     let mut bridge = ReputationBridge::new();
     let mut previous = NEUTRAL_BP;
     for i in 0..25u64 {
-        let event =
-            ChainReputationEvent::new(&who, ReputationEventKind::Validation, 10_000, 2 + i).unwrap();
+        let event = ChainReputationEvent::new(&who, ReputationEventKind::Validation, 10_000, 2 + i)
+            .unwrap();
         let after = bridge.apply_event(&net, &event).unwrap();
         let step = after.honesty_bp - previous;
         assert!(
@@ -337,7 +361,10 @@ fn reputation_updates_stay_bounded_and_non_transferable() {
     assert!(previous >= 9_999, "应收敛到 1bp 以内，实际 {previous}");
     // 不可转让。
     for op in ["reputation.transfer", "reputation.buy", "reputation.reset"] {
-        assert_eq!(bridge.execute(op).unwrap_err().code, RefusalCode::PolicyDenied);
+        assert_eq!(
+            bridge.execute(op).unwrap_err().code,
+            RefusalCode::PolicyDenied
+        );
     }
     assert_eq!(bridge.to_json()["transferable"], json!(false));
 }

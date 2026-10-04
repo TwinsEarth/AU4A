@@ -446,7 +446,8 @@ mod tests {
         assert_eq!(bridge.applied_events(), 1);
         // 结算最终化：可靠性 + 可用性各走 4000 权重的一半左右。
         let settle =
-            ChainReputationEvent::new(&who, ReputationEventKind::SettlementFinal, 8_000, 3).unwrap();
+            ChainReputationEvent::new(&who, ReputationEventKind::SettlementFinal, 8_000, 3)
+                .unwrap();
         let after2 = bridge.apply_event(&net, &settle).unwrap();
         // (8000-5000)×4000/10000 = 1200
         assert_eq!(after2.reliability_bp, 6_200);
@@ -584,7 +585,10 @@ mod tests {
         );
         assert_eq!(a.to_json()["transferable"], json!(false));
         assert_eq!(a.to_json()["grade"], json!("cpu-proto"));
-        assert_eq!(credibility_credits(&a.reputation_of(&who)).unwrap(), Credits(a.reputation_of(&who).overall_bp()));
+        assert_eq!(
+            credibility_credits(&a.reputation_of(&who)).unwrap(),
+            Credits(a.reputation_of(&who).overall_bp())
+        );
     }
 
     #[test]

@@ -142,9 +142,8 @@ pub(crate) fn replay(events: &[SafetyEvent]) -> CoreResult<ReplayState> {
             .to_string();
         match event.kind {
             SafetyEventKind::Reported => {
-                let report = ViolationReport::from_json(
-                    payload.get("report").ok_or(CoreError::Encoding)?,
-                )?;
+                let report =
+                    ViolationReport::from_json(payload.get("report").ok_or(CoreError::Encoding)?)?;
                 let mut case = Case::from_report(&report);
                 case.status_seq = event.seq;
                 state.cases.insert(case.id.clone(), case);
@@ -159,7 +158,9 @@ pub(crate) fn replay(events: &[SafetyEvent]) -> CoreResult<ReplayState> {
                         json!({"seq": event.seq, "case": subscription.case}),
                     ));
                 }
-                state.subscriptions.insert(subscription.id.clone(), subscription);
+                state
+                    .subscriptions
+                    .insert(subscription.id.clone(), subscription);
             }
             SafetyEventKind::Unsubscribed => {
                 let id = payload
@@ -169,8 +170,7 @@ pub(crate) fn replay(events: &[SafetyEvent]) -> CoreResult<ReplayState> {
                 state.subscriptions.remove(id);
             }
             SafetyEventKind::Appealed => {
-                let appeal =
-                    Appeal::from_json(payload.get("appeal").ok_or(CoreError::Encoding)?)?;
+                let appeal = Appeal::from_json(payload.get("appeal").ok_or(CoreError::Encoding)?)?;
                 let mut missing = false;
                 match state.cases.get_mut(&case_id) {
                     Some(case) => {
@@ -189,9 +189,8 @@ pub(crate) fn replay(events: &[SafetyEvent]) -> CoreResult<ReplayState> {
                 state.appeals.insert(appeal.id.clone(), appeal);
             }
             SafetyEventKind::Penalized => {
-                let record = PenaltyRecord::from_json(
-                    payload.get("penalty").ok_or(CoreError::Encoding)?,
-                )?;
+                let record =
+                    PenaltyRecord::from_json(payload.get("penalty").ok_or(CoreError::Encoding)?)?;
                 let mut missing = false;
                 let mut mismatched = false;
                 match state.cases.get_mut(&case_id) {
@@ -370,7 +369,10 @@ mod tests {
 
     #[test]
     fn a_finding_serializes_with_a_code_and_structured_detail() {
-        let finding = AuditFinding::new(AuditCode::LedgerMismatch, json!({"expected": 5, "actual": 3}));
+        let finding = AuditFinding::new(
+            AuditCode::LedgerMismatch,
+            json!({"expected": 5, "actual": 3}),
+        );
         let value = serde_json::to_value(&finding).unwrap();
         assert_eq!(value["code"], json!("ledger_mismatch"));
         assert_eq!(value["detail"]["expected"], json!(5));

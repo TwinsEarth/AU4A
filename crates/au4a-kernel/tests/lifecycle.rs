@@ -54,7 +54,11 @@ fn competition_degrades_and_recovers_but_never_quarantines() {
         let _ = i;
     }
     assert_eq!(k.lifecycle_of(&did).unwrap().state(), AgentState::Degraded);
-    assert_eq!(k.lifecycles().count(AgentState::Quarantined), 0, "竞争不隔离");
+    assert_eq!(
+        k.lifecycles().count(AgentState::Quarantined),
+        0,
+        "竞争不隔离"
+    );
 
     // 恢复不需要任何外部批准。
     let recovered = k.apply_lifecycle(&did, LifecycleEvent::Recovered).unwrap();
@@ -68,7 +72,12 @@ fn competition_degrades_and_recovers_but_never_quarantines() {
         let outcome = probe
             .apply_lifecycle(&target, LifecycleEvent::Refused(*code))
             .unwrap();
-        assert_ne!(outcome.to, AgentState::Quarantined, "{} 不能隔离", code.as_str());
+        assert_ne!(
+            outcome.to,
+            AgentState::Quarantined,
+            "{} 不能隔离",
+            code.as_str()
+        );
         assert_eq!(outcome.to, AgentState::Degraded);
     }
 }
@@ -98,7 +107,11 @@ fn misconduct_evidence_quarantines_and_only_a_council_reprieve_restores() {
         .apply_lifecycle(&offender.did(), LifecycleEvent::Refused(code))
         .unwrap();
     assert_eq!(outcome.to, AgentState::Quarantined);
-    assert!(k.lifecycle_of(&offender.did()).unwrap().state().is_restricted());
+    assert!(k
+        .lifecycle_of(&offender.did())
+        .unwrap()
+        .state()
+        .is_restricted());
 
     // 委员会通过的解除隔离决定是唯一出口。
     let motion = Motion::new(
@@ -116,7 +129,10 @@ fn misconduct_evidence_quarantines_and_only_a_council_reprieve_restores() {
         verdict: Verdict::Upheld,
         at: 2,
     };
-    let applied = k.apply_council_decision(&motion, &decision).unwrap().unwrap();
+    let applied = k
+        .apply_council_decision(&motion, &decision)
+        .unwrap()
+        .unwrap();
     assert!(applied.applied);
     assert_eq!(applied.to, AgentState::Active);
 
@@ -125,7 +141,10 @@ fn misconduct_evidence_quarantines_and_only_a_council_reprieve_restores() {
         verdict: Verdict::Rejected,
         ..decision.clone()
     };
-    assert!(k.apply_council_decision(&motion, &rejected).unwrap().is_none());
+    assert!(k
+        .apply_council_decision(&motion, &rejected)
+        .unwrap()
+        .is_none());
     // 决定与动议不匹配是调用错误。
     let mut wrong = decision.clone();
     wrong.subject = keys(191).did();
@@ -151,7 +170,10 @@ fn a_council_quarantine_motion_quarantines_the_subject() {
         verdict: Verdict::Upheld,
         at: 2,
     };
-    let outcome = k.apply_council_decision(&motion, &decision).unwrap().unwrap();
+    let outcome = k
+        .apply_council_decision(&motion, &decision)
+        .unwrap()
+        .unwrap();
     assert_eq!(outcome.to, AgentState::Quarantined);
     assert_eq!(k.lifecycles().count(AgentState::Quarantined), 1);
     assert_eq!(k.lifecycles().count(AgentState::Active), 2);
@@ -176,7 +198,11 @@ fn retired_is_terminal_at_the_kernel_level() {
         assert_eq!(outcome.to, AgentState::Retired);
     }
     // 重复退役是幂等的。
-    assert!(k.apply_lifecycle(&did, LifecycleEvent::Retired).unwrap().applied);
+    assert!(
+        k.apply_lifecycle(&did, LifecycleEvent::Retired)
+            .unwrap()
+            .applied
+    );
 }
 
 #[test]
@@ -188,9 +214,12 @@ fn unknown_agents_cannot_be_moved_and_replay_is_reproducible() {
     let run = || {
         let mut k = seeded(2);
         let did = keys(190).did();
-        k.apply_lifecycle(&did, LifecycleEvent::WorkStarted).unwrap();
-        k.apply_lifecycle(&did, LifecycleEvent::WorkFinished).unwrap();
-        k.apply_lifecycle(&did, LifecycleEvent::Refused(RefusalCode::Timeout)).unwrap();
+        k.apply_lifecycle(&did, LifecycleEvent::WorkStarted)
+            .unwrap();
+        k.apply_lifecycle(&did, LifecycleEvent::WorkFinished)
+            .unwrap();
+        k.apply_lifecycle(&did, LifecycleEvent::Refused(RefusalCode::Timeout))
+            .unwrap();
         k.apply_lifecycle(&did, LifecycleEvent::Recovered).unwrap();
         k.lifecycles().fingerprint().unwrap()
     };

@@ -79,7 +79,10 @@ impl ReputationLedger {
 
     /// 全部信誉之和（观察层看整体协作氛围；不含任何 DID）。
     pub fn total(&self) -> i64 {
-        self.scores.values().copied().fold(0i64, |a, b| a.saturating_add(b))
+        self.scores
+            .values()
+            .copied()
+            .fold(0i64, |a, b| a.saturating_add(b))
     }
 
     pub fn peers(&self) -> Vec<Did> {
@@ -306,9 +309,7 @@ impl LearningModel {
             .config
             .momentum_bp
             .saturating_mul(self.momentum_price_bp)
-            .saturating_add(
-                (10_000 - self.config.momentum_bp).saturating_mul(step),
-            )
+            .saturating_add((10_000 - self.config.momentum_bp).saturating_mul(step))
             / 10_000;
         // 4) 漂移钳制
         let drift_clamped = momentum.abs() > self.config.max_drift_bp;
@@ -528,7 +529,10 @@ impl LearningModel {
         let reputation_ok = rep.score_of(&a) == REPUTATION_MIN
             && rep.score_of(&b) == 5 * REPUTATION_SUCCESS
             && rep.clamped() > 0
-            && rep.public_json().map(|v| !v.to_string().contains("did:au4a:")).unwrap_or(false);
+            && rep
+                .public_json()
+                .map(|v| !v.to_string().contains("did:au4a:"))
+                .unwrap_or(false);
         checks.push(crate::check(
             "model.reputation_bounded_and_local",
             reputation_ok,

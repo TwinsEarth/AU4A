@@ -44,11 +44,11 @@ pub use integrity::{
     FindingCode, NodeAudit, StoreReport, ZoneReport,
 };
 pub use perf::{
-    generation_write_estimate, materialize, measure_receive, measure_transfer, plan, resume_savings,
-    DigestCache, DeltaPlan, WorkCounter,
+    generation_write_estimate, materialize, measure_receive, measure_transfer, plan,
+    resume_savings, DeltaPlan, DigestCache, WorkCounter,
 };
 pub use recovery::{
-    migrate, generation_prefix, CommitReceipt, ConfirmReceipt, FaultInjector, FaultPoint,
+    generation_prefix, migrate, CommitReceipt, ConfirmReceipt, FaultInjector, FaultPoint,
     Migration, MigrationOutcome, MigrationPlan, MigrationReport, NodeStore, Phase, PrepareReceipt,
     HEAD_KEY, INTENT_KEY,
 };
@@ -66,7 +66,7 @@ pub use transfer::{
     MAX_FRAME,
 };
 pub use udos::{
-    bundle_fingerprint, contract_descriptor, context_to_transfer_bundle, delta_to_object,
+    bundle_fingerprint, context_to_transfer_bundle, contract_descriptor, delta_to_object,
     digest_of, object_to_delta, object_to_snapshot, snapshot_to_object, transfer_bundle_to_blocks,
     UdosObject, BUNDLE_FIELDS, SCHEMA as UDOS_SCHEMA,
 };
@@ -91,8 +91,16 @@ fn track_agent() -> AgentKeys {
 /// 造一份确定性的三区样例状态（测试、自检、演练共用，避免三处漂移）。
 pub fn sample_state() -> CoreResult<Vec<StateBlock>> {
     Ok(vec![
-        StateBlock::new(StateZone::Fs, "/work/notes.md", json!({"sha256": "00ff", "bytes": 42}))?,
-        StateBlock::new(StateZone::Fs, "/work/plan.json", json!({"steps": [1, 2, 3]}))?,
+        StateBlock::new(
+            StateZone::Fs,
+            "/work/notes.md",
+            json!({"sha256": "00ff", "bytes": 42}),
+        )?,
+        StateBlock::new(
+            StateZone::Fs,
+            "/work/plan.json",
+            json!({"steps": [1, 2, 3]}),
+        )?,
         StateBlock::new(StateZone::Memory, "last_task", json!("translate.en-zh"))?,
         StateBlock::new(StateZone::Memory, "scratch", json!({"counter": 7}))?,
         StateBlock::new(
@@ -100,7 +108,11 @@ pub fn sample_state() -> CoreResult<Vec<StateBlock>> {
             "goal",
             json!({"text": "从节点 A 迁到节点 B", "priority": 3}),
         )?,
-        StateBlock::new(StateZone::Context, "todo", json!(["capture", "sign", "transfer"]))?,
+        StateBlock::new(
+            StateZone::Context,
+            "todo",
+            json!(["capture", "sign", "transfer"]),
+        )?,
     ])
 }
 
@@ -232,7 +244,10 @@ fn check_store_roundtrip() -> SelfCheck {
         Ok((before, after, cb, ca, written)) if before == after && cb == ca => SelfCheck::pass(
             TRACK,
             name,
-            format!("写入 {written} 块；同源 root 一致 {}；换节点 content_root 一致", short(&before)),
+            format!(
+                "写入 {written} 块；同源 root 一致 {}；换节点 content_root 一致",
+                short(&before)
+            ),
         ),
         Ok((before, after, cb, ca, _)) => SelfCheck::fail(
             TRACK,
@@ -272,7 +287,11 @@ fn sample_snapshot(agent: &Did) -> CoreResult<StateSnapshot> {
 fn evolved_state() -> CoreResult<Vec<StateBlock>> {
     Ok(vec![
         // fs：改一块、删一块
-        StateBlock::new(StateZone::Fs, "/work/notes.md", json!({"sha256": "11aa", "bytes": 77}))?,
+        StateBlock::new(
+            StateZone::Fs,
+            "/work/notes.md",
+            json!({"sha256": "11aa", "bytes": 77}),
+        )?,
         // memory：改一块、加一块
         StateBlock::new(StateZone::Memory, "last_task", json!("summarize.zh-en"))?,
         StateBlock::new(StateZone::Memory, "plan_version", json!(2))?,
@@ -295,7 +314,12 @@ fn check_delta_three_zones() -> SelfCheck {
         let delta = StateDelta::between(&from, &to)?;
         let applied = delta.apply_to(&from)?;
         let same = applied.content_root()? == to.content_root()?;
-        Ok((delta.per_zone(), same, to.content_root()?, applied.content_root()?))
+        Ok((
+            delta.per_zone(),
+            same,
+            to.content_root()?,
+            applied.content_root()?,
+        ))
     })();
     match result {
         Ok((per_zone, true, expect, _got)) => {
@@ -345,8 +369,7 @@ fn check_transfer_resumable() -> SelfCheck {
         send_chunks(&mut net, &na, &nb, &delta, 2, 2, usize::MAX)?;
         let dropped = net.drop_pending(&nb)?;
         send_chunks(&mut net, &na, &nb, &delta, 2, resumed_from, usize::MAX)?;
-        let (session, accepted_b, duplicates) =
-            pull_into_session(&mut net, &nb, Some(session))?;
+        let (session, accepted_b, duplicates) = pull_into_session(&mut net, &nb, Some(session))?;
         let rebuilt = session.assemble(chunks.len(), agent.did())?;
         let applied = rebuilt.apply_to(&from)?;
         Ok((
@@ -389,11 +412,7 @@ fn check_stale_base_refused() -> SelfCheck {
         Ok((wrong_base, right_base))
     })();
     match result {
-        Ok((true, true)) => SelfCheck::pass(
-            TRACK,
-            name,
-            "错误 base 返回 Err；正确 base 应用成功",
-        ),
+        Ok((true, true)) => SelfCheck::pass(TRACK, name, "错误 base 返回 Err；正确 base 应用成功"),
         Ok((wrong, right)) => SelfCheck::fail(
             TRACK,
             name,
@@ -453,7 +472,9 @@ fn check_digest_cache_reuse() -> SelfCheck {
         Ok((f, s, t, ok, bp)) => SelfCheck::fail(
             TRACK,
             name,
-            format!("首次={f} 二次={s} 改一块={t} 一致={ok} 复用率={bp}bp（期望 f/0/1/true/10000）"),
+            format!(
+                "首次={f} 二次={s} 改一块={t} 一致={ok} 复用率={bp}bp（期望 f/0/1/true/10000）"
+            ),
         ),
         Err(e) => SelfCheck::fail(TRACK, name, format!("缓存核算失败: {e}")),
     }
@@ -683,14 +704,21 @@ fn check_udos_contract_roundtrip() -> SelfCheck {
         let back = object_to_snapshot(&object)?;
         let bundle = context_to_transfer_bundle(&snapshot)?;
         let bundle_back = transfer_bundle_to_blocks(&bundle)?;
-        let rebuilt =
-            StateSnapshot::capture(&keys.did(), snapshot.source_node(), snapshot.epoch(), bundle_back)?;
+        let rebuilt = StateSnapshot::capture(
+            &keys.did(),
+            snapshot.source_node(),
+            snapshot.epoch(),
+            bundle_back,
+        )?;
         let fixed_point = context_to_transfer_bundle(&rebuilt)? == bundle;
         Ok((
             validated.object_id == object["object_id"].as_str().unwrap_or_default(),
             back.content_root()? == snapshot.content_root()?,
             object["object_id"].as_str().unwrap_or_default().to_string(),
-            contract_descriptor()["digest"].as_str().unwrap_or_default().to_string(),
+            contract_descriptor()["digest"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
             fixed_point,
         ))
     })();
@@ -896,7 +924,10 @@ fn check_two_phase_commit() -> SelfCheck {
         Ok((true, live, target, 0, true)) if live == target => SelfCheck::pass(
             TRACK,
             name,
-            format!("prepare→commit→confirm 成功，live={}，无孤儿代、无意图残留", short(&live)),
+            format!(
+                "prepare→commit→confirm 成功，live={}，无孤儿代、无意图残留",
+                short(&live)
+            ),
         ),
         Ok((confirmed, live, target, orphans, clean)) => SelfCheck::fail(
             TRACK,
@@ -943,7 +974,9 @@ fn check_rollback_leaves_no_partial_state() -> SelfCheck {
         Ok((checked, restored, no_orphans))
     })();
     match result {
-        Ok((checked, restored, true)) if checked == FaultPoint::ALL.len() && restored == checked => {
+        Ok((checked, restored, true))
+            if checked == FaultPoint::ALL.len() && restored == checked =>
+        {
             SelfCheck::pass(
                 TRACK,
                 name,
@@ -976,10 +1009,10 @@ fn check_signature_tamper_refused() -> SelfCheck {
             &keys,
         )?;
         other.verify()?;
-        let policy = SnapshotPolicy::for_agent(keys.did())
-            .expecting_content_root(snap.content_root()?);
-        let replaced_refused = other.verify_policy(&policy).is_err()
-            && signed.verify_policy(&policy).is_ok();
+        let policy =
+            SnapshotPolicy::for_agent(keys.did()).expecting_content_root(snap.content_root()?);
+        let replaced_refused =
+            other.verify_policy(&policy).is_err() && signed.verify_policy(&policy).is_ok();
         // 3) 篡改块内容（保留旧签名）→ 反序列化即拒。
         let mut tampered = signed.to_value()?;
         if let Some(first) = tampered["snapshot"]["blocks"]
@@ -1033,11 +1066,9 @@ fn check_signature_identity_bound() -> SelfCheck {
         Ok((cross_sign_refused, forged_refused, impersonation_refused))
     })();
     match result {
-        Ok((true, true, true)) => SelfCheck::pass(
-            TRACK,
-            name,
-            "替签 / 伪造 signer / 冒名状态三条路径全部被拒",
-        ),
+        Ok((true, true, true)) => {
+            SelfCheck::pass(TRACK, name, "替签 / 伪造 signer / 冒名状态三条路径全部被拒")
+        }
         Ok((a, b, c)) => SelfCheck::fail(
             TRACK,
             name,
@@ -1092,7 +1123,12 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     let keys = track_agent();
     let did = keys.did();
     if kernel.card(&did).is_none() {
-        kernel.register(&keys, "state-carrier", &["state.snapshot"], au4a_core::Credits(20))?;
+        kernel.register(
+            &keys,
+            "state-carrier",
+            &["state.snapshot"],
+            au4a_core::Credits(20),
+        )?;
     }
     let epoch = kernel.tick();
 
@@ -1131,7 +1167,9 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     net.deliver(&na, &nb, signed.to_frame()?)?;
     let inbound = net.take(&nb)?;
     let received = SignedSnapshot::from_frame(
-        inbound.first().ok_or(au4a_core::CoreError::FrameTruncated)?,
+        inbound
+            .first()
+            .ok_or(au4a_core::CoreError::FrameTruncated)?,
     )?;
     let policy = SnapshotPolicy::for_agent(did.clone())
         .expecting_content_root(after.content_root()?)
@@ -1214,7 +1252,9 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     )?;
     let rollback_clean = !rolled_back.is_confirmed()
         && rollback_node.live_content_root()? == base_root
-        && rollback_node.orphan_generations(rollback_node.head()?)?.is_empty();
+        && rollback_node
+            .orphan_generations(rollback_node.head()?)?
+            .is_empty();
     if rollback_clean {
         // 注入的故障是竞争/容量语义，不是恶意：记一条可重试的拒绝。
         kernel.refuse(
@@ -1255,9 +1295,21 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     // 10) 性能核算：同一状态的二次捕获必须全部命中摘要缓存；续跑必须省下操作。
     let mut cache = DigestCache::new();
     let mut perf_first = WorkCounter::new();
-    let _ = cache.capture_raw(&did, "node-a", epoch, state_as_raw(sample_state()?), &mut perf_first)?;
+    let _ = cache.capture_raw(
+        &did,
+        "node-a",
+        epoch,
+        state_as_raw(sample_state()?),
+        &mut perf_first,
+    )?;
     let mut perf_second = WorkCounter::new();
-    let _ = cache.capture_raw(&did, "node-a", epoch, state_as_raw(sample_state()?), &mut perf_second)?;
+    let _ = cache.capture_raw(
+        &did,
+        "node-a",
+        epoch,
+        state_as_raw(sample_state()?),
+        &mut perf_second,
+    )?;
     let mut perf_work = WorkCounter::new();
     let mut perf_net = LocalNetwork::new(&[na.clone(), nb.clone()]);
     send_chunks(&mut perf_net, &na, &nb, &delta, 2, 0, 2)?;
@@ -1568,10 +1620,16 @@ mod tests {
         assert_eq!(a["signature"]["sig_len"], json!(128));
         assert_eq!(a["signature"]["content_root"], a["target_content_root"]);
         assert_eq!(a["two_phase"]["committed"], json!(true));
-        assert_eq!(a["two_phase"]["target_live_content_root"], a["target_content_root"]);
+        assert_eq!(
+            a["two_phase"]["target_live_content_root"],
+            a["target_content_root"]
+        );
         assert_eq!(a["two_phase"]["orphan_generations"], json!(0));
         assert_eq!(a["two_phase"]["rollback_clean"], json!(true));
-        assert_eq!(a["two_phase"]["rollback_live_content_root"], a["before_content_root"]);
+        assert_eq!(
+            a["two_phase"]["rollback_live_content_root"],
+            a["before_content_root"]
+        );
         assert_eq!(a["consistency"]["identical"], json!(true));
         assert_eq!(a["consistency"]["changed_blocks"], json!(0));
         assert_eq!(a["consistency"]["node_findings"], json!(0));

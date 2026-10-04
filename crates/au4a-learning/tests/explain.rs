@@ -66,13 +66,41 @@ fn explanation_implies_exactly_what_adjust_does() {
     let violations = ViolationLog::new();
 
     let cases = [
-        ("远低于目标 → 降价", Signals { accept_rate_bp: Some(1_000), ..base_signals() }),
-        ("略低于死区外 → 降价", Signals { accept_rate_bp: Some(7_500), ..base_signals() }),
-        ("死区内 → 停手", Signals { accept_rate_bp: Some(8_600), ..base_signals() }),
-        ("高于目标 → 提价", Signals { accept_rate_bp: Some(9_800), ..base_signals() }),
+        (
+            "远低于目标 → 降价",
+            Signals {
+                accept_rate_bp: Some(1_000),
+                ..base_signals()
+            },
+        ),
+        (
+            "略低于死区外 → 降价",
+            Signals {
+                accept_rate_bp: Some(7_500),
+                ..base_signals()
+            },
+        ),
+        (
+            "死区内 → 停手",
+            Signals {
+                accept_rate_bp: Some(8_600),
+                ..base_signals()
+            },
+        ),
+        (
+            "高于目标 → 提价",
+            Signals {
+                accept_rate_bp: Some(9_800),
+                ..base_signals()
+            },
+        ),
         (
             "信誉下降 → 冻结涨价",
-            Signals { accept_rate_bp: Some(9_800), reputation_delta: -40, ..base_signals() },
+            Signals {
+                accept_rate_bp: Some(9_800),
+                reputation_delta: -40,
+                ..base_signals()
+            },
         ),
         (
             "收益显著下滑 → 反向",
@@ -105,8 +133,7 @@ fn explanation_implies_exactly_what_adjust_does() {
         // 任务偏好：解释蕴含的增量必须逐项等于实际移动
         for b in &e.task_biases {
             let before = params.bias_of_task(&b.target);
-            let after =
-                (before + b.implied_delta_bp).clamp(bounds.bias_min_bp, bounds.bias_max_bp);
+            let after = (before + b.implied_delta_bp).clamp(bounds.bias_min_bp, bounds.bias_max_bp);
             let moved = a.task_bias_moved_bp.get(&b.target).copied().unwrap_or(0);
             assert_eq!(after - before, moved, "{label}：{b:?}");
         }
@@ -121,8 +148,8 @@ fn explanation_implies_exactly_what_adjust_does() {
                     .unwrap();
                 let peer = report.per_peer[idx].peer.clone();
                 let before = params.bias_of_peer(&peer);
-                let after = (before + b.implied_delta_bp)
-                    .clamp(bounds.bias_min_bp, bounds.bias_max_bp);
+                let after =
+                    (before + b.implied_delta_bp).clamp(bounds.bias_min_bp, bounds.bias_max_bp);
                 let moved = a.peer_bias_moved_bp.get(&peer).copied().unwrap_or(0);
                 assert_eq!(after - before, moved, "{label}：协作者 {b:?}");
             }
@@ -156,8 +183,16 @@ fn explanations_are_derived_from_the_data() {
     assert_eq!(e.price.implied_move_bp, -500);
 
     // 任务解释：好类型评分更高 → 正增量；坏类型 → 负增量；且引用样本数
-    let good = e.task_biases.iter().find(|b| b.target == "good.type").unwrap();
-    let bad = e.task_biases.iter().find(|b| b.target == "bad.type").unwrap();
+    let good = e
+        .task_biases
+        .iter()
+        .find(|b| b.target == "good.type")
+        .unwrap();
+    let bad = e
+        .task_biases
+        .iter()
+        .find(|b| b.target == "bad.type")
+        .unwrap();
     assert!(good.score_bp > bad.score_bp);
     assert!(good.implied_delta_bp > 0 && bad.implied_delta_bp < 0);
     assert!(good.reason.contains("样本 8 条"));
@@ -177,8 +212,17 @@ fn explanations_are_derived_from_the_data() {
     let mut thin = ExperienceStore::new(8).unwrap();
     let context = "ctx-thin".to_string();
     thin.record(
-        Experience::new("t-1", "thin.type", &context, "d", Outcome::Success, Credits(1), 1, &peers[..1])
-            .unwrap(),
+        Experience::new(
+            "t-1",
+            "thin.type",
+            &context,
+            "d",
+            Outcome::Success,
+            Credits(1),
+            1,
+            &peers[..1],
+        )
+        .unwrap(),
     )
     .unwrap();
     let thin_report = FeedbackAnalyser::analyse(&thin).unwrap();
@@ -186,7 +230,11 @@ fn explanations_are_derived_from_the_data() {
         &params,
         &thin_report,
         &ViolationLog::new(),
-        &Signals { sample: 1, confidence_bp: 2_500, ..base_signals() },
+        &Signals {
+            sample: 1,
+            confidence_bp: 2_500,
+            ..base_signals()
+        },
         &PolicyBounds::default(),
         &PolicyTargets::default(),
     )
@@ -241,7 +289,10 @@ fn explanation_respects_bounds_and_reputation_guard() {
         task_bias_bp: std::collections::BTreeMap::new(),
         peer_bias_bp: std::collections::BTreeMap::new(),
     };
-    let signals = Signals { accept_rate_bp: Some(9_900), ..base_signals() };
+    let signals = Signals {
+        accept_rate_bp: Some(9_900),
+        ..base_signals()
+    };
     let e = explain(
         &params,
         &report,

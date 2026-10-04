@@ -13,7 +13,8 @@ fn seeded_kernel(n: u8) -> Kernel {
     let mut k = Kernel::new(KernelConfig::default());
     for i in 0..n {
         let keys = AgentKeys::from_seed(&[40 + i; 32]);
-        k.register(&keys, format!("agent-{i}"), &["x"], Credits(20)).unwrap();
+        k.register(&keys, format!("agent-{i}"), &["x"], Credits(20))
+            .unwrap();
     }
     k
 }
@@ -64,7 +65,12 @@ fn only_misconduct_evidence_can_produce_a_quarantine_motion() {
     let target = keys(3).did();
     for _ in 0..au4a_core::refusal::REPEAT_THRESHOLD {
         assert!(k
-            .settle(&racer.did(), &target, Credits(1), au4a_core::EvidenceGrade::Unverified)
+            .settle(
+                &racer.did(),
+                &target,
+                Credits(1),
+                au4a_core::EvidenceGrade::Unverified
+            )
             .is_err());
     }
 
@@ -77,7 +83,10 @@ fn only_misconduct_evidence_can_produce_a_quarantine_motion() {
     assert_eq!(quarantine[0].subject, offender.did());
     assert_eq!(quarantine[0].cause, RefusalCode::Unauthorized);
 
-    let warn: Vec<&Motion> = motions.iter().filter(|m| m.kind == MotionKind::Warn).collect();
+    let warn: Vec<&Motion> = motions
+        .iter()
+        .filter(|m| m.kind == MotionKind::Warn)
+        .collect();
     assert_eq!(warn.len(), 1);
     assert_eq!(warn[0].subject, racer.did());
     assert_eq!(warn[0].cause, RefusalCode::PolicyDenied);
@@ -118,7 +127,11 @@ fn the_council_reaches_a_verdict_by_quorum_and_records_it() {
             .vote(Vote {
                 voter: voter.clone(),
                 motion: motion.id.clone(),
-                ballot: if i < 3 { Ballot::Uphold } else { Ballot::Reject },
+                ballot: if i < 3 {
+                    Ballot::Uphold
+                } else {
+                    Ballot::Reject
+                },
                 at: i as u64,
             })
             .unwrap();
@@ -160,7 +173,9 @@ fn non_members_and_double_voters_are_refused_with_named_failures() {
         }),
         Err(CouncilFailure::NonMemberVote)
     );
-    assert!(CouncilFailure::NonMemberVote.to_refusal_code().is_misconduct());
+    assert!(CouncilFailure::NonMemberVote
+        .to_refusal_code()
+        .is_misconduct());
 
     let member = council.members()[0].clone();
     assert!(council
@@ -180,7 +195,9 @@ fn non_members_and_double_voters_are_refused_with_named_failures() {
         }),
         Err(CouncilFailure::DuplicateVote)
     );
-    assert!(CouncilFailure::DuplicateVote.to_refusal_code().is_misconduct());
+    assert!(CouncilFailure::DuplicateVote
+        .to_refusal_code()
+        .is_misconduct());
     assert_eq!(council.failures().len(), 2);
 
     // 竞争型失败模式不会变成恶意码。
@@ -191,7 +208,11 @@ fn non_members_and_double_voters_are_refused_with_named_failures() {
         CouncilFailure::TieInsufficient,
         CouncilFailure::EmptyCouncil,
     ] {
-        assert!(!failure.to_refusal_code().is_misconduct(), "{}", failure.as_str());
+        assert!(
+            !failure.to_refusal_code().is_misconduct(),
+            "{}",
+            failure.as_str()
+        );
     }
 }
 
@@ -203,5 +224,8 @@ fn a_council_without_agents_cannot_decide_anything() {
     let tally = council.tally("any");
     assert_eq!(tally.failure, Some(CouncilFailure::EmptyCouncil));
     assert_eq!(tally.verdict, Verdict::Inconclusive);
-    assert_eq!(CouncilFailure::EmptyCouncil.to_refusal_code(), RefusalCode::Degraded);
+    assert_eq!(
+        CouncilFailure::EmptyCouncil.to_refusal_code(),
+        RefusalCode::Degraded
+    );
 }

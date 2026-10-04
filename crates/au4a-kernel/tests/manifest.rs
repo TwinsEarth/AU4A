@@ -16,7 +16,11 @@ fn the_manifest_lists_exactly_the_official_ten_versions() {
     assert_eq!(manifest.crate_name, "au4a-kernel");
     assert_eq!(manifest.range, "v1.0.1 → v1.0.10");
     assert_eq!(manifest.versions.len(), 10);
-    let ids: Vec<&str> = manifest.versions.iter().map(|v| v.version.as_str()).collect();
+    let ids: Vec<&str> = manifest
+        .versions
+        .iter()
+        .map(|v| v.version.as_str())
+        .collect();
     assert_eq!(ids, VERSION_ORDER.to_vec());
     assert!(manifest.all_done());
     assert!(manifest.version("v1.0.10").is_some());
@@ -34,12 +38,20 @@ fn every_version_carries_goal_deliverables_interfaces_acceptance_and_evidence() 
         assert_eq!(spec.status, "done");
         assert_eq!(spec.evidence.grade, "verified");
         assert!(spec.evidence.test_command.contains("au4a-kernel"));
-        assert!(!spec.evidence.notes.is_empty(), "{} 证据必须写清来源", spec.version);
+        assert!(
+            !spec.evidence.notes.is_empty(),
+            "{} 证据必须写清来源",
+            spec.version
+        );
     }
     // 证据链是递增的：后面版本包含前面版本的全部测试。
     let mut last = 0;
     for spec in &manifest.versions {
-        assert!(spec.evidence.tests_total >= last, "{} 测试数回退", spec.version);
+        assert!(
+            spec.evidence.tests_total >= last,
+            "{} 测试数回退",
+            spec.version
+        );
         last = spec.evidence.tests_total;
     }
 }
@@ -47,7 +59,11 @@ fn every_version_carries_goal_deliverables_interfaces_acceptance_and_evidence() 
 #[test]
 fn validation_is_green_and_rejects_a_tampered_manifest() {
     let checks = validate_manifest(&track_manifest());
-    assert!(all_passed(&checks), "{:?}", checks.iter().filter(|c| !c.passed).collect::<Vec<_>>());
+    assert!(
+        all_passed(&checks),
+        "{:?}",
+        checks.iter().filter(|c| !c.passed).collect::<Vec<_>>()
+    );
     assert!(manifest_is_valid());
     assert!(checks.iter().any(|c| c.name == "manifest.roundtrip"));
 
@@ -58,7 +74,9 @@ fn validation_is_green_and_rejects_a_tampered_manifest() {
     }
     let checks = validate_manifest(&broken);
     assert!(!all_passed(&checks));
-    assert!(checks.iter().any(|c| c.name == "manifest.fields" && !c.passed));
+    assert!(checks
+        .iter()
+        .any(|c| c.name == "manifest.fields" && !c.passed));
 
     // 篡改：版本号写错 → 顺序检查必须报 fail。
     let mut reordered = track_manifest();
@@ -66,13 +84,19 @@ fn validation_is_green_and_rejects_a_tampered_manifest() {
         spec.version = "v9.9.9".to_string();
     }
     let checks = validate_manifest(&reordered);
-    assert!(checks.iter().any(|c| c.name == "manifest.order" && !c.passed));
+    assert!(checks
+        .iter()
+        .any(|c| c.name == "manifest.order" && !c.passed));
 }
 
 #[test]
 fn the_track_self_check_and_results_aggregate_the_manifest() {
     let checks = self_check();
-    assert!(all_passed(&checks), "{:?}", checks.iter().filter(|c| !c.passed).collect::<Vec<_>>());
+    assert!(
+        all_passed(&checks),
+        "{:?}",
+        checks.iter().filter(|c| !c.passed).collect::<Vec<_>>()
+    );
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     for expected in [
         "track.wired",

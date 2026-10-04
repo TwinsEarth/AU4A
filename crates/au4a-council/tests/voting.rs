@@ -34,7 +34,9 @@ fn scene(n: u8, kind: CommitteeKind) -> Scene {
     let mut council = Council::new(cfg);
     let agents: Vec<AgentKeys> = (0..n).map(keys).collect();
     for k in &agents {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
         council.note_reputation(&k.did(), 5_000);
         council.note_uptime(&k.did(), 300);
     }
@@ -50,19 +52,32 @@ fn scene(n: u8, kind: CommitteeKind) -> Scene {
         &agents[0],
         kind,
         format!("动议 n={n}"),
-        Action::SetPolicy { key: String::from("k"), value: 1 },
+        Action::SetPolicy {
+            key: String::from("k"),
+            value: 1,
+        },
     )
     .expect("draft");
-    let proposal = council.propose(&mut kernel, &author, draft).expect("propose");
+    let proposal = council
+        .propose(&mut kernel, &author, draft)
+        .expect("propose");
 
-    Scene { kernel, council, agents, proposal: proposal.id }
+    Scene {
+        kernel,
+        council,
+        agents,
+        proposal: proposal.id,
+    }
 }
 
 #[test]
 fn quorum_is_n_minus_f_and_exactly_decides() {
     // n = 4 → f = 1、quorum = 3。
     let mut s = scene(4, CommitteeKind::Task);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
     assert_eq!(round.tally.n, 4);
     assert_eq!(round.tally.f, 1);
     assert_eq!(round.tally.quorum, 3);
@@ -97,8 +112,14 @@ fn quorum_is_n_minus_f_and_exactly_decides() {
 fn seven_member_committee_needs_five_and_tolerates_two_faults() {
     // n = 7 = 3f+1 → f = 2、quorum = 5 = 2f+1；缺席 2 人仍可出结论。
     let mut s = scene(7, CommitteeKind::Evolution);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
-    assert_eq!((round.tally.n, round.tally.f, round.tally.quorum), (7, 2, 5));
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
+    assert_eq!(
+        (round.tally.n, round.tally.f, round.tally.quorum),
+        (7, 2, 5)
+    );
     let mut last = round.clone();
     for i in 0..5 {
         let v = Vote::cast(&s.agents[i], &s.proposal, round.round, Choice::Yes).expect("cast");
@@ -106,13 +127,19 @@ fn seven_member_committee_needs_five_and_tolerates_two_faults() {
     }
     assert_eq!(last.outcome, RoundOutcome::Passed);
     assert_eq!(last.tally.participation, 5);
-    assert!(last.tally.participation < last.tally.n, "2 名委员缺席仍出结论");
+    assert!(
+        last.tally.participation < last.tally.n,
+        "2 名委员缺席仍出结论"
+    );
 }
 
 #[test]
 fn enough_no_votes_reject_the_motion() {
     let mut s = scene(4, CommitteeKind::Task);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
     let mut last = round.clone();
     for i in 0..3 {
         let v = Vote::cast(&s.agents[i], &s.proposal, round.round, Choice::No).expect("cast");
@@ -129,7 +156,10 @@ fn enough_no_votes_reject_the_motion() {
 #[test]
 fn abstentions_never_produce_a_conclusion() {
     let mut s = scene(4, CommitteeKind::Task);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
     let mut last = round.clone();
     for k in s.agents.iter() {
         let v = Vote::cast(k, &s.proposal, round.round, Choice::Abstain).expect("cast");
@@ -147,7 +177,10 @@ fn abstentions_never_produce_a_conclusion() {
 #[test]
 fn a_duplicate_vote_in_the_same_round_is_refused_and_the_round_survives() {
     let mut s = scene(4, CommitteeKind::Task);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
     let v = Vote::cast(&s.agents[0], &s.proposal, round.round, Choice::Yes).expect("cast");
     s.council.cast_vote(&mut s.kernel, v).expect("first");
 
@@ -166,13 +199,19 @@ fn a_duplicate_vote_in_the_same_round_is_refused_and_the_round_survives() {
         .refusals()
         .iter()
         .any(|(_, r)| r.code == RefusalCode::Conflict));
-    assert!(!RefusalCode::Conflict.is_misconduct(), "重复票按竞争语义分类");
+    assert!(
+        !RefusalCode::Conflict.is_misconduct(),
+        "重复票按竞争语义分类"
+    );
 }
 
 #[test]
 fn an_ambiguous_double_vote_voids_the_whole_round() {
     let mut s = scene(4, CommitteeKind::Task);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
     // 先投 2 张赞成（离法定人数只差 1）。
     for i in 0..2 {
         let v = Vote::cast(&s.agents[i], &s.proposal, round.round, Choice::Yes).expect("cast");
@@ -198,7 +237,10 @@ fn an_ambiguous_double_vote_voids_the_whole_round() {
         Err(CoreError::InvalidVersion)
     );
     // 重开一轮，这次一帆风顺。
-    let second = s.council.open_round(&mut s.kernel, &s.proposal).expect("reopen");
+    let second = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("reopen");
     assert_eq!(second.round, round.round + 1);
     let mut last = second.clone();
     for i in 0..3 {
@@ -227,7 +269,10 @@ fn non_members_cannot_vote() {
     s.kernel
         .register(&outsider, "outsider", &["governance.vote"], Credits(20))
         .expect("register");
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
     let v = Vote::cast(&outsider, &s.proposal, round.round, Choice::Yes).expect("cast");
     assert_eq!(
         s.council.cast_vote(&mut s.kernel, v),
@@ -241,7 +286,10 @@ fn non_members_cannot_vote() {
 #[test]
 fn forged_votes_and_wrong_rounds_are_refused() {
     let mut s = scene(5, CommitteeKind::Resource);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
 
     // 签名被篡改。
     let mut forged = Vote::cast(&s.agents[0], &s.proposal, round.round, Choice::Yes).expect("cast");
@@ -267,7 +315,10 @@ fn forged_votes_and_wrong_rounds_are_refused() {
 #[test]
 fn a_closed_round_takes_no_more_votes_and_there_is_no_second_conclusion() {
     let mut s = scene(4, CommitteeKind::Task);
-    let round = s.council.open_round(&mut s.kernel, &s.proposal).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &s.proposal)
+        .expect("open");
     let mut last = round.clone();
     for i in 0..3 {
         let v = Vote::cast(&s.agents[i], &s.proposal, round.round, Choice::Yes).expect("cast");
@@ -287,7 +338,8 @@ fn a_closed_round_takes_no_more_votes_and_there_is_no_second_conclusion() {
         Err(CoreError::InvalidKind)
     );
     assert_eq!(
-        s.council.transition_to(&mut s.kernel, &s.proposal, ProposalState::Rejected),
+        s.council
+            .transition_to(&mut s.kernel, &s.proposal, ProposalState::Rejected),
         Err(CoreError::InvalidKind)
     );
     let state = s.council.round(&s.proposal, round.round).expect("round");
@@ -298,7 +350,10 @@ fn a_closed_round_takes_no_more_votes_and_there_is_no_second_conclusion() {
 #[test]
 fn self_check_results_and_scenario_expose_the_vote_math() {
     let checks = au4a_council::self_check();
-    assert!(au4a_core::all_passed(&checks), "self_check 未全绿: {checks:?}");
+    assert!(
+        au4a_core::all_passed(&checks),
+        "self_check 未全绿: {checks:?}"
+    );
     for name in [
         "council.vote.quorum",
         "council.votes.tally_consistent",
@@ -320,6 +375,9 @@ fn self_check_results_and_scenario_expose_the_vote_math() {
     // 达到法定人数（4）即出结论：第 5 名委员的票不再需要，也不会被接受。
     assert_eq!(scenario["voting"]["yes"], 4);
     assert_eq!(scenario["voting"]["quorum"], 4);
-    assert_eq!(scenario["voting"]["voters"].as_array().map(|v| v.len()), Some(4));
+    assert_eq!(
+        scenario["voting"]["voters"].as_array().map(|v| v.len()),
+        Some(4)
+    );
     assert_eq!(scenario["proposals"][0]["state"], "executed");
 }

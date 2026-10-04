@@ -75,7 +75,10 @@ impl TrackManifest {
     }
 
     pub fn total_tests(&self) -> u32 {
-        self.versions.last().map(|v| v.evidence.tests_total).unwrap_or(0)
+        self.versions
+            .last()
+            .map(|v| v.evidence.tests_total)
+            .unwrap_or(0)
     }
 
     pub fn all_done(&self) -> bool {
@@ -368,7 +371,11 @@ pub fn validate_manifest(manifest: &TrackManifest) -> Vec<SelfCheck> {
         SelfCheck::fail(
             track,
             "manifest.version_count",
-            format!("版本数 {} != {}", manifest.versions.len(), VERSION_ORDER.len()),
+            format!(
+                "版本数 {} != {}",
+                manifest.versions.len(),
+                VERSION_ORDER.len()
+            ),
         )
     });
 
@@ -378,12 +385,17 @@ pub fn validate_manifest(manifest: &TrackManifest) -> Vec<SelfCheck> {
         .map(|v| v.version.as_str())
         .eq(VERSION_ORDER.iter().copied());
     checks.push(if order_ok {
-        SelfCheck::pass(track, "manifest.order", "版本顺序与官方一致（v1.0.1 → v1.0.10）")
+        SelfCheck::pass(
+            track,
+            "manifest.order",
+            "版本顺序与官方一致（v1.0.1 → v1.0.10）",
+        )
     } else {
         SelfCheck::fail(track, "manifest.order", "版本顺序或编号与官方不一致")
     });
 
-    let ids_ok = manifest.track == TRACK && manifest.range == RANGE && manifest.medium_title == TITLE;
+    let ids_ok =
+        manifest.track == TRACK && manifest.range == RANGE && manifest.medium_title == TITLE;
     checks.push(if ids_ok {
         SelfCheck::pass(
             track,
@@ -410,10 +422,17 @@ pub fn validate_manifest(manifest: &TrackManifest) -> Vec<SelfCheck> {
         SelfCheck::pass(
             track,
             "manifest.fields",
-            format!("{} 个版本的交付物/接口/验收/目标均非空且 status=done", manifest.versions.len()),
+            format!(
+                "{} 个版本的交付物/接口/验收/目标均非空且 status=done",
+                manifest.versions.len()
+            ),
         )
     } else {
-        SelfCheck::fail(track, "manifest.fields", format!("字段缺失：{incomplete:?}"))
+        SelfCheck::fail(
+            track,
+            "manifest.fields",
+            format!("字段缺失：{incomplete:?}"),
+        )
     });
 
     let bad_evidence: Vec<String> = manifest
@@ -438,7 +457,11 @@ pub fn validate_manifest(manifest: &TrackManifest) -> Vec<SelfCheck> {
             ),
         )
     } else {
-        SelfCheck::fail(track, "manifest.evidence", format!("证据不合格：{bad_evidence:?}"))
+        SelfCheck::fail(
+            track,
+            "manifest.evidence",
+            format!("证据不合格：{bad_evidence:?}"),
+        )
     });
 
     let mut monotonic = true;
@@ -453,7 +476,15 @@ pub fn validate_manifest(manifest: &TrackManifest) -> Vec<SelfCheck> {
         SelfCheck::pass(
             track,
             "manifest.test_growth",
-            format!("测试数单调不减（{} → {}）", manifest.versions.first().map(|v| v.evidence.tests_total).unwrap_or(0), last),
+            format!(
+                "测试数单调不减（{} → {}）",
+                manifest
+                    .versions
+                    .first()
+                    .map(|v| v.evidence.tests_total)
+                    .unwrap_or(0),
+                last
+            ),
         )
     } else {
         SelfCheck::fail(track, "manifest.test_growth", "测试数出现回退")
@@ -510,7 +541,11 @@ mod tests {
             assert!(spec.acceptance.len() >= 3, "{} 验收太少", spec.version);
             assert_eq!(spec.evidence.tests_passed, spec.evidence.tests_total);
             assert!(spec.evidence.tests_total > 0);
-            assert!(EvidenceGrade::parse(&spec.evidence.grade).is_some());            assert!(spec.evidence.test_command.contains("cargo test -p au4a-kernel"));
+            assert!(EvidenceGrade::parse(&spec.evidence.grade).is_some());
+            assert!(spec
+                .evidence
+                .test_command
+                .contains("cargo test -p au4a-kernel"));
         }
         assert!(manifest.total_tests() >= 130);
     }
@@ -519,7 +554,11 @@ mod tests {
     fn validation_passes_and_detects_a_broken_manifest() {
         let manifest = track_manifest();
         let checks = validate_manifest(&manifest);
-        assert!(all_passed(&checks), "{:?}", checks.iter().filter(|c| !c.passed).collect::<Vec<_>>());
+        assert!(
+            all_passed(&checks),
+            "{:?}",
+            checks.iter().filter(|c| !c.passed).collect::<Vec<_>>()
+        );
         assert_eq!(checks.len(), 7);
         assert!(manifest_is_valid());
 
@@ -541,7 +580,9 @@ mod tests {
             first.acceptance.clear();
         }
         let checks = validate_manifest(&empty);
-        assert!(checks.iter().any(|c| c.name == "manifest.fields" && !c.passed));
+        assert!(checks
+            .iter()
+            .any(|c| c.name == "manifest.fields" && !c.passed));
 
         // 证据等级写错 → 必须被发现。
         let mut lying = track_manifest();
@@ -549,7 +590,9 @@ mod tests {
             first.evidence.grade = "trust-me".to_string();
         }
         let checks = validate_manifest(&lying);
-        assert!(checks.iter().any(|c| c.name == "manifest.evidence" && !c.passed));
+        assert!(checks
+            .iter()
+            .any(|c| c.name == "manifest.evidence" && !c.passed));
 
         // 测试数回退 → 必须被发现。
         let mut regressed = track_manifest();
@@ -558,7 +601,9 @@ mod tests {
             regressed.versions[1].evidence.tests_passed = 1;
         }
         let checks = validate_manifest(&regressed);
-        assert!(checks.iter().any(|c| c.name == "manifest.test_growth" && !c.passed));
+        assert!(checks
+            .iter()
+            .any(|c| c.name == "manifest.test_growth" && !c.passed));
     }
 
     #[test]

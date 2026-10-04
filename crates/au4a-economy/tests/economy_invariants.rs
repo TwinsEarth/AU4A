@@ -11,12 +11,12 @@
 
 use au4a_core::{AgentKeys, CoreError, Credits, Did, EvidenceGrade, Ledger};
 use au4a_economy::arbitration::{ArbitrationTerms, Court};
-use au4a_economy::balance::{autostake, check_spend, spend, BalanceManager, BalancePolicy, SpendVerdict};
+use au4a_economy::balance::{
+    autostake, check_spend, spend, BalanceManager, BalancePolicy, SpendVerdict,
+};
 use au4a_economy::fx::{route, ExchangeBook, ExchangeRequest, RouteAction, RouteTable, Urgency};
 use au4a_economy::pricing::{quote, unit_price, PriceInputs, PriceKnobs};
-use au4a_economy::settlement::{
-    split_weights, Beneficiary, DecisionRights, Receipt, RevenueBook,
-};
+use au4a_economy::settlement::{split_weights, Beneficiary, DecisionRights, Receipt, RevenueBook};
 use au4a_economy::stake::{StakeBook, StakeTerms};
 
 /// 确定性线性同余伪随机数：不引入依赖，重放结果完全一致。
@@ -45,7 +45,9 @@ impl Lcg {
 }
 
 fn dids(n: u8) -> Vec<Did> {
-    (0..n).map(|i| AgentKeys::from_seed(&[i + 30; 32]).did()).collect()
+    (0..n)
+        .map(|i| AgentKeys::from_seed(&[i + 30; 32]).did())
+        .collect()
 }
 
 /// 递归断言：投影里没有任何浮点数（字符串里的点号是允许的，数字里的不是）。
@@ -103,17 +105,25 @@ fn run_operation_sequence(seed: u64) -> (String, u64, u64) {
             2 => balances
                 .spend(&mut ledger, &agents[i], &agents[j], amount)
                 .map(|_| ()),
-            3 => balances.autostake(&mut ledger, &agents[i], amount).map(|_| ()),
-            4 => stakes.stake(&mut ledger, &terms, &agents[i], amount).map(|_| ()),
+            3 => balances
+                .autostake(&mut ledger, &agents[i], amount)
+                .map(|_| ()),
+            4 => stakes
+                .stake(&mut ledger, &terms, &agents[i], amount)
+                .map(|_| ()),
             5 => {
                 now += 1;
                 let locked = ledger.balance(&agents[i]).locked;
                 let take = if locked < amount { locked } else { amount };
-                stakes.request_unstake(&terms, &agents[i], take, now).map(|_| ())
+                stakes
+                    .request_unstake(&terms, &agents[i], take, now)
+                    .map(|_| ())
             }
             _ => {
                 now += 1;
-                stakes.release_matured(&mut ledger, &agents[i], now).map(|_| ())
+                stakes
+                    .release_matured(&mut ledger, &agents[i], now)
+                    .map(|_| ())
             }
         };
         if result.is_ok() {
@@ -144,7 +154,10 @@ fn the_operation_sequence_replays_byte_for_byte() {
     assert_eq!(a.0, b.0, "同种子的两次运行必须逐字节一致");
     assert_eq!((a.1, a.2), (b.1, b.2));
     let other = run_operation_sequence(8);
-    assert_ne!(a.0, other.0, "不同种子应给出不同结果（否则测试没在测随机性）");
+    assert_ne!(
+        a.0, other.0,
+        "不同种子应给出不同结果（否则测试没在测随机性）"
+    );
 }
 
 #[test]
@@ -259,10 +272,20 @@ fn penalties_never_exceed_the_locked_balance_across_many_cases() {
             .open(&claimant, &respondent, Credits(claimed), evidence, 1)
             .unwrap();
         court
-            .vote(&case.id, &AgentKeys::from_seed(&[round as u8 + 1; 32]).did(), true, 6_000)
+            .vote(
+                &case.id,
+                &AgentKeys::from_seed(&[round as u8 + 1; 32]).did(),
+                true,
+                6_000,
+            )
             .unwrap();
         court
-            .vote(&case.id, &AgentKeys::from_seed(&[round as u8 + 2; 32]).did(), true, 4_000)
+            .vote(
+                &case.id,
+                &AgentKeys::from_seed(&[round as u8 + 2; 32]).did(),
+                true,
+                4_000,
+            )
             .unwrap();
         let terms = ArbitrationTerms::DEFAULT;
         let ruling = court.rule(&mut ledger, &case.id, &terms, 2).unwrap();
@@ -272,7 +295,10 @@ fn penalties_never_exceed_the_locked_balance_across_many_cases() {
             ruling.slashed
         );
         assert_eq!(ledger.slashed(), ruling.slashed);
-        assert_eq!(ledger.balance(&respondent).locked, Credits(locked - ruling.slashed.get()));
+        assert_eq!(
+            ledger.balance(&respondent).locked,
+            Credits(locked - ruling.slashed.get())
+        );
         if cpu_proto {
             assert!(ruling.slashed <= terms.cpu_proto_cap);
         }
@@ -301,7 +327,10 @@ fn refusals_never_touch_the_ledger() {
         spend(&mut ledger, &agents[0], &agents[1], Credits(600), &policy),
         Err(CoreError::InsufficientFunds)
     );
-    assert_eq!(check_spend(&ledger, &agents[0], Credits(600), &policy).unwrap(), SpendVerdict::BelowReserve);
+    assert_eq!(
+        check_spend(&ledger, &agents[0], Credits(600), &policy).unwrap(),
+        SpendVerdict::BelowReserve
+    );
     // 零额。
     assert_eq!(
         spend(&mut ledger, &agents[0], &agents[1], Credits::ZERO, &policy),
@@ -312,9 +341,13 @@ fn refusals_never_touch_the_ledger() {
         min_stake: Credits(100),
         ..sample_terms()
     };
-    assert!(stakes.stake(&mut ledger, &strict, &agents[0], Credits(50)).is_err());
+    assert!(stakes
+        .stake(&mut ledger, &strict, &agents[0], Credits(50))
+        .is_err());
     // 无头寸解质押。
-    assert!(stakes.request_unstake(&terms, &agents[2], Credits(10), 1).is_err());
+    assert!(stakes
+        .request_unstake(&terms, &agents[2], Credits(10), 1)
+        .is_err());
     // 自动质押无缺口。
     assert_eq!(
         autostake(&mut ledger, &agents[0], &policy, Credits(100)),
@@ -395,6 +428,10 @@ fn every_public_projection_is_canonical_and_float_free() {
     let checks = au4a_economy::self_check();
     assert!(au4a_core::all_passed(&checks), "自检必须全绿：{checks:?}");
     for check in &checks {
-        assert!(!check.detail.is_empty(), "自检 {} 必须有真实细节", check.name);
+        assert!(
+            !check.detail.is_empty(),
+            "自检 {} 必须有真实细节",
+            check.name
+        );
     }
 }

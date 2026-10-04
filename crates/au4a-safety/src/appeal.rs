@@ -30,7 +30,12 @@ pub struct Appeal {
 }
 
 impl Appeal {
-    pub fn new(case: impl Into<String>, appellant: Did, evidence: Vec<EvidenceRef>, at: u64) -> Self {
+    pub fn new(
+        case: impl Into<String>,
+        appellant: Did,
+        evidence: Vec<EvidenceRef>,
+        at: u64,
+    ) -> Self {
         Self {
             id: String::new(),
             case: case.into(),
@@ -161,7 +166,10 @@ mod tests {
     fn an_appeal_without_evidence_cannot_be_sealed_or_verified() {
         let appellant = AgentKeys::from_seed(&[25u8; 32]);
         let empty = Appeal::new("case-2", appellant.did(), Vec::new(), 3);
-        assert_eq!(empty.clone().sign(&appellant), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            empty.clone().sign(&appellant),
+            Err(CoreError::InvalidSignature)
+        );
         assert_eq!(empty.verify(), Err(CoreError::NotSealed));
         let malformed = Appeal::new(
             "case-2",

@@ -165,7 +165,10 @@ pub fn write_snapshot<S: StateStore + ?Sized>(
     snap: &StateSnapshot,
 ) -> CoreResult<usize> {
     for block in snap.blocks() {
-        store.put(&store_key(prefix, block.zone(), block.key()), block.value().clone())?;
+        store.put(
+            &store_key(prefix, block.zone(), block.key()),
+            block.value().clone(),
+        )?;
     }
     Ok(snap.blocks().len())
 }

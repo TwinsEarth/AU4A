@@ -72,7 +72,10 @@ fn a_replaced_snapshot_with_a_valid_signature_of_its_own_is_refused_by_policy() 
 
     let policy = SnapshotPolicy::for_agent(keys.did())
         .expecting_content_root(authentic.snapshot().content_root().unwrap());
-    assert_eq!(swapped.verify_policy(&policy), Err(CoreError::InvalidSignature));
+    assert_eq!(
+        swapped.verify_policy(&policy),
+        Err(CoreError::InvalidSignature)
+    );
     assert!(authentic.verify_policy(&policy).is_ok());
 }
 
@@ -101,11 +104,17 @@ fn unsigned_and_wrong_version_payloads_are_refused() {
     let signed = SignedSnapshot::sign(snap(&keys, "node-a", 1), &keys).unwrap();
     let mut unsigned = signed.to_value().unwrap();
     unsigned["sig"] = json!("");
-    assert_eq!(SignedSnapshot::from_value(&unsigned), Err(CoreError::NotSealed));
+    assert_eq!(
+        SignedSnapshot::from_value(&unsigned),
+        Err(CoreError::NotSealed)
+    );
 
     let mut future = signed.to_value().unwrap();
     future["version"] = json!(2);
-    assert_eq!(SignedSnapshot::from_value(&future), Err(CoreError::InvalidVersion));
+    assert_eq!(
+        SignedSnapshot::from_value(&future),
+        Err(CoreError::InvalidVersion)
+    );
 }
 
 #[test]
@@ -115,7 +124,10 @@ fn a_forged_signer_field_is_refused() {
     let signed = SignedSnapshot::sign(snap(&a, "node-a", 1), &a).unwrap();
     let mut value = signed.to_value().unwrap();
     value["signer"] = json!(b.did().as_str());
-    assert_eq!(SignedSnapshot::from_value(&value), Err(CoreError::InvalidSignature));
+    assert_eq!(
+        SignedSnapshot::from_value(&value),
+        Err(CoreError::InvalidSignature)
+    );
 }
 
 #[test]
@@ -129,20 +141,33 @@ fn only_a_policy_verified_snapshot_yields_the_verified_type() {
     assert_eq!(verified.snapshot().root(), signed.snapshot().root());
     // 验证过的快照可以直接落库：内容根不变。
     let inner = verified.into_snapshot();
-    assert_eq!(inner.content_root().unwrap(), signed.snapshot().content_root().unwrap());
+    assert_eq!(
+        inner.content_root().unwrap(),
+        signed.snapshot().content_root().unwrap()
+    );
 }
 
 #[test]
 fn tamper_and_stale_are_recorded_as_different_refusal_classes() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(12);
-    kernel.register(&keys, "carrier", &["state.sign"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.sign"], Credits(20))
+        .unwrap();
     let signed = SignedSnapshot::sign(snap(&keys, "node-a", 1), &keys).unwrap();
 
     // 篡改 → unauthorized（单次即恶意）。
-    kernel.refuse(&keys.did(), au4a_core::RefusalCode::Unauthorized, "forged signature");
+    kernel.refuse(
+        &keys.did(),
+        au4a_core::RefusalCode::Unauthorized,
+        "forged signature",
+    );
     // 过期 → stale_epoch（竞争语义，单次只记警告）。
-    kernel.refuse(&keys.did(), au4a_core::RefusalCode::StaleEpoch, "epoch below policy");
+    kernel.refuse(
+        &keys.did(),
+        au4a_core::RefusalCode::StaleEpoch,
+        "epoch below policy",
+    );
     assert_eq!(
         kernel.escalation_for(&keys.did(), au4a_core::RefusalCode::Unauthorized),
         au4a_core::Escalation::Quarantine
@@ -169,7 +194,9 @@ fn self_check_is_green_and_covers_signature_paths() {
 fn scenario_signs_the_migrated_state_and_verifies_it_on_the_target() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(13);
-    kernel.register(&keys, "carrier", &["state.sign"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.sign"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["signature"]["verified"], json!(true));
     // 签名者必须是状态的主人（scenario 用本轨道的确定性身份）。
@@ -209,7 +236,10 @@ fn verified_snapshot_survives_a_store_roundtrip_on_the_target() {
     au4a_state::write_snapshot(&mut store, "live:", &target).unwrap();
     let back = au4a_state::read_snapshot(&store, "live:", &keys.did(), "node-b", 8).unwrap();
     assert_eq!(back.root(), target.root());
-    assert_eq!(back.content_root().unwrap(), signed.snapshot().content_root().unwrap());
+    assert_eq!(
+        back.content_root().unwrap(),
+        signed.snapshot().content_root().unwrap()
+    );
 }
 
 #[test]

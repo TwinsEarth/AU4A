@@ -117,7 +117,13 @@ fn valid_name(s: &str, max: usize, allow_dot_dash_underscore: bool) -> bool {
     if !(head.is_ascii_lowercase() || head.is_ascii_digit()) {
         return false;
     }
-    let extra = |b: u8| if allow_dot_dash_underscore { b == b'.' || b == b'-' || b == b'_' } else { false };
+    let extra = |b: u8| {
+        if allow_dot_dash_underscore {
+            b == b'.' || b == b'-' || b == b'_'
+        } else {
+            false
+        }
+    };
     bytes
         .iter()
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || extra(*b))
@@ -311,12 +317,14 @@ impl Capability {
     /// 这是整数线性插值，没有浮点，也不会因为「性能优化」而改变结果。
     pub fn effective_latency_ms(&self) -> u64 {
         let spread = u64::from(self.latency_p99_ms - self.latency_p50_ms);
-        u64::from(self.latency_p50_ms) + spread * u64::from(self.current_load_bp) / u64::from(BP_SCALE)
+        u64::from(self.latency_p50_ms)
+            + spread * u64::from(self.current_load_bp) / u64::from(BP_SCALE)
     }
 
     /// 负载加权后的可靠度（万分比）：越忙越不可靠。
     pub fn effective_reliability_bp(&self) -> u16 {
-        (u32::from(self.reliability_bp) * u32::from(self.available_bp()) / u32::from(BP_SCALE)) as u16
+        (u32::from(self.reliability_bp) * u32::from(self.available_bp()) / u32::from(BP_SCALE))
+            as u16
     }
 
     /// 是否接受某个输入格式。
@@ -345,7 +353,8 @@ impl Capability {
 
     /// 从 JSON 恢复，并**校验**。反序列化不校验的字段（如 p99 < p50）在这里被挡住。
     pub fn from_value(value: &Value) -> CoreResult<Self> {
-        let cap: Capability = serde_json::from_value(value.clone()).map_err(|_| CoreError::Encoding)?;
+        let cap: Capability =
+            serde_json::from_value(value.clone()).map_err(|_| CoreError::Encoding)?;
         cap.validate()?;
         Ok(cap)
     }
@@ -410,9 +419,18 @@ mod tests {
             Err(CoreError::Encoding),
             "p99 < p50 必须被拒"
         );
-        assert_eq!(base.clone().with_throughput(0).validate(), Err(CoreError::Encoding));
-        assert_eq!(base.clone().with_load_bp(10_001).validate(), Err(CoreError::Encoding));
-        assert_eq!(base.clone().with_reliability_bp(10_001).validate(), Err(CoreError::Encoding));
+        assert_eq!(
+            base.clone().with_throughput(0).validate(),
+            Err(CoreError::Encoding)
+        );
+        assert_eq!(
+            base.clone().with_load_bp(10_001).validate(),
+            Err(CoreError::Encoding)
+        );
+        assert_eq!(
+            base.clone().with_reliability_bp(10_001).validate(),
+            Err(CoreError::Encoding)
+        );
         let mut no_formats = base.clone();
         no_formats.supported_formats.clear();
         assert_eq!(no_formats.validate(), Err(CoreError::Encoding));
@@ -420,7 +438,9 @@ mod tests {
 
     #[test]
     fn load_weighted_metrics_are_integer_math() {
-        let idle = Capability::new(skill("x"), Credits(1)).with_latency(100, 300).with_load_bp(0);
+        let idle = Capability::new(skill("x"), Credits(1))
+            .with_latency(100, 300)
+            .with_load_bp(0);
         assert_eq!(idle.effective_latency_ms(), 100);
         assert_eq!(idle.effective_reliability_bp(), 9_000);
         let busy = idle.clone().with_load_bp(5_000);
@@ -440,11 +460,19 @@ mod tests {
         let v = cap.to_value().expect("serialisable");
         let back = Capability::from_value(&v).expect("valid capability");
         assert_eq!(back, cap);
-        assert_eq!(back.fingerprint().expect("hashes"), cap.fingerprint().expect("hashes"));
+        assert_eq!(
+            back.fingerprint().expect("hashes"),
+            cap.fingerprint().expect("hashes")
+        );
         // 规范 JSON 想过浮点就会报 FloatForbidden，能成功本身就是「无浮点」的证据。
         let canonical = au4a_core::canonicalize(&v).expect("canonical");
         assert!(!canonical.is_empty());
-        for field in ["latency_p50_ms", "price_per_unit", "reliability_bp", "current_load_bp"] {
+        for field in [
+            "latency_p50_ms",
+            "price_per_unit",
+            "reliability_bp",
+            "current_load_bp",
+        ] {
             assert!(v[field].as_i64().is_some(), "{field} 必须是整数");
         }
     }
@@ -457,7 +485,10 @@ mod tests {
         let b = Capability::new(skill("b"), Credits(1))
             .with_formats(&["application/json"], &["application/json"])
             .expect("valid");
-        assert_eq!(a.handoff_format(&b).map(|f| f.as_str().to_string()), Some("application/json".to_string()));
+        assert_eq!(
+            a.handoff_format(&b).map(|f| f.as_str().to_string()),
+            Some("application/json".to_string())
+        );
         let c = Capability::new(skill("c"), Credits(1))
             .with_formats(&["audio/wav"], &["audio/wav"])
             .expect("valid");
@@ -482,6 +513,13 @@ mod tests {
         assert!(!c.accepts_region(Some("us-east")));
         assert!(!c.accepts_region(None));
         assert!(Constraints::default().accepts_region(None));
-        assert_eq!(Constraints { max_concurrency: 0, ..Constraints::default() }.validate(), Err(CoreError::Encoding));
+        assert_eq!(
+            Constraints {
+                max_concurrency: 0,
+                ..Constraints::default()
+            }
+            .validate(),
+            Err(CoreError::Encoding)
+        );
     }
 }

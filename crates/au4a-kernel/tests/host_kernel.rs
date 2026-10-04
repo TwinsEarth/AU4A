@@ -55,7 +55,9 @@ fn bootstrap_is_deterministic_and_audit_clean() {
         b.registry_fingerprint().unwrap()
     );
     assert!(a.audit().is_clean(), "{:?}", a.audit().failures());
-    assert!(a.agents().any(|c| c.skills.iter().any(|s| s == "kernel.host")));
+    assert!(a
+        .agents()
+        .any(|c| c.skills.iter().any(|s| s == "kernel.host")));
     assert_eq!(a.agents_with_skill("kernel.settle").len(), 1);
     assert!(a.agents_with_skill("nobody.declares.this").is_empty());
 }
@@ -64,7 +66,10 @@ fn bootstrap_is_deterministic_and_audit_clean() {
 fn frozen_host_loop_semantics_are_unchanged() {
     let (mut k, a, b) = two_agents();
     assert!(k.is_registered(&a.did()));
-    assert_eq!(k.card(&a.did()).map(|c| c.display.clone()), Some("a".to_string()));
+    assert_eq!(
+        k.card(&a.did()).map(|c| c.display.clone()),
+        Some("a".to_string())
+    );
 
     let env = Envelope::new(
         a.did(),
@@ -107,10 +112,17 @@ fn observing_does_not_change_the_kernel() {
 fn one_unauthorized_envelope_quarantines_but_repeated_races_only_warn() {
     let (mut k, a, _b) = two_agents();
     // 恶意：签名与内容不符（伪造），单次即恶意证据。
-    let mut forged = Envelope::new(a.did(), None, "progress.event", 1, None, serde_json::json!({}))
-        .unwrap()
-        .seal(&a)
-        .unwrap();
+    let mut forged = Envelope::new(
+        a.did(),
+        None,
+        "progress.event",
+        1,
+        None,
+        serde_json::json!({}),
+    )
+    .unwrap()
+    .seal(&a)
+    .unwrap();
     forged.body = serde_json::json!({"tampered": true});
     assert!(k.send(&forged).is_err());
     assert_eq!(

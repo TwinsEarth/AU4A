@@ -102,7 +102,10 @@ impl AuditLog {
                 ..entry
             });
         }
-        Ok(Self { entries, root: prev })
+        Ok(Self {
+            entries,
+            root: prev,
+        })
     }
 
     /// 由已有记录重建（用于校验**外部收到**的日志）。
@@ -181,7 +184,11 @@ impl AuditLog {
             ok: true,
             checked: self.entries.len(),
             broken_at: None,
-            reason: format!("{} 条记录全部通过复算，链根 {}", self.entries.len(), self.root),
+            reason: format!(
+                "{} 条记录全部通过复算，链根 {}",
+                self.entries.len(),
+                self.root
+            ),
         }
     }
 }
@@ -385,13 +392,21 @@ pub fn audit_checks(council: &Council) -> Vec<SelfCheck> {
                 SelfCheck::pass(
                     track,
                     "council.audit.chain",
-                    format!("{} 条治理事件串成哈希链并全部通过复算，链根 {}", log.len(), au4a_core::short_id(log.root())),
+                    format!(
+                        "{} 条治理事件串成哈希链并全部通过复算，链根 {}",
+                        log.len(),
+                        au4a_core::short_id(log.root())
+                    ),
                 )
             } else {
                 SelfCheck::fail(track, "council.audit.chain", verdict.reason)
             });
         }
-        Err(err) => checks.push(SelfCheck::fail(track, "council.audit.chain", err.to_string())),
+        Err(err) => checks.push(SelfCheck::fail(
+            track,
+            "council.audit.chain",
+            err.to_string(),
+        )),
     }
     match export(council) {
         Ok(exported) => {
@@ -412,7 +427,11 @@ pub fn audit_checks(council: &Council) -> Vec<SelfCheck> {
                 SelfCheck::fail(track, "council.audit.export", "只读导出不自洽（链断裂或不变式未全绿）")
             });
         }
-        Err(err) => checks.push(SelfCheck::fail(track, "council.audit.export", err.to_string())),
+        Err(err) => checks.push(SelfCheck::fail(
+            track,
+            "council.audit.export",
+            err.to_string(),
+        )),
     }
     checks
 }

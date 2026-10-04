@@ -204,10 +204,7 @@ mod tests {
     }
 
     fn config() -> SafetyConfig {
-        SafetyConfig::single_arbiter(
-            setup::keys(setup::ROLE_SERVICE).did(),
-            arbiter().did(),
-        )
+        SafetyConfig::single_arbiter(setup::keys(setup::ROLE_SERVICE).did(), arbiter().did())
     }
 
     fn order(amount: Credits) -> PenaltyOrder {
@@ -275,7 +272,10 @@ mod tests {
         );
         assert_eq!(warning.sign(&arbiter()), Err(CoreError::InvalidKind));
         // 零额罚没是调用错误。
-        assert_eq!(order(Credits::ZERO).sign(&arbiter()), Err(CoreError::ZeroAmount));
+        assert_eq!(
+            order(Credits::ZERO).sign(&arbiter()),
+            Err(CoreError::ZeroAmount)
+        );
         assert!(!SanctionKind::Warning.moves_ledger());
         assert!(SanctionKind::StakeSlash.moves_ledger());
     }

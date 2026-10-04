@@ -41,12 +41,16 @@ pub mod signal;
 pub mod sim;
 pub mod violation;
 
-pub use demo::{demo_report, demo_report_is_publishable, DEMO_EXPERIENCES, DEMO_GENERATIONS, DEMO_SEED};
+pub use demo::{
+    demo_report, demo_report_is_publishable, DEMO_EXPERIENCES, DEMO_GENERATIONS, DEMO_SEED,
+};
 pub use eval::{
     ablations, evaluate, AblationRow, ArmStats, EvalConfig, EvalReport, SeedResult, EVAL_SEEDS,
 };
 pub use experience::{Experience, ExperienceStore, Outcome, RecordOutcome, StoreStats};
-pub use explain::{explain, explain_peer_tag, BiasExplanation, PolicyExplanation, PriceExplanation};
+pub use explain::{
+    explain, explain_peer_tag, BiasExplanation, PolicyExplanation, PriceExplanation,
+};
 pub use feedback::{
     confidence_of, Feedback, FeedbackAnalyser, FeedbackReport, PeerFeedback, MIN_SAMPLES,
 };
@@ -58,7 +62,9 @@ pub use policy::{
     adjust, bias_delta_bp, price_decision, price_direction, task_score_bp, PolicyAdjustment,
     PolicyBounds, PolicyParams, PolicyTargets, Signals,
 };
-pub use privacy::{open, peer_tag, publish, seal, PrivacyPolicy, PublicAggregate, PublicView, SealedBlob};
+pub use privacy::{
+    open, peer_tag, publish, seal, PrivacyPolicy, PublicAggregate, PublicView, SealedBlob,
+};
 pub use rng::{hash64, SplitMix64};
 pub use signal::{LearningSignal, SignalWeights, VIOLATION_UNIT_BP};
 pub use sim::{

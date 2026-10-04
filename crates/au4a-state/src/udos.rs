@@ -20,7 +20,7 @@ use au4a_core::{canonical_hash, canonicalize, CoreError, CoreResult, Did};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use crate::diff::{DeltaOp, DelOp, StateDelta};
+use crate::diff::{DelOp, DeltaOp, StateDelta};
 use crate::snapshot::{StateBlock, StateSnapshot, StateZone};
 
 /// 契约标识：出现在每个对象的 `schema` 字段里。
@@ -455,7 +455,10 @@ mod tests {
         let validated = UdosObject::validate(&object).unwrap();
         assert_eq!(validated.object_id, object["object_id"]);
         let back = object_to_snapshot(&object).unwrap();
-        assert_eq!(back.content_root().unwrap(), snapshot.content_root().unwrap());
+        assert_eq!(
+            back.content_root().unwrap(),
+            snapshot.content_root().unwrap()
+        );
     }
 
     #[test]
@@ -463,7 +466,10 @@ mod tests {
         let snapshot = sample();
         let mut object = snapshot_to_object(&snapshot).unwrap();
         object["payload"]["blocks"][0]["value"] = json!({"n": 99});
-        assert_eq!(UdosObject::validate(&object), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            UdosObject::validate(&object),
+            Err(CoreError::InvalidSignature)
+        );
     }
 
     #[test]
@@ -471,7 +477,10 @@ mod tests {
         let snapshot = sample();
         let mut object = snapshot_to_object(&snapshot).unwrap();
         object["schema"] = json!("udos.object/2");
-        assert_eq!(UdosObject::validate(&object), Err(CoreError::InvalidVersion));
+        assert_eq!(
+            UdosObject::validate(&object),
+            Err(CoreError::InvalidVersion)
+        );
 
         let mut object = snapshot_to_object(&snapshot).unwrap();
         object["grade"] = json!("probably-fine");
@@ -506,7 +515,10 @@ mod tests {
         assert_eq!(object["kind"], json!(KIND_DELTA));
         let back = object_to_delta(&object).unwrap();
         assert_eq!(back.id().unwrap(), delta.id().unwrap());
-        assert_eq!(back.apply_to(&a).unwrap().content_root().unwrap(), b.content_root().unwrap());
+        assert_eq!(
+            back.apply_to(&a).unwrap().content_root().unwrap(),
+            b.content_root().unwrap()
+        );
     }
 
     #[test]

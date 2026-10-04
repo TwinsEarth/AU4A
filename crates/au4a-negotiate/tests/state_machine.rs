@@ -87,12 +87,7 @@ fn breach_from_executing_reaches_arbitration_only_with_a_dual_signed_contract() 
     k.register(&b, "b", &[], Credits(20)).unwrap();
     let parties = parties(&a, &b);
     let mut m = StateMachine::open("s-breach").unwrap();
-    for event in [
-        Event::Request,
-        Event::Accept,
-        Event::Sign,
-        Event::Execute,
-    ] {
+    for event in [Event::Request, Event::Accept, Event::Sign, Event::Execute] {
         let at = k.tick();
         m.transact(event, &a, &b, at, &parties).unwrap();
     }
@@ -105,12 +100,17 @@ fn breach_from_executing_reaches_arbitration_only_with_a_dual_signed_contract() 
     let claim = m
         .stage_under_contract(Event::Breach, &b, k.tick(), "c-breach", &hash)
         .unwrap();
-    assert_eq!(m.commit(claim.clone(), &parties, None), Err(CoreError::NotSealed));
+    assert_eq!(
+        m.commit(claim.clone(), &parties, None),
+        Err(CoreError::NotSealed)
+    );
     assert_eq!(m.phase(), Phase::Executing, "被拒的申诉不得改变相位");
     m.commit(claim, &parties, Some(&witness)).unwrap();
     assert_eq!(m.phase(), Phase::Arbitration);
 
-    let resolve = m.transact(Event::Resolve, &a, &b, k.tick(), &parties).unwrap();
+    let resolve = m
+        .transact(Event::Resolve, &a, &b, k.tick(), &parties)
+        .unwrap();
     assert_eq!(resolve.to, Phase::Settled);
     assert_eq!(resolve.sigs.len(), 2, "结案仍需双方签名");
     m.verify_history(&parties).unwrap();
@@ -141,7 +141,10 @@ fn illegal_events_are_refused_without_mutating_state() {
         Err(CoreError::InvalidKind)
     );
     assert_eq!(m.phase(), Phase::Negotiating);
-    assert_eq!(transition(Phase::Negotiating, Event::Sign), Err(CoreError::InvalidKind));
+    assert_eq!(
+        transition(Phase::Negotiating, Event::Sign),
+        Err(CoreError::InvalidKind)
+    );
 }
 
 #[test]

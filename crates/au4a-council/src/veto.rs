@@ -73,7 +73,13 @@ impl Veto {
             "proposal": proposal,
             "reason": reason,
         }))?;
-        Ok(Self { id, observer, proposal, reason, at })
+        Ok(Self {
+            id,
+            observer,
+            proposal,
+            reason,
+            at,
+        })
     }
 
     /// 否决记录的内容地址。
@@ -155,7 +161,11 @@ pub fn apply(council: &mut Council, kernel: &mut Kernel, veto: &Veto) -> CoreRes
         None => return Err(CoreError::UnknownAgent),
     };
     if veto.reason().trim().is_empty() {
-        kernel.refuse(&author, RefusalCode::Malformed, "veto without a public reason");
+        kernel.refuse(
+            &author,
+            RefusalCode::Malformed,
+            "veto without a public reason",
+        );
         return Err(CoreError::InvalidKind);
     }
     // 只有「还在路上」的动议可以被阻断：open（待表决）与 passed（已通过待执行）。
@@ -168,7 +178,11 @@ pub fn apply(council: &mut Council, kernel: &mut Kernel, veto: &Veto) -> CoreRes
         return Err(CoreError::InvalidKind);
     }
     if council.veto_record(veto.target()).is_some() {
-        kernel.refuse(&author, RefusalCode::Conflict, "proposal already blocked by a veto");
+        kernel.refuse(
+            &author,
+            RefusalCode::Conflict,
+            "proposal already blocked by a veto",
+        );
         return Err(CoreError::InvalidKind);
     }
     let at = council.tick();

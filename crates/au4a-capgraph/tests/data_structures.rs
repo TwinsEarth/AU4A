@@ -75,17 +75,26 @@ fn fingerprints_do_not_depend_on_construction_order() {
     let b = cap("sentiment.analyze", 2)
         .with_formats(&["application/json", "text/plain"], &["application/json"])
         .expect("valid");
-    assert_eq!(a.fingerprint().expect("hash"), b.fingerprint().expect("hash"));
+    assert_eq!(
+        a.fingerprint().expect("hash"),
+        b.fingerprint().expect("hash")
+    );
 
     // 任一度量变化 → 指纹变化（内容寻址必须能发现改动）。
     let c = b.clone().with_throughput(999);
-    assert_ne!(a.fingerprint().expect("hash"), c.fingerprint().expect("hash"));
+    assert_ne!(
+        a.fingerprint().expect("hash"),
+        c.fingerprint().expect("hash")
+    );
 }
 
 #[test]
 fn names_are_validated_from_both_rust_and_json() {
     assert_eq!(SkillId::new("Bad Name"), Err(CoreError::InvalidKind));
-    assert_eq!(FormatId::new("Application/JSON"), Err(CoreError::InvalidKind));
+    assert_eq!(
+        FormatId::new("Application/JSON"),
+        Err(CoreError::InvalidKind)
+    );
     assert!(serde_json::from_value::<FormatId>(serde_json::json!("application/json")).is_ok());
     assert!(serde_json::from_value::<FormatId>(serde_json::json!("Application/JSON")).is_err());
 }
@@ -117,5 +126,8 @@ fn scenario_is_deterministic() {
     let b = au4a_capgraph::scenario(&mut second).expect("scenario runs");
     assert_eq!(a, b, "同样的输入必须给同样的输出（可重放）");
     assert!(a["version"].is_string());
-    assert!(!first.observe().progress.is_empty(), "scenario 必须留下进度事件");
+    assert!(
+        !first.observe().progress.is_empty(),
+        "scenario 必须留下进度事件"
+    );
 }

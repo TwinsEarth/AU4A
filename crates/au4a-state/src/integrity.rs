@@ -495,8 +495,8 @@ pub fn is_integrity_error(err: &CoreError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::recovery::INTENT_KEY;
     use crate::recovery::NodeStore;
+    use crate::recovery::INTENT_KEY;
     use crate::store::MemoryStore;
     use crate::transfer::NodeId;
     use serde_json::json;
@@ -577,10 +577,14 @@ mod tests {
         let mut store = MemoryStore::new();
         crate::store::write_snapshot(&mut store, "live:", &expected).unwrap();
         // 完好时干净。
-        assert!(compare_store(&store, "live:", &expected).unwrap().is_clean());
+        assert!(compare_store(&store, "live:", &expected)
+            .unwrap()
+            .is_clean());
 
         // 改一块、删一块、加一块、塞一个坏键。
-        store.put("live:memory:m", json!({"tampered": true})).unwrap();
+        store
+            .put("live:memory:m", json!({"tampered": true}))
+            .unwrap();
         store.remove("live:context:goal").unwrap();
         store.put("live:fs:/injected", json!(1)).unwrap();
         store.put("live:nonsense", json!(1)).unwrap();
@@ -597,8 +601,8 @@ mod tests {
     #[test]
     fn a_clean_node_audit_has_no_findings() {
         let a = keys(4);
-        let mut node = NodeStore::open(NodeId::new("node-b").unwrap(), a.did(), MemoryStore::new())
-            .unwrap();
+        let mut node =
+            NodeStore::open(NodeId::new("node-b").unwrap(), a.did(), MemoryStore::new()).unwrap();
         node.install(&sample(4), true).unwrap();
         let audit = audit_node(&node).unwrap();
         assert!(audit.is_clean(), "{:?}", audit.findings);
@@ -609,8 +613,8 @@ mod tests {
     #[test]
     fn an_unfinished_migration_is_reported() {
         let a = keys(5);
-        let mut node = NodeStore::open(NodeId::new("node-b").unwrap(), a.did(), MemoryStore::new())
-            .unwrap();
+        let mut node =
+            NodeStore::open(NodeId::new("node-b").unwrap(), a.did(), MemoryStore::new()).unwrap();
         node.install(&sample(5), true).unwrap();
         node.store_mut()
             .put(

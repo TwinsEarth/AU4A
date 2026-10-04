@@ -290,11 +290,17 @@ mod tests {
     fn tampering_with_the_outcome_or_amount_is_detected() {
         let mut verdict = upheld(5).sign(&arbiter()).unwrap();
         verdict.amount = Credits(500);
-        assert_eq!(verdict.verify_against(&config()), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            verdict.verify_against(&config()),
+            Err(CoreError::InvalidSignature)
+        );
 
         let mut verdict = upheld(5).sign(&arbiter()).unwrap();
         verdict.outcome = VerdictOutcome::Rejected;
-        assert_eq!(verdict.verify_against(&config()), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            verdict.verify_against(&config()),
+            Err(CoreError::InvalidSignature)
+        );
     }
 
     #[test]
@@ -308,7 +314,10 @@ mod tests {
             arbiter().did(),
             12,
         );
-        assert_eq!(bad.clone().sign(&arbiter()), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            bad.clone().sign(&arbiter()),
+            Err(CoreError::InvalidSignature)
+        );
         assert_eq!(bad.validate(), Err(CoreError::InvalidSignature));
     }
 
@@ -377,7 +386,8 @@ mod tests {
 
         // 往返一次仍然是同一串规范字节。
         let text = serde_json::to_string(&verdict.to_json().unwrap()).unwrap();
-        let reparsed = ArbitrationVerdict::from_json(&serde_json::from_str(&text).unwrap()).unwrap();
+        let reparsed =
+            ArbitrationVerdict::from_json(&serde_json::from_str(&text).unwrap()).unwrap();
         assert_eq!(reparsed, verdict);
         assert_eq!(reparsed.id, verdict.id);
     }

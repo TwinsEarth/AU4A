@@ -29,7 +29,17 @@ fn context_of(id: &str) -> String {
 
 fn exp(id: &str, outcome: Outcome, reward: i64, peers: &[Did]) -> Experience {
     let context = context_of(id);
-    Experience::new(id, "x", &context, "deliver", outcome, Credits(reward), 1, peers).unwrap()
+    Experience::new(
+        id,
+        "x",
+        &context,
+        "deliver",
+        outcome,
+        Credits(reward),
+        1,
+        peers,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -47,7 +57,9 @@ fn every_documented_error_path_is_reachable() {
     assert_eq!(ExperienceStore::new(0), Err(CoreError::InvalidKind));
     // 3) InvalidKind：经验库载入时发现重复条目（篡改）
     let mut store = ExperienceStore::new(8).unwrap();
-    store.record(exp("t-1", Outcome::Success, 5, &peers)).unwrap();
+    store
+        .record(exp("t-1", Outcome::Success, 5, &peers))
+        .unwrap();
     let mut value = store.to_value().unwrap();
     let entries = value.get_mut("entries").unwrap().as_array_mut().unwrap();
     let dup = entries[0].clone();
@@ -145,15 +157,17 @@ fn every_documented_error_path_is_reachable() {
     // 13) InvalidVersion：加密视图版本不支持
     let mut bad_version = blob.clone();
     bad_version.version = 9;
-    assert_eq!(open(&bad_version, &[1u8; 32]), Err(CoreError::InvalidVersion));
+    assert_eq!(
+        open(&bad_version, &[1u8; 32]),
+        Err(CoreError::InvalidVersion)
+    );
     // 14) Overflow：聚合收益溢出 i64
     let mut huge = ExperienceStore::new(4).unwrap();
-    huge.record(exp("h-1", Outcome::Success, i64::MAX, &peers)).unwrap();
-    huge.record(exp("h-2", Outcome::Success, i64::MAX, &peers)).unwrap();
-    assert_eq!(
-        FeedbackAnalyser::analyse(&huge),
-        Err(CoreError::Overflow)
-    );
+    huge.record(exp("h-1", Outcome::Success, i64::MAX, &peers))
+        .unwrap();
+    huge.record(exp("h-2", Outcome::Success, i64::MAX, &peers))
+        .unwrap();
+    assert_eq!(FeedbackAnalyser::analyse(&huge), Err(CoreError::Overflow));
     covered.insert("Overflow");
     // 15) InvalidKind：不同市场不可比较
     let a = run(&MarketConfig::default()).unwrap();
@@ -162,7 +176,10 @@ fn every_documented_error_path_is_reachable() {
         ..MarketConfig::default()
     })
     .unwrap();
-    assert_eq!(au4a_learning::sim::compare(&a, &b), Err(CoreError::InvalidKind));
+    assert_eq!(
+        au4a_learning::sim::compare(&a, &b),
+        Err(CoreError::InvalidKind)
+    );
     // 16) InvalidKind：非法市场配置
     assert_eq!(
         run(&MarketConfig {
@@ -240,7 +257,9 @@ fn soft_refusals_are_not_errors_but_are_explicit() {
     // 1) 证据不足 → 不学习（不是错误）
     let peers = dids(2);
     let mut store = ExperienceStore::new(8).unwrap();
-    store.record(exp("t-1", Outcome::Success, 5, &peers)).unwrap();
+    store
+        .record(exp("t-1", Outcome::Success, 5, &peers))
+        .unwrap();
     let report = FeedbackAnalyser::analyse(&store).unwrap();
     let held = adjust(
         &PolicyParams::baseline(),
@@ -255,7 +274,9 @@ fn soft_refusals_are_not_errors_but_are_explicit() {
 
     // 2) 小样本抑制 → 不发布统计值（不是错误）
     let mut small = ExperienceStore::new(8).unwrap();
-    small.record(exp("t-1", Outcome::Success, 5, &peers)).unwrap();
+    small
+        .record(exp("t-1", Outcome::Success, 5, &peers))
+        .unwrap();
     let view = publish(&small, &PrivacyPolicy::default()).unwrap();
     assert_eq!(view.suppressed_groups, 1);
     assert!(view.aggregates.iter().all(|a| a.success_bp.is_none()));
@@ -279,9 +300,12 @@ fn soft_refusals_are_not_errors_but_are_explicit() {
         .unwrap();
     // 未注册收款人：内核拒绝（UnknownAgent），账本不变
     let before = kernel2.ledger().total().unwrap();
-    assert!(kernel2
-        .settle(&a.did(), &stranger, Credits(1), EvidenceGrade::Verified)
-        .is_err() || kernel2.ledger().total().unwrap() == before);
+    assert!(
+        kernel2
+            .settle(&a.did(), &stranger, Credits(1), EvidenceGrade::Verified)
+            .is_err()
+            || kernel2.ledger().total().unwrap() == before
+    );
 }
 
 #[test]
@@ -339,15 +363,14 @@ fn malformed_inputs_never_panic_across_a_deterministic_sweep() {
         let _ = FeedbackAnalyser::analyse(&store).unwrap();
         let _ = publish(&store, &PrivacyPolicy::default()).unwrap();
     }
-    assert!(outcomes_ok > 0 && outcomes_err > 0, "扫描必须同时覆盖合法与非法输入");
+    assert!(
+        outcomes_ok > 0 && outcomes_err > 0,
+        "扫描必须同时覆盖合法与非法输入"
+    );
     assert!(store.len() <= store.capacity());
     // 学习信号对任何合法库都算得出来
-    let signal = LearningSignal::from_store(
-        &store,
-        &ViolationLog::new(),
-        0,
-        &SignalWeights::default(),
-    )
-    .unwrap();
+    let signal =
+        LearningSignal::from_store(&store, &ViolationLog::new(), 0, &SignalWeights::default())
+            .unwrap();
     assert!(signal.composite_bp.abs() <= 10_000);
 }

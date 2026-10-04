@@ -76,9 +76,8 @@ pub fn classify(env: &Envelope) -> CoreResult<SafetyMessage> {
             Ok(SafetyMessage::Query(query))
         }
         kinds::SAFETY_REPORT => {
-            let report = ViolationReport::from_json(
-                env.body.get("report").ok_or(CoreError::Encoding)?,
-            )?;
+            let report =
+                ViolationReport::from_json(env.body.get("report").ok_or(CoreError::Encoding)?)?;
             if report.reporter != env.from {
                 return Err(CoreError::InvalidSignature);
             }
@@ -109,12 +108,7 @@ pub fn classify(env: &Envelope) -> CoreResult<SafetyMessage> {
 }
 
 /// 构造 `safety.query` 信封（已签名）。
-pub fn query_envelope(
-    keys: &AgentKeys,
-    to: &Did,
-    ts: u64,
-    about: &Did,
-) -> CoreResult<Envelope> {
+pub fn query_envelope(keys: &AgentKeys, to: &Did, ts: u64, about: &Did) -> CoreResult<Envelope> {
     let query = PermissionQuery::new(about.clone());
     Envelope::new(
         keys.did(),
@@ -266,7 +260,10 @@ mod tests {
         let (report, payload) = report(&agent, &subject);
         let env = report_envelope(&agent, &service.did(), 4, &report, &payload).unwrap();
         match classify(&env).unwrap() {
-            SafetyMessage::Report { report: got, evidence } => {
+            SafetyMessage::Report {
+                report: got,
+                evidence,
+            } => {
                 assert_eq!(got.id, report.id);
                 assert_eq!(evidence, payload);
             }
@@ -322,9 +319,13 @@ mod tests {
             appeal_envelope(&subject, &service.did(), 7, &appeal, &[]),
             Err(CoreError::Encoding)
         );
-        let env = appeal_envelope(&subject, &service.did(), 7, &appeal, &[payload.clone()]).unwrap();
+        let env =
+            appeal_envelope(&subject, &service.did(), 7, &appeal, &[payload.clone()]).unwrap();
         match classify(&env).unwrap() {
-            SafetyMessage::Appeal { appeal: got, evidence } => {
+            SafetyMessage::Appeal {
+                appeal: got,
+                evidence,
+            } => {
                 assert_eq!(got.id, appeal.id);
                 assert_eq!(evidence, vec![payload]);
             }

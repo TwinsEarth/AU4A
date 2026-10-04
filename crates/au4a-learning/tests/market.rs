@@ -2,9 +2,7 @@
 
 use au4a_core::{canonicalize, CoreError, Credits};
 use au4a_learning::policy::PolicyParams;
-use au4a_learning::sim::{
-    ab_test, compare, peer_profiles, run, MarketConfig, TASK_PROFILES,
-};
+use au4a_learning::sim::{ab_test, compare, peer_profiles, run, MarketConfig, TASK_PROFILES};
 
 #[test]
 fn learning_arm_changes_behaviour_while_control_stays_frozen() {
@@ -29,11 +27,21 @@ fn learning_arm_changes_behaviour_while_control_stays_frozen() {
         "三类任务都应形成偏好"
     );
     assert!(learning.final_params.peer_bias_bp.len() >= 2);
-    let biases: Vec<i64> = learning.final_params.peer_bias_bp.values().copied().collect();
-    assert!(biases.iter().any(|b| *b > 0) && biases.iter().any(|b| *b < 0), "偏好应有正有负");
+    let biases: Vec<i64> = learning
+        .final_params
+        .peer_bias_bp
+        .values()
+        .copied()
+        .collect();
+    assert!(
+        biases.iter().any(|b| *b > 0) && biases.iter().any(|b| *b < 0),
+        "偏好应有正有负"
+    );
     // 对照组的 public 投影证明它没学
     assert_eq!(comparison.params_differ, true);
-    assert!(!control.public_json().unwrap()["params_changed"].as_bool().unwrap());
+    assert!(!control.public_json().unwrap()["params_changed"]
+        .as_bool()
+        .unwrap());
 }
 
 #[test]
@@ -45,9 +53,15 @@ fn improvement_is_quantified_not_asserted() {
     // 阈值取「显著但诚实」：成功率至少 +10 个百分点、收益至少 +10%。
     // v1.6.5 把模型更新（动量/阻尼）接进循环后定价下降更平滑，提升幅度小于 v1.6.3 的裸策略版本，
     // 但仍远高于噪声；每一版的实测数字见日志 evidence_snapshot_of_the_ab_experiment 与 docs/tracks/1.6.md。
-    assert!(comparison.success_lift_bp > 1_000, "成功率提升应显著：{comparison:?}");
+    assert!(
+        comparison.success_lift_bp > 1_000,
+        "成功率提升应显著：{comparison:?}"
+    );
     assert!(comparison.revenue_lift_credits > Credits::ZERO);
-    assert!(comparison.revenue_lift_bp > 1_000, "收益提升应显著：{comparison:?}");
+    assert!(
+        comparison.revenue_lift_bp > 1_000,
+        "收益提升应显著：{comparison:?}"
+    );
     assert!(
         comparison.learning_violations < comparison.control_violations,
         "违规次数必须下降：{} → {}",
@@ -59,7 +73,9 @@ fn improvement_is_quantified_not_asserted() {
     assert!(learning.success_rate_bp() > control.success_rate_bp());
     // 部分成功率也说明 Partial 不是被丢弃的中间档
     assert_eq!(
-        learning.successes + learning.partials + (learning.ticks - learning.successes - learning.partials),
+        learning.successes
+            + learning.partials
+            + (learning.ticks - learning.successes - learning.partials),
         learning.ticks
     );
 }
@@ -138,7 +154,13 @@ fn public_projection_of_a_run_never_leaks_peer_dids() {
     let (_, learning, _) = ab_test(&config).unwrap();
     let text = learning.public_json().unwrap().to_string();
     assert!(!text.contains("did:au4a:"), "公开投影泄露 DID");
-    assert!(learning.public_json().unwrap()["rounds"].as_array().unwrap().len() > 0);
+    assert!(
+        learning.public_json().unwrap()["rounds"]
+            .as_array()
+            .unwrap()
+            .len()
+            > 0
+    );
 }
 
 #[test]
@@ -227,11 +249,19 @@ fn evidence_snapshot_of_the_ab_experiment() {
     );
     println!(
         "learning price path: {:?}",
-        learning.rounds.iter().map(|r| r.price_bp).collect::<Vec<_>>()
+        learning
+            .rounds
+            .iter()
+            .map(|r| r.price_bp)
+            .collect::<Vec<_>>()
     );
     println!(
         "control price path: {:?}",
-        control.rounds.iter().map(|r| r.price_bp).collect::<Vec<_>>()
+        control
+            .rounds
+            .iter()
+            .map(|r| r.price_bp)
+            .collect::<Vec<_>>()
     );
     assert!(comparison.improved());
 }

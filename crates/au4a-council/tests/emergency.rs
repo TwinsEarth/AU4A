@@ -30,12 +30,17 @@ fn scene(n: u8) -> Scene {
 fn scene_with(n: u8, seats: usize, security_picks: &[usize]) -> Scene {
     let mut kernel = Kernel::new(KernelConfig::default());
     let mut council = Council::new(CouncilConfig {
-        election: ElectionConfig { seats, ..ElectionConfig::default() },
+        election: ElectionConfig {
+            seats,
+            ..ElectionConfig::default()
+        },
         ..CouncilConfig::default()
     });
     let agents: Vec<AgentKeys> = (0..n).map(keys).collect();
     for k in &agents {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
         council.note_reputation(&k.did(), 5_000);
         council.note_uptime(&k.did(), 300);
     }
@@ -52,7 +57,11 @@ fn scene_with(n: u8, seats: usize, security_picks: &[usize]) -> Scene {
             .collect();
         council.elect(&mut kernel, kind, &ballots).expect("elect");
     }
-    Scene { kernel, council, agents }
+    Scene {
+        kernel,
+        council,
+        agents,
+    }
 }
 
 impl Scene {
@@ -73,7 +82,8 @@ fn only_the_security_committee_holds_the_emergency_channel() {
         .has_member(&s.agents[0].did()));
     // 非安全委员会成员尝试走紧急通道 → unauthorized（单次即恶意）。
     assert_eq!(
-        s.council.issue_emergency(&mut s.kernel, &outsider_of_security, "freeze", 1, "紧急"),
+        s.council
+            .issue_emergency(&mut s.kernel, &outsider_of_security, "freeze", 1, "紧急"),
         Err(CoreError::InvalidSignature)
     );
     assert_eq!(
@@ -129,7 +139,11 @@ fn an_emergency_directive_takes_effect_immediately_but_must_be_confirmed() {
         .confirm_emergency(&mut s.kernel, &directive.id, &approvals)
         .expect("confirm");
     assert_eq!(confirmed.status, EmergencyStatus::Confirmed);
-    assert!(!confirmed.confirmation.as_ref().map(|c| c.rolled_back).unwrap_or(true));
+    assert!(!confirmed
+        .confirmation
+        .as_ref()
+        .map(|c| c.rolled_back)
+        .unwrap_or(true));
     assert_eq!(s.council.policy("freeze"), Some(1));
     // 不变式必须在**有真实紧急指令**的状态下也全绿（否则这些检查只是空跑）。
     let checks = au4a_council::invariants::check_all(&s.council);
@@ -142,7 +156,8 @@ fn an_emergency_directive_takes_effect_immediately_but_must_be_confirmed() {
         .any(|c| c.name == "council.emergency.security_only" && c.detail.contains('1')));
     // 已终结的指令不能再确认。
     assert_eq!(
-        s.council.confirm_emergency(&mut s.kernel, &directive.id, &approvals),
+        s.council
+            .confirm_emergency(&mut s.kernel, &directive.id, &approvals),
         Err(CoreError::InvalidKind)
     );
 }
@@ -156,7 +171,10 @@ fn a_rejected_emergency_directive_rolls_the_policy_back() {
         &s.agents[0],
         CommitteeKind::Task,
         "常规设定",
-        Action::SetPolicy { key: String::from("limit"), value: 10 },
+        Action::SetPolicy {
+            key: String::from("limit"),
+            value: 10,
+        },
     )
     .expect("draft");
     let identity = s.identity(0);
@@ -164,15 +182,25 @@ fn a_rejected_emergency_directive_rolls_the_policy_back() {
         .council
         .propose(&mut s.kernel, &identity, draft)
         .expect("propose");
-    let round = s.council.open_round(&mut s.kernel, &proposal.id).expect("open");
+    let round = s
+        .council
+        .open_round(&mut s.kernel, &proposal.id)
+        .expect("open");
     let mut state = round.clone();
     for i in 0..3 {
-        let vote = Vote::cast(&s.agents[i], &proposal.id, round.round, au4a_council::Choice::Yes)
-            .expect("cast");
+        let vote = Vote::cast(
+            &s.agents[i],
+            &proposal.id,
+            round.round,
+            au4a_council::Choice::Yes,
+        )
+        .expect("cast");
         state = s.council.cast_vote(&mut s.kernel, vote).expect("vote");
     }
     assert_eq!(state.outcome, au4a_council::RoundOutcome::Passed);
-    s.council.execute(&mut s.kernel, &identity, &proposal.id).expect("execute");
+    s.council
+        .execute(&mut s.kernel, &identity, &proposal.id)
+        .expect("execute");
     assert_eq!(s.council.policy("limit"), Some(10));
 
     // 紧急指令把 limit 改成 999（即时生效，previous_value = 10）。
@@ -195,9 +223,14 @@ fn a_rejected_emergency_directive_rolls_the_policy_back() {
         .confirm_emergency(&mut s.kernel, &directive.id, &approvals)
         .expect("confirm");
     assert_eq!(rejected.status, EmergencyStatus::Rejected);
-    assert_eq!(rejected.confirmation.as_ref().map(|c| c.rolled_back), Some(true));
+    assert_eq!(
+        rejected.confirmation.as_ref().map(|c| c.rolled_back),
+        Some(true)
+    );
     assert_eq!(s.council.policy("limit"), Some(10), "否决必须回滚");
-    assert!(au4a_core::all_passed(&au4a_council::invariants::check_all(&s.council)));
+    assert!(au4a_core::all_passed(&au4a_council::invariants::check_all(
+        &s.council
+    )));
 }
 
 #[test]
@@ -219,8 +252,15 @@ fn an_expired_directive_rolls_back_and_is_marked_expired() {
         .confirm_emergency(&mut s.kernel, &directive.id, &[])
         .expect("confirm");
     assert_eq!(expired.status, EmergencyStatus::Expired);
-    assert_eq!(expired.confirmation.as_ref().map(|c| c.rolled_back), Some(true));
-    assert_eq!(s.council.policy("temp"), None, "超期必须回滚（此前没有这条策略）");
+    assert_eq!(
+        expired.confirmation.as_ref().map(|c| c.rolled_back),
+        Some(true)
+    );
+    assert_eq!(
+        s.council.policy("temp"),
+        None,
+        "超期必须回滚（此前没有这条策略）"
+    );
 }
 
 #[test]
@@ -236,7 +276,8 @@ fn emergency_approvals_are_signed_and_deduplicated() {
     let mut forged = EmergencyApproval::cast(&s.agents[1], &directive.id, true).expect("cast");
     forged.approve = false;
     assert_eq!(
-        s.council.confirm_emergency(&mut s.kernel, &directive.id, &[forged]),
+        s.council
+            .confirm_emergency(&mut s.kernel, &directive.id, &[forged]),
         Err(CoreError::InvalidSignature)
     );
 
@@ -247,7 +288,8 @@ fn emergency_approvals_are_signed_and_deduplicated() {
         .expect("register");
     let foreign = EmergencyApproval::cast(&outsider, &directive.id, true).expect("cast");
     assert_eq!(
-        s.council.confirm_emergency(&mut s.kernel, &directive.id, &[foreign]),
+        s.council
+            .confirm_emergency(&mut s.kernel, &directive.id, &[foreign]),
         Err(CoreError::InvalidSignature)
     );
 
@@ -258,10 +300,14 @@ fn emergency_approvals_are_signed_and_deduplicated() {
         EmergencyApproval::cast(&s.agents[0], &directive.id, true).expect("cast"),
     ];
     assert_eq!(
-        s.council.confirm_emergency(&mut s.kernel, &directive.id, &twice),
+        s.council
+            .confirm_emergency(&mut s.kernel, &directive.id, &twice),
         Err(CoreError::DuplicateAgent)
     );
-    assert_eq!(s.council.emergency(&directive.id).map(|d| d.status), Some(EmergencyStatus::Active));
+    assert_eq!(
+        s.council.emergency(&directive.id).map(|d| d.status),
+        Some(EmergencyStatus::Active)
+    );
 }
 
 #[test]
@@ -281,7 +327,10 @@ fn the_scenario_runs_the_full_flow_including_emergency() {
     assert_eq!(scenario["voting"]["outcome"], "passed");
 
     // 执行：策略落成。
-    assert_eq!(scenario["execution"]["policies"]["cpu_proto_settle_cap"], 250);
+    assert_eq!(
+        scenario["execution"]["policies"]["cpu_proto_settle_cap"],
+        250
+    );
     assert_eq!(scenario["execution"]["conservation_ok"], true);
 
     // 人类否决：只能阻断。
@@ -294,8 +343,14 @@ fn the_scenario_runs_the_full_flow_including_emergency() {
     assert_eq!(scenario["emergency"]["confirmation"]["status"], "confirmed");
     assert_eq!(scenario["emergency"]["confirmation"]["rolled_back"], false);
     assert_eq!(scenario["emergency"]["policy_kept"], true);
-    assert!(scenario["emergency"]["confirmation"]["approvals"].as_u64().unwrap_or(0)
-        >= scenario["emergency"]["confirmation"]["quorum"].as_u64().unwrap_or(u64::MAX));
+    assert!(
+        scenario["emergency"]["confirmation"]["approvals"]
+            .as_u64()
+            .unwrap_or(0)
+            >= scenario["emergency"]["confirmation"]["quorum"]
+                .as_u64()
+                .unwrap_or(u64::MAX)
+    );
 
     // 链上映射：两条动议分别 executed / canceled。
     let tokens = scenario["governor_tokens"].as_array().expect("tokens");

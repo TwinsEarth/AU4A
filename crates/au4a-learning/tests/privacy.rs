@@ -3,7 +3,7 @@
 use au4a_core::{AgentKeys, CoreError, Credits, Did};
 use au4a_learning::experience::{Experience, ExperienceStore, Outcome};
 use au4a_learning::privacy::{
-    open, peer_tag, publish, public_json, seal, PrivacyPolicy, PublicView, MIN_SALT_LEN,
+    open, peer_tag, public_json, publish, seal, PrivacyPolicy, PublicView, MIN_SALT_LEN,
 };
 
 fn dids(n: u8) -> Vec<Did> {
@@ -15,7 +15,11 @@ fn dids(n: u8) -> Vec<Did> {
 /// 5 条热门类型（含秘密上下文）+ 1 条冷门类型 + 1 条带敏感任务标识的经验。
 fn secret_store(peers: &[Did]) -> ExperienceStore {
     assert!(!peers.is_empty(), "至少要有一个协作者");
-    let cold_peers = if peers.len() > 1 { &peers[1..2] } else { &peers[..1] };
+    let cold_peers = if peers.len() > 1 {
+        &peers[1..2]
+    } else {
+        &peers[..1]
+    };
     let mut store = ExperienceStore::new(32).unwrap();
     for i in 0..5u64 {
         let context = format!("SECRET-CONTEXT-{i}-客户原始需求不可外泄");
@@ -26,7 +30,11 @@ fn secret_store(peers: &[Did]) -> ExperienceStore {
                     "translate.en-zh",
                     &context,
                     "deliver",
-                    if i == 4 { Outcome::Failure } else { Outcome::Success },
+                    if i == 4 {
+                        Outcome::Failure
+                    } else {
+                        Outcome::Success
+                    },
                     Credits(37),
                     10 + i,
                     &peers[..1],
@@ -61,10 +69,16 @@ fn public_view_leaks_nothing_sensitive() {
     let view = publish(&store, &policy).unwrap();
     let text = view.to_value().unwrap().to_string();
 
-    assert!(!text.contains("SECRET-CONTEXT"), "公开视图泄露上下文：{text}");
+    assert!(
+        !text.contains("SECRET-CONTEXT"),
+        "公开视图泄露上下文：{text}"
+    );
     assert!(!text.contains("不可外泄"));
     assert!(!text.contains("did:au4a:"), "公开视图泄露 DID：{text}");
-    assert!(!text.contains("secret-task"), "公开视图泄露 task_id：{text}");
+    assert!(
+        !text.contains("secret-task"),
+        "公开视图泄露 task_id：{text}"
+    );
     // 金额只以桶出现：37 → 25（宽度 25）；冷门组被抑制
     let hot = view
         .aggregates
@@ -152,7 +166,10 @@ fn sealed_view_roundtrips_and_refuses_wrong_keys() {
     let restored = open(&blob, &key).unwrap();
     assert_eq!(restored.len(), store.len());
     assert_eq!(restored.digest().unwrap(), store.digest().unwrap());
-    assert_eq!(restored.canonical_json().unwrap(), store.canonical_json().unwrap());
+    assert_eq!(
+        restored.canonical_json().unwrap(),
+        store.canonical_json().unwrap()
+    );
 
     // 错误密钥 → InvalidSignature（不会解出半个库）
     assert_eq!(open(&blob, &[8u8; 32]), Err(CoreError::InvalidSignature));
@@ -255,7 +272,14 @@ fn policy_is_validated() {
     }
     .validate()
     .is_ok());
-    assert!(publish(&store, &PrivacyPolicy { salt: "short".into(), ..PrivacyPolicy::default() }).is_err());
+    assert!(publish(
+        &store,
+        &PrivacyPolicy {
+            salt: "short".into(),
+            ..PrivacyPolicy::default()
+        }
+    )
+    .is_err());
 
     // 桶宽度 0 = 完全不发布该类信息
     let bare = publish(
@@ -290,13 +314,13 @@ fn policy_tag_changes_with_the_policy_salt() {
     assert_ne!(a.policy_tag, b.policy_tag);
     assert_eq!(a.policy_tag.len(), 16);
     // 同一策略两次发布逐字节一致
-    assert_eq!(
-        a,
-        publish(&store, &PrivacyPolicy::default()).unwrap()
-    );
+    assert_eq!(a, publish(&store, &PrivacyPolicy::default()).unwrap());
     assert_eq!(
         a.digest().unwrap(),
-        publish(&store, &PrivacyPolicy::default()).unwrap().digest().unwrap()
+        publish(&store, &PrivacyPolicy::default())
+            .unwrap()
+            .digest()
+            .unwrap()
     );
     let _: PublicView = a;
 }
@@ -313,5 +337,7 @@ fn scenario_publishes_a_redacted_view_and_a_sealed_blob() {
     assert!(!text.contains("场景上下文"), "公开视图泄露了上下文原文");
     assert!(privacy["view"]["total"].as_u64().unwrap() > 0);
     assert!(privacy["sealed_bytes"].as_u64().unwrap() > 0);
-    assert!(au4a_learning::self_check().iter().any(|c| c.name == "privacy.public_redacted"));
+    assert!(au4a_learning::self_check()
+        .iter()
+        .any(|c| c.name == "privacy.public_redacted"));
 }

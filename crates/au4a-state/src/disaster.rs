@@ -20,7 +20,9 @@ use serde_json::Value;
 use crate::diff::StateDelta;
 use crate::integrity::{audit_node, compare};
 use crate::perf::{self, WorkCounter};
-use crate::recovery::{migrate, FaultInjector, FaultPoint, MigrationPlan, MigrationOutcome, NodeStore};
+use crate::recovery::{
+    migrate, FaultInjector, FaultPoint, MigrationOutcome, MigrationPlan, NodeStore,
+};
 use crate::signed::{SignedSnapshot, SnapshotPolicy};
 use crate::snapshot::StateSnapshot;
 use crate::store::{read_snapshot, write_snapshot, MemoryStore, StateStore};
@@ -257,7 +259,15 @@ pub fn run_drill(
     let mut duplicates = 0usize;
     if !chunks.is_empty() {
         let first = options.first_batch_chunks.clamp(1, chunks.len());
-        send_chunks(&mut net, &from_node, to_node, &delta, options.chunk_ops, 0, first)?;
+        send_chunks(
+            &mut net,
+            &from_node,
+            to_node,
+            &delta,
+            options.chunk_ops,
+            0,
+            first,
+        )?;
         let (session, _, _) = pull_into_session(&mut net, to_node, None)?;
         resumed_from = session.resume_from();
         // 第二批发出但在途丢失。
@@ -322,7 +332,13 @@ pub fn run_drill(
         )?
     } else {
         // 不注入故障时用一次正常提交作为「第一次」。
-        migrate(&mut node, plan.clone(), &delta, &signed, &mut FaultInjector::none())?
+        migrate(
+            &mut node,
+            plan.clone(),
+            &delta,
+            &signed,
+            &mut FaultInjector::none(),
+        )?
     };
     let first_attempt = match &first {
         MigrationOutcome::Confirmed { .. } => "confirmed".to_string(),

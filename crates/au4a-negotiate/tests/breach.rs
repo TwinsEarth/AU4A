@@ -23,8 +23,10 @@ fn terms(price: i64) -> Terms {
 fn pair(k: &mut Kernel, s1: u8, s2: u8) -> (AgentKeys, AgentKeys) {
     let a = agent(s1);
     let b = agent(s2);
-    k.register(&a, "proposer", &["summarize.zh"], Credits(20)).unwrap();
-    k.register(&b, "responder", &["summarize.zh"], Credits(20)).unwrap();
+    k.register(&a, "proposer", &["summarize.zh"], Credits(20))
+        .unwrap();
+    k.register(&b, "responder", &["summarize.zh"], Credits(20))
+        .unwrap();
     (a, b)
 }
 
@@ -70,7 +72,10 @@ fn a_breach_in_execution_opens_arbitration_with_a_signed_claim() {
         .expect("breach message must be delivered");
     let parsed = au4a_negotiate::NegotiationMsg::from_env(breach_env).unwrap();
     assert_eq!(parsed.kind(), au4a_negotiate::kinds::CONTRACT_BREACH);
-    assert_eq!(parsed.subject_hash(), Some(n.contract().unwrap().hash.as_str()));
+    assert_eq!(
+        parsed.subject_hash(),
+        Some(n.contract().unwrap().hash.as_str())
+    );
 
     // 进入仲裁的那条转换：申诉方单签 + 双签合约条款授权。
     let last = n.machine().history().last().unwrap();
@@ -118,7 +123,13 @@ fn a_breach_without_a_contract_is_refused() {
     assert_eq!(k.drain().len(), 1, "只有开局报价");
     // NEGOTIATING 阶段：没有合约，申诉被拒，状态不变。
     assert_eq!(
-        n.report_breach(&mut k, &a, BreachKind::NonDelivery, EvidenceGrade::Verified, "x"),
+        n.report_breach(
+            &mut k,
+            &a,
+            BreachKind::NonDelivery,
+            EvidenceGrade::Verified,
+            "x"
+        ),
         Err(CoreError::InvalidKind)
     );
     assert_eq!(n.phase(), Phase::Negotiating);
@@ -128,7 +139,13 @@ fn a_breach_without_a_contract_is_refused() {
     // ACCEPTED（合约还没签）同样不行。
     n.accept(&mut k, &b, &a).unwrap();
     assert_eq!(
-        n.report_breach(&mut k, &a, BreachKind::NonDelivery, EvidenceGrade::Verified, "x"),
+        n.report_breach(
+            &mut k,
+            &a,
+            BreachKind::NonDelivery,
+            EvidenceGrade::Verified,
+            "x"
+        ),
         Err(CoreError::InvalidKind)
     );
     assert_eq!(n.phase(), Phase::Accepted);
@@ -169,7 +186,14 @@ fn a_single_signed_contract_cannot_authorize_arbitration() {
     };
     assert_eq!(broken.verify(), Err(CoreError::NotSealed));
     assert_eq!(
-        BreachClaim::file(&a, &broken, BreachKind::NonDelivery, EvidenceGrade::Verified, "x", 1),
+        BreachClaim::file(
+            &a,
+            &broken,
+            BreachKind::NonDelivery,
+            EvidenceGrade::Verified,
+            "x",
+            1
+        ),
         Err(CoreError::NotSealed)
     );
     // 合约本身仍然有效（我们只是复制出来破坏的）。
@@ -211,8 +235,14 @@ fn refusals_along_the_way_are_typed_and_not_misconduct() {
     let mut n = Negotiation::open(&mut k, &a, &b, terms(100), 1).unwrap();
     // 超轮数拒绝：PolicyDenied（非恶意）。
     n.counter(&mut k, &b, &a, terms(90)).unwrap();
-    assert_eq!(n.counter(&mut k, &a, &b, terms(80)), Err(CoreError::Overflow));
-    assert_eq!(k.refusals().last().unwrap().1.code, RefusalCode::PolicyDenied);
+    assert_eq!(
+        n.counter(&mut k, &a, &b, terms(80)),
+        Err(CoreError::Overflow)
+    );
+    assert_eq!(
+        k.refusals().last().unwrap().1.code,
+        RefusalCode::PolicyDenied
+    );
     assert!(!k.refusals().last().unwrap().1.code.is_misconduct());
     // 协商仍能正常收尾并进入执行。
     n.accept(&mut k, &a, &b).unwrap();

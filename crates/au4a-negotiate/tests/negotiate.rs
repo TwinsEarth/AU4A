@@ -29,8 +29,10 @@ fn roster(k: &mut Kernel) -> (AgentKeys, AgentKeys, AgentKeys, AgentKeys) {
     let provider = agent(2);
     let arb1 = agent(3);
     let arb2 = agent(4);
-    k.register(&client, "client", &["summarize.zh"], Credits(50)).unwrap();
-    k.register(&provider, "provider", &["summarize.zh"], Credits(50)).unwrap();
+    k.register(&client, "client", &["summarize.zh"], Credits(50))
+        .unwrap();
+    k.register(&provider, "provider", &["summarize.zh"], Credits(50))
+        .unwrap();
     k.register(&arb1, "arbiter.1", &[], Credits(20)).unwrap();
     k.register(&arb2, "arbiter.2", &[], Credits(20)).unwrap();
     (client, provider, arb1, arb2)
@@ -42,10 +44,12 @@ fn roster(k: &mut Kernel) -> (AgentKeys, AgentKeys, AgentKeys, AgentKeys) {
 fn normal_path_bargain_sign_execute_settle() {
     let mut k = kernel();
     let (client, provider, _, _) = roster(&mut k);
-    let mut n = Negotiation::open(&mut k, &client, &provider, terms(150), DEFAULT_MAX_ROUNDS).unwrap();
+    let mut n =
+        Negotiation::open(&mut k, &client, &provider, terms(150), DEFAULT_MAX_ROUNDS).unwrap();
     n.counter(&mut k, &provider, &client, terms(140)).unwrap();
     n.counter(&mut k, &client, &provider, terms(130)).unwrap();
-    n.reject(&mut k, &provider, &client, "135 is my limit").unwrap();
+    n.reject(&mut k, &provider, &client, "135 is my limit")
+        .unwrap();
     n.counter(&mut k, &provider, &client, terms(135)).unwrap();
     n.accept(&mut k, &client, &provider).unwrap();
     let contract = n.sign_contract(&mut k, &client, &provider).unwrap();
@@ -64,7 +68,10 @@ fn normal_path_bargain_sign_execute_settle() {
         Credits(815),
         "1000 创世 - 50 质押 - 135 付款"
     );
-    assert_eq!(k.ledger().balance(&provider.did()).available, Credits(1_085));
+    assert_eq!(
+        k.ledger().balance(&provider.did()).available,
+        Credits(1_085)
+    );
 
     // 消息链：request/counter×3/reject/accept/sign×2 = 8 条，全部可验签。
     let delivered = k.drain();
@@ -73,7 +80,9 @@ fn normal_path_bargain_sign_execute_settle() {
         env.verify().unwrap();
         NegotiationMsg::from_env(env).unwrap();
     }
-    assert!(!delivered.iter().any(|e| e.kind.as_str() == au4a_negotiate::kinds::CONTRACT_BREACH));
+    assert!(!delivered
+        .iter()
+        .any(|e| e.kind.as_str() == au4a_negotiate::kinds::CONTRACT_BREACH));
 }
 
 #[test]
@@ -89,10 +98,16 @@ fn normal_path_archive_is_byte_exact_and_replayable() {
     let bytes = n.archive().unwrap();
     let restored = Journal::decode(&bytes).unwrap();
     assert_eq!(restored.encode().unwrap(), bytes, "归档定点");
-    assert_eq!(restored.replay_digest().unwrap(), n.journal().replay_digest().unwrap());
+    assert_eq!(
+        restored.replay_digest().unwrap(),
+        n.journal().replay_digest().unwrap()
+    );
     assert_eq!(restored.phase(), Phase::Settled);
     assert_eq!(restored.machine().seq(), n.machine().seq());
-    restored.machine().verify_history(restored.parties()).unwrap();
+    restored
+        .machine()
+        .verify_history(restored.parties())
+        .unwrap();
 }
 
 // ---------------------------------------------------------------- 拒绝路径
@@ -109,28 +124,57 @@ fn refusal_matrix_every_hostile_move_is_typed_and_state_preserving() {
     let seq_before = n.machine().seq();
 
     // 1) 非法转换：还没接受就签合约。
-    assert_eq!(n.sign_contract(&mut k, &client, &provider), Err(CoreError::InvalidKind));
+    assert_eq!(
+        n.sign_contract(&mut k, &client, &provider),
+        Err(CoreError::InvalidKind)
+    );
     // 2) 自问自答：报价方不能立刻自己还价。
-    assert_eq!(n.counter(&mut k, &client, &provider, terms(90)), Err(CoreError::InvalidKind));
+    assert_eq!(
+        n.counter(&mut k, &client, &provider, terms(90)),
+        Err(CoreError::InvalidKind)
+    );
     // 3) 自己接受自己的报价。
-    assert_eq!(n.accept(&mut k, &client, &provider), Err(CoreError::InvalidKind));
+    assert_eq!(
+        n.accept(&mut k, &client, &provider),
+        Err(CoreError::InvalidKind)
+    );
     // 4) 第三方插手。
-    assert_eq!(n.counter(&mut k, &outsider, &client, terms(1)), Err(CoreError::UnknownAgent));
-    assert_eq!(n.accept(&mut k, &outsider, &client), Err(CoreError::UnknownAgent));
+    assert_eq!(
+        n.counter(&mut k, &outsider, &client, terms(1)),
+        Err(CoreError::UnknownAgent)
+    );
+    assert_eq!(
+        n.accept(&mut k, &outsider, &client),
+        Err(CoreError::UnknownAgent)
+    );
     // 5) 无合约就申诉。
     assert_eq!(
-        n.report_breach(&mut k, &client, BreachKind::NonDelivery, EvidenceGrade::Verified, "x"),
+        n.report_breach(
+            &mut k,
+            &client,
+            BreachKind::NonDelivery,
+            EvidenceGrade::Verified,
+            "x"
+        ),
         Err(CoreError::InvalidKind)
     );
     // 6) 超轮数（上限 1）。
     n.counter(&mut k, &provider, &client, terms(95)).unwrap();
-    assert_eq!(n.counter(&mut k, &client, &provider, terms(90)), Err(CoreError::Overflow));
+    assert_eq!(
+        n.counter(&mut k, &client, &provider, terms(90)),
+        Err(CoreError::Overflow)
+    );
     // 7) 相位与序号没有被任何一次拒绝推进。
     assert_eq!(n.phase(), phase_before);
-    assert_eq!(n.machine().seq(), seq_before + 1, "只有那次合法还价推进了状态");
+    assert_eq!(
+        n.machine().seq(),
+        seq_before + 1,
+        "只有那次合法还价推进了状态"
+    );
 
     // 8) 空合约 / 单签合约 / 篡改合约全部不能用。
-    let mut unsigned = Contract::draft(&client, &provider.did(), &terms(100), n.session(), 1).unwrap();
+    let mut unsigned =
+        Contract::draft(&client, &provider.did(), &terms(100), n.session(), 1).unwrap();
     unsigned.sign(&client).unwrap();
     assert_eq!(unsigned.verify(), Err(CoreError::NotSealed));
     let mut tampered = unsigned.clone();
@@ -141,20 +185,47 @@ fn refusal_matrix_every_hostile_move_is_typed_and_state_preserving() {
     n.accept(&mut k, &client, &provider).unwrap();
     let contract = n.sign_contract(&mut k, &client, &provider).unwrap();
     n.execute(&mut k, &client, &provider).unwrap();
-    n.report_breach(&mut k, &provider, BreachKind::LateDelivery, EvidenceGrade::Verified, "late")
-        .unwrap();
+    n.report_breach(
+        &mut k,
+        &provider,
+        BreachKind::LateDelivery,
+        EvidenceGrade::Verified,
+        "late",
+    )
+    .unwrap();
     // 10) 当事人当仲裁员 / 单仲裁员 / 无裁决先执行。
-    assert_eq!(n.open_case(&[provider.did(), arb1.did()], 1), Err(CoreError::UnknownAgent));
+    assert_eq!(
+        n.open_case(&[provider.did(), arb1.did()], 1),
+        Err(CoreError::UnknownAgent)
+    );
     assert_eq!(n.open_case(&[arb1.did()], 1), Err(CoreError::InvalidKind));
     n.open_case(&[arb1.did(), arb2.did()], 1).unwrap();
     let at = 2;
-    assert_eq!(n.case_mut().unwrap().enforce(&mut k, at), Err(CoreError::NotSealed));
-    assert_eq!(n.case_mut().unwrap().rule(&ArbitrationPolicy::default(), &[&arb1], Credits(100), "solo", 2), Err(CoreError::InvalidKind));
+    assert_eq!(
+        n.case_mut().unwrap().enforce(&mut k, at),
+        Err(CoreError::NotSealed)
+    );
+    assert_eq!(
+        n.case_mut().unwrap().rule(
+            &ArbitrationPolicy::default(),
+            &[&arb1],
+            Credits(100),
+            "solo",
+            2
+        ),
+        Err(CoreError::InvalidKind)
+    );
 
     // 拒绝记录全部是「竞争/容量」语义，没有一条被误判成恶意。
     assert!(k.refusals().iter().all(|(_, r)| !r.code.is_misconduct()));
-    assert!(k.refusals().iter().any(|(_, r)| r.code == RefusalCode::Conflict));
-    assert!(k.refusals().iter().any(|(_, r)| r.code == RefusalCode::PolicyDenied));
+    assert!(k
+        .refusals()
+        .iter()
+        .any(|(_, r)| r.code == RefusalCode::Conflict));
+    assert!(k
+        .refusals()
+        .iter()
+        .any(|(_, r)| r.code == RefusalCode::PolicyDenied));
     contract.verify().unwrap();
 }
 
@@ -177,7 +248,10 @@ fn hostile_inputs_never_panic_the_library() {
     }
     // 非法状态机输入。
     assert!(StateMachine::open("").is_err());
-    assert!(StateMachine::rebuild("s", &[agent(1).did()], &[]).is_ok(), "单方名单只能在记录校验时被拒");
+    assert!(
+        StateMachine::rebuild("s", &[agent(1).did()], &[]).is_ok(),
+        "单方名单只能在记录校验时被拒"
+    );
     assert!(au4a_negotiate::transition(Phase::Settled, Event::Request).is_err());
 }
 
@@ -204,13 +278,25 @@ fn invariants_hold_across_the_whole_track() {
     n.accept(&mut k, &provider, &client).unwrap();
     n.sign_contract(&mut k, &client, &provider).unwrap();
     n.execute(&mut k, &client, &provider).unwrap();
-    n.report_breach(&mut k, &client, BreachKind::NonDelivery, EvidenceGrade::Verified, "none")
-        .unwrap();
+    n.report_breach(
+        &mut k,
+        &client,
+        BreachKind::NonDelivery,
+        EvidenceGrade::Verified,
+        "none",
+    )
+    .unwrap();
     n.open_case(&[arb1.did(), arb2.did()], 1).unwrap();
     let price = n.contract().unwrap().terms.price;
     n.case_mut()
         .unwrap()
-        .rule(&ArbitrationPolicy::default(), &[&arb1, &arb2], price, "proven", 2)
+        .rule(
+            &ArbitrationPolicy::default(),
+            &[&arb1, &arb2],
+            price,
+            "proven",
+            2,
+        )
         .unwrap();
     let at = 3;
     n.case_mut().unwrap().enforce(&mut k, at).unwrap();
@@ -218,7 +304,9 @@ fn invariants_hold_across_the_whole_track() {
 
     for record in n.machine().history() {
         match &record.basis {
-            Basis::DualConsent => assert_eq!(record.sigs.len(), 2, "{} 必须双签", record.event.as_str()),
+            Basis::DualConsent => {
+                assert_eq!(record.sigs.len(), 2, "{} 必须双签", record.event.as_str())
+            }
             Basis::ContractClause { contract_hash, .. } => {
                 assert_eq!(record.sigs.len(), 1);
                 assert_eq!(record.to, Phase::Arbitration);
@@ -236,7 +324,10 @@ fn invariants_hold_across_the_whole_track() {
     let bytes = n.archive().unwrap();
     let restored = Journal::decode(&bytes).unwrap();
     assert_eq!(restored.encode().unwrap(), bytes);
-    assert_eq!(restored.replay_digest().unwrap(), n.journal().replay_digest().unwrap());
+    assert_eq!(
+        restored.replay_digest().unwrap(),
+        n.journal().replay_digest().unwrap()
+    );
 
     // e) 自检全绿。
     assert!(au4a_core::all_passed(&au4a_negotiate::self_check()));
@@ -251,13 +342,25 @@ fn the_same_seed_replays_the_same_bytes_twice() {
         n.accept(&mut k, &provider, &client).unwrap();
         n.sign_contract(&mut k, &client, &provider).unwrap();
         n.execute(&mut k, &client, &provider).unwrap();
-        n.report_breach(&mut k, &client, BreachKind::UnderDelivery, EvidenceGrade::Verified, "half")
-            .unwrap();
+        n.report_breach(
+            &mut k,
+            &client,
+            BreachKind::UnderDelivery,
+            EvidenceGrade::Verified,
+            "half",
+        )
+        .unwrap();
         n.open_case(&[arb1.did(), arb2.did()], 1).unwrap();
         let price = n.contract().unwrap().terms.price;
         n.case_mut()
             .unwrap()
-            .rule(&ArbitrationPolicy::default(), &[&arb1, &arb2], price, "proven", 2)
+            .rule(
+                &ArbitrationPolicy::default(),
+                &[&arb1, &arb2],
+                price,
+                "proven",
+                2,
+            )
             .unwrap();
         let at = 3;
         n.case_mut().unwrap().enforce(&mut k, at).unwrap();
@@ -326,8 +429,7 @@ fn the_crate_exports_the_frozen_track_surface() {
     assert_eq!(results["legal_transitions"], 10);
     assert_eq!(results["journal_version"], 1);
     assert_eq!(
-        results["checks"],
-        results["checks_passed"],
+        results["checks"], results["checks_passed"],
         "所有自检项都必须通过"
     );
     // 来源路径正常（防止被当作别的 crate 编译进来）。

@@ -186,8 +186,14 @@ fn setup_failed(name: &str, why: String) -> AttackOutcome {
 /// A1/A2/A3：测试网层面的重放、nonce 回退、篡改。
 fn attacks_on_the_testnet() -> Result<Vec<AttackOutcome>, String> {
     let mut net = Testnet::new(ChainId::BtcRegtest, 1);
-    let tx = ChainTx::new(ChainId::BtcRegtest, "rgb.issue", &did(1), 1, json!({ "a": 1 }))
-        .map_err(|e| e.to_string())?;
+    let tx = ChainTx::new(
+        ChainId::BtcRegtest,
+        "rgb.issue",
+        &did(1),
+        1,
+        json!({ "a": 1 }),
+    )
+    .map_err(|e| e.to_string())?;
     net.accept(&tx).map_err(|r| r.detail)?;
 
     let mut out = Vec::new();
@@ -196,8 +202,14 @@ fn attacks_on_the_testnet() -> Result<Vec<AttackOutcome>, String> {
         net.accept(&tx),
         RefusalCode::Conflict,
     ));
-    let stale = ChainTx::new(ChainId::BtcRegtest, "rgb.issue", &did(1), 1, json!({ "a": 2 }))
-        .map_err(|e| e.to_string())?;
+    let stale = ChainTx::new(
+        ChainId::BtcRegtest,
+        "rgb.issue",
+        &did(1),
+        1,
+        json!({ "a": 2 }),
+    )
+    .map_err(|e| e.to_string())?;
     out.push(expect_refusal(
         "nonce_rollback",
         net.accept(&stale),
@@ -227,11 +239,7 @@ fn attack_rgb_double_spend() -> Result<AttackOutcome, String> {
     .map_err(|e| e.to_string())?;
     rgb.execute(&mut net, &issue).map_err(|r| r.detail)?;
     net.mine();
-    let asset_id = rgb
-        .contract()
-        .map_err(|e| e.to_string())?
-        .asset_id
-        .clone();
+    let asset_id = rgb.contract().map_err(|e| e.to_string())?.asset_id.clone();
     let seal = Seal::new(issue.id.clone(), 0);
     let first = TransferBundle::new(
         &asset_id,
@@ -292,14 +300,15 @@ fn attack_reorg_below_finality() -> Result<AttackOutcome, String> {
 fn attack_settle_on_inconsistent_tracks() -> Result<AttackOutcome, String> {
     let who = did(4);
     let mut ledger = Ledger::new();
-    ledger.mint(&who, Credits(5_000)).map_err(|e| e.to_string())?;
+    ledger
+        .mint(&who, Credits(5_000))
+        .map_err(|e| e.to_string())?;
     let mut book = BridgeBook::new();
     book.bridge_out(&mut ledger, &who, Credits(50), "rail:rgb", "rgb")
         .map_err(|e| e.to_string())?;
     book.force_chain_supply(Credits(123_456)); // 攻击：链上侧多报
     let table = RoutingTable::default_table();
-    let request =
-        SettlementRequest::new(&who, &did(5), 1_000).map_err(|e| e.to_string())?;
+    let request = SettlementRequest::new(&who, &did(5), 1_000).map_err(|e| e.to_string())?;
     let gate_deferred = route(&request, &table, false)
         .map(|d| d.action == RouteAction::Defer)
         .unwrap_or(false);
@@ -320,8 +329,14 @@ fn attack_self_feedback() -> Result<AttackOutcome, String> {
     let mut net = Testnet::new(ChainId::EthLocal, 1);
     let mut erc = Erc8004Adapter::new();
     for (seed, nonce) in [(6u8, 1u64), (7, 1)] {
-        let t = ChainTx::new(ChainId::EthLocal, "erc8004.register", &did(seed), nonce, json!({}))
-            .map_err(|e| e.to_string())?;
+        let t = ChainTx::new(
+            ChainId::EthLocal,
+            "erc8004.register",
+            &did(seed),
+            nonce,
+            json!({}),
+        )
+        .map_err(|e| e.to_string())?;
         erc.execute(&mut net, &t).map_err(|r| r.detail)?;
     }
     let id = erc
@@ -405,7 +420,11 @@ pub fn attack_suite() -> Vec<AttackOutcome> {
     let mut out = Vec::new();
     push_results(&mut out, attacks_on_the_testnet(), "attacks_on_the_testnet");
     push_one(&mut out, attack_rgb_double_spend(), "rgb_seal_double_spend");
-    push_one(&mut out, attack_reorg_below_finality(), "reorg_below_finality");
+    push_one(
+        &mut out,
+        attack_reorg_below_finality(),
+        "reorg_below_finality",
+    );
     push_one(
         &mut out,
         attack_settle_on_inconsistent_tracks(),
@@ -413,7 +432,11 @@ pub fn attack_suite() -> Vec<AttackOutcome> {
     );
     push_one(&mut out, attack_self_feedback(), "self_feedback_sybil");
     push_results(&mut out, attacks_on_reputation(), "attacks_on_reputation");
-    push_one(&mut out, attack_x402_double_payment(), "x402_double_payment");
+    push_one(
+        &mut out,
+        attack_x402_double_payment(),
+        "x402_double_payment",
+    );
     out
 }
 
@@ -512,7 +535,10 @@ mod tests {
         au4a_core::canonicalize(&report).unwrap();
         assert_eq!(report["all_attacks_blocked"], json!(true));
         assert_eq!(report["grade"], json!("cpu-proto"));
-        assert!(report["scope"].as_str().unwrap_or_default().contains("确定性测试网"));
+        assert!(report["scope"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("确定性测试网"));
         assert!(report["unresolved_count"].as_u64().unwrap_or(0) >= 3);
         assert!(audit_report_result().is_ok());
     }

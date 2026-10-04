@@ -40,7 +40,9 @@ fn every_mapped_hook_gets_a_real_pmb_route() {
     for hook in hooks {
         let route = hook_route(hook).unwrap_or_else(|| panic!("{hook} 应当有路由"));
         assert!(!route.message_kind.is_empty());
-        assert!(au4a_kernel::classify_kind(&route.message_kind) != au4a_kernel::MessageClass::Unknown);
+        assert!(
+            au4a_kernel::classify_kind(&route.message_kind) != au4a_kernel::MessageClass::Unknown
+        );
     }
     assert!(hook_route("on_teleport").is_none());
     // 权限映射：能力表里的每一项都能往返。
@@ -139,7 +141,9 @@ fn denied_capabilities_block_their_routes() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let tight = keys(222);
     // 质押 == 准入下限 → withdraw_stake 在权限模型里被拒。
-    kernel.register(&tight, "tight", &["x"], Credits(10)).unwrap();
+    kernel
+        .register(&tight, "tight", &["x"], Credits(10))
+        .unwrap();
     let plan = adapt(
         &manifest("tight", &["on_start"], &["stake:withdraw"]),
         &MigrationLimits::default(),
@@ -168,6 +172,10 @@ fn adaptation_is_reproducible_and_content_addressed() {
     assert!(a.is_intact());
     // 三个钩子 + 两条权限去重后只有两种内核能力。
     assert_eq!(a.capabilities().len(), 2);
-    assert!(a.capabilities().contains(&au4a_kernel::Capability::PublishCard));
-    assert!(a.capabilities().contains(&au4a_kernel::Capability::SettleVerified));
+    assert!(a
+        .capabilities()
+        .contains(&au4a_kernel::Capability::PublishCard));
+    assert!(a
+        .capabilities()
+        .contains(&au4a_kernel::Capability::SettleVerified));
 }

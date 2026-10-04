@@ -265,11 +265,7 @@ impl X402Adapter {
             .and_then(Value::as_i64)
             .and_then(|v| Credits::new(v).ok())
             .ok_or_else(|| ChainRefusal::new("x402.pay", RefusalCode::Malformed, "缺少 amount"))?;
-        let now = tx
-            .payload
-            .get("now")
-            .and_then(Value::as_u64)
-            .unwrap_or(0);
+        let now = tx.payload.get("now").and_then(Value::as_u64).unwrap_or(0);
         let invoice = self.invoices.get(&invoice_id).cloned().ok_or_else(|| {
             let refusal = ChainRefusal::new(
                 "x402.pay_without_invoice",
@@ -359,13 +355,16 @@ impl X402Adapter {
             net.record_refusal(refusal.clone());
             refusal
         })?;
-        let invoice = self.invoices.get(&invoice_id).cloned().ok_or_else(|| {
-            ChainRefusal::new("x402.claim", RefusalCode::Conflict, "发票不存在")
+        let invoice =
+            self.invoices.get(&invoice_id).cloned().ok_or_else(|| {
+                ChainRefusal::new("x402.claim", RefusalCode::Conflict, "发票不存在")
+            })?;
+        let payer = Did::parse(&payment.payer).map_err(|_| {
+            ChainRefusal::new("x402.claim", RefusalCode::Malformed, "payer DID 非法")
         })?;
-        let payer = Did::parse(&payment.payer)
-            .map_err(|_| ChainRefusal::new("x402.claim", RefusalCode::Malformed, "payer DID 非法"))?;
-        let payee = Did::parse(&invoice.payee)
-            .map_err(|_| ChainRefusal::new("x402.claim", RefusalCode::Malformed, "payee DID 非法"))?;
+        let payee = Did::parse(&invoice.payee).map_err(|_| {
+            ChainRefusal::new("x402.claim", RefusalCode::Malformed, "payee DID 非法")
+        })?;
         // fail-closed：未达最终性不领取。
         if !net.is_final(payment.height) {
             let refusal = ChainRefusal::new(
@@ -391,16 +390,23 @@ impl X402Adapter {
             return Err(refusal);
         }
         // 双轨：链上表示销毁 + 本地托管 → 服务方。
-        book.bridge_in(ledger, &payer, &payee, payment.amount, &invoice.asset, "x402")
-            .map_err(|err| {
-                let refusal = ChainRefusal::new(
-                    "x402.claim",
-                    RefusalCode::Conflict,
-                    format!("双轨对账失败（fail-closed）：{err}"),
-                );
-                net.record_refusal(refusal.clone());
-                refusal
-            })?;
+        book.bridge_in(
+            ledger,
+            &payer,
+            &payee,
+            payment.amount,
+            &invoice.asset,
+            "x402",
+        )
+        .map_err(|err| {
+            let refusal = ChainRefusal::new(
+                "x402.claim",
+                RefusalCode::Conflict,
+                format!("双轨对账失败（fail-closed）：{err}"),
+            );
+            net.record_refusal(refusal.clone());
+            refusal
+        })?;
         let mut receipt = net.accept(tx)?;
         Testnet::stamp(&mut receipt, "x402");
         if let Some(entry) = self.payments.get_mut(&invoice_id) {
@@ -408,10 +414,7 @@ impl X402Adapter {
         }
         Ok(X402Outcome {
             op: "x402.claim".to_string(),
-            detail: format!(
-                "领取 {}（托管解锁 → 服务方，链上表示销毁）",
-                payment.amount
-            ),
+            detail: format!("领取 {}（托管解锁 → 服务方，链上表示销毁）", payment.amount),
             receipt: Some(receipt),
             grade: ONCHAIN_GRADE.as_str().to_string(),
         })
@@ -473,12 +476,7 @@ mod tests {
         )
         .unwrap();
         x402.execute(&mut net, &invoice_tx).unwrap();
-        let invoice_id = x402
-            .invoices
-            .keys()
-            .next()
-            .cloned()
-            .expect("发票已生成");
+        let invoice_id = x402.invoices.keys().next().cloned().expect("发票已生成");
         World {
             net,
             x402,
@@ -557,7 +555,10 @@ mod tests {
         pay(&mut world, 200, 10).unwrap();
         let err = pay(&mut world, 200, 11).unwrap_err();
         assert_eq!(err.code, RefusalCode::Conflict);
-        assert_eq!(world.x402.payment_of(&world.invoice_id).unwrap().claimed, false);
+        assert_eq!(
+            world.x402.payment_of(&world.invoice_id).unwrap().claimed,
+            false
+        );
     }
 
     #[test]
@@ -577,14 +578,24 @@ mod tests {
         // 未达最终性 → Timeout。
         let early = world
             .x402
-            .claim(&mut world.net, &mut world.ledger, &mut world.book, &claim_tx)
+            .claim(
+                &mut world.net,
+                &mut world.ledger,
+                &mut world.book,
+                &claim_tx,
+            )
             .unwrap_err();
         assert_eq!(early.code, RefusalCode::Timeout);
         // 叠够最终性（1 笔支付在高度 1，finality 2 → 需要高度 ≥ 3）。
         world.net.mine_to(3);
         let ok = world
             .x402
-            .claim(&mut world.net, &mut world.ledger, &mut world.book, &claim_tx)
+            .claim(
+                &mut world.net,
+                &mut world.ledger,
+                &mut world.book,
+                &claim_tx,
+            )
             .unwrap();
         assert!(ok.detail.contains("领取 200"));
         assert!(world.x402.is_settled(&world.invoice_id));
@@ -613,11 +624,21 @@ mod tests {
         .unwrap();
         world
             .x402
-            .claim(&mut world.net, &mut world.ledger, &mut world.book, &claim_tx)
+            .claim(
+                &mut world.net,
+                &mut world.ledger,
+                &mut world.book,
+                &claim_tx,
+            )
             .unwrap();
         let again = world
             .x402
-            .claim(&mut world.net, &mut world.ledger, &mut world.book, &claim_tx)
+            .claim(
+                &mut world.net,
+                &mut world.ledger,
+                &mut world.book,
+                &claim_tx,
+            )
             .unwrap_err();
         assert_eq!(again.code, RefusalCode::Conflict);
     }
@@ -635,7 +656,12 @@ mod tests {
         .unwrap();
         let err = world
             .x402
-            .claim(&mut world.net, &mut world.ledger, &mut world.book, &claim_tx)
+            .claim(
+                &mut world.net,
+                &mut world.ledger,
+                &mut world.book,
+                &claim_tx,
+            )
             .unwrap_err();
         assert_eq!(err.code, RefusalCode::Conflict);
     }
@@ -699,7 +725,12 @@ mod tests {
         .unwrap();
         let err = world
             .x402
-            .claim(&mut world.net, &mut world.ledger, &mut world.book, &claim_tx)
+            .claim(
+                &mut world.net,
+                &mut world.ledger,
+                &mut world.book,
+                &claim_tx,
+            )
             .unwrap_err();
         assert_eq!(err.code, RefusalCode::Conflict);
         assert!(err.detail.contains("fail-closed"));

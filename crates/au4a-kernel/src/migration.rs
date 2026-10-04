@@ -156,7 +156,9 @@ impl MigrationRefusal {
 
     pub fn detail(&self) -> String {
         match self {
-            MigrationRefusal::UnsupportedHook(hook) => format!("钩子 {hook} 在 PMB 里没有对应消息类型"),
+            MigrationRefusal::UnsupportedHook(hook) => {
+                format!("钩子 {hook} 在 PMB 里没有对应消息类型")
+            }
             MigrationRefusal::UnsupportedPermission(perm) => {
                 format!("权限 {perm} 在内核能力表里没有对应项")
             }
@@ -526,7 +528,11 @@ mod tests {
         assert!(plan.grants.iter().all(|g| g.capability.is_some()));
         assert!(!plan.is_partial());
         assert!(plan.is_intact());
-        assert_eq!(plan.evidence, EvidenceGrade::CpuProto, "适配器只做 CPU 语义");
+        assert_eq!(
+            plan.evidence,
+            EvidenceGrade::CpuProto,
+            "适配器只做 CPU 语义"
+        );
         assert_eq!(plan.to_json()["evidence"], "cpu-proto");
     }
 
@@ -537,7 +543,10 @@ mod tests {
         let err = adapt(&bad, &MigrationLimits::default()).unwrap_err();
         assert_eq!(err, MigrationRefusal::OperatorApprovalRequired);
         assert_eq!(err.to_refusal_code(), RefusalCode::PolicyDenied);
-        assert!(!err.to_refusal_code().is_misconduct(), "人类审批依赖不是恶意");
+        assert!(
+            !err.to_refusal_code().is_misconduct(),
+            "人类审批依赖不是恶意"
+        );
         assert!(err.detail().contains("运营方"));
 
         // owner:* / operator:* 权限同样被视为运营方授权。
@@ -568,13 +577,23 @@ mod tests {
             assert_eq!(refusal.to_refusal_code(), RefusalCode::Unsupported);
             assert!(!refusal.to_refusal_code().is_misconduct());
         }
-        assert_eq!(plan.grants.len(), 4, "被拒的权限也留在授予表里（置空 + 说明）");
         assert_eq!(
-            plan.grants.iter().filter(|g| g.capability.is_none()).count(),
+            plan.grants.len(),
+            4,
+            "被拒的权限也留在授予表里（置空 + 说明）"
+        );
+        assert_eq!(
+            plan.grants
+                .iter()
+                .filter(|g| g.capability.is_none())
+                .count(),
             3
         );
         assert!(plan.to_json()["partial"].as_bool().unwrap_or(false));
-        assert_eq!(plan.to_json()["refused"].as_array().map(|a| a.len()), Some(3));
+        assert_eq!(
+            plan.to_json()["refused"].as_array().map(|a| a.len()),
+            Some(3)
+        );
     }
 
     #[test]
@@ -585,7 +604,9 @@ mod tests {
             adapt(&no_name, &MigrationLimits::default()).unwrap_err(),
             MigrationRefusal::EmptyName
         );
-        assert!(MigrationRefusal::EmptyName.to_refusal_code().is_misconduct());
+        assert!(MigrationRefusal::EmptyName
+            .to_refusal_code()
+            .is_misconduct());
 
         let no_entry = V3PluginManifest {
             entry: String::new(),
@@ -595,14 +616,19 @@ mod tests {
             adapt(&no_entry, &MigrationLimits::default()).unwrap_err(),
             MigrationRefusal::MissingEntry
         );
-        assert!(MigrationRefusal::MissingEntry.to_refusal_code().is_misconduct());
+        assert!(MigrationRefusal::MissingEntry
+            .to_refusal_code()
+            .is_misconduct());
 
         let err = adapt(
             &manifest("odd", &["on_start", "on_teleport"], &[]),
             &MigrationLimits::default(),
         )
         .unwrap_err();
-        assert_eq!(err, MigrationRefusal::UnsupportedHook("on_teleport".to_string()));
+        assert_eq!(
+            err,
+            MigrationRefusal::UnsupportedHook("on_teleport".to_string())
+        );
         assert!(!err.to_refusal_code().is_misconduct());
 
         let err = adapt(
@@ -661,11 +687,17 @@ mod tests {
         let mut kernel = Kernel::new(KernelConfig::default());
         let agent = keys(210);
         let peer = keys(211);
-        kernel.register(&agent, "plugin-host", &["x"], Credits(20)).unwrap();
+        kernel
+            .register(&agent, "plugin-host", &["x"], Credits(20))
+            .unwrap();
         kernel.register(&peer, "peer", &["y"], Credits(20)).unwrap();
 
         let plan = adapt(
-            &manifest("notes", &["on_start", "on_offer", "on_settle"], &["write:progress"]),
+            &manifest(
+                "notes",
+                &["on_start", "on_offer", "on_settle"],
+                &["write:progress"],
+            ),
             &MigrationLimits::default(),
         )
         .unwrap();
@@ -689,7 +721,9 @@ mod tests {
         let mut kernel = Kernel::new(KernelConfig::default());
         // 质押恰好等于准入下限 → withdraw_stake 被权限模型拒绝。
         let agent = keys(212);
-        kernel.register(&agent, "tight", &["x"], Credits(10)).unwrap();
+        kernel
+            .register(&agent, "tight", &["x"], Credits(10))
+            .unwrap();
         let plan = adapt(
             &manifest("tight", &["on_start"], &["stake:withdraw"]),
             &MigrationLimits::default(),
@@ -697,9 +731,10 @@ mod tests {
         .unwrap();
         assert!(plan.capabilities().contains(&Capability::WithdrawStake));
         let application = apply_plan(&mut kernel, &agent, &plan).unwrap();
-        assert!(application.denied.iter().any(|(cap, code)| {
-            cap == "withdraw_stake" && *code == RefusalCode::PolicyDenied
-        }));
+        assert!(application
+            .denied
+            .iter()
+            .any(|(cap, code)| { cap == "withdraw_stake" && *code == RefusalCode::PolicyDenied }));
         // fail-closed：被拒能力对应的路由不发送任何消息；on_start 仍能发（PublishCard 允许）。
         assert_eq!(application.sent, 1);
         assert_eq!(kernel.queued_envelopes().len(), 1);

@@ -35,14 +35,26 @@ pub enum JournalStep {
         stake: i64,
     },
     Announce,
-    Offer { to: usize, skill: String, price: i64 },
-    Settle { to: usize, amount: i64, grade: String },
+    Offer {
+        to: usize,
+        skill: String,
+        price: i64,
+    },
+    Settle {
+        to: usize,
+        amount: i64,
+        grade: String,
+    },
     /// 伪造一个信封（期望被内核拒绝）。
     Forgery,
     /// 一次自治回合（决策由策略决定，可重放）。
-    AutonomyTurn { planned: Vec<String> },
+    AutonomyTurn {
+        planned: Vec<String>,
+    },
     /// 生命周期事件（用字符串表达，便于日志可读）。
-    Lifecycle { event: String },
+    Lifecycle {
+        event: String,
+    },
 }
 
 impl JournalStep {
@@ -162,10 +174,17 @@ pub fn invariant_suite(kernel: &Kernel) -> Vec<SelfCheck> {
         SelfCheck::pass(
             track,
             "harness.queue_sealed",
-            format!("{} 个待投递信封全部验签通过", kernel.queued_envelopes().len()),
+            format!(
+                "{} 个待投递信封全部验签通过",
+                kernel.queued_envelopes().len()
+            ),
         )
     } else {
-        SelfCheck::fail(track, "harness.queue_sealed", format!("{unsigned} 个信封验签失败"))
+        SelfCheck::fail(
+            track,
+            "harness.queue_sealed",
+            format!("{unsigned} 个信封验签失败"),
+        )
     });
 
     checks
@@ -222,7 +241,10 @@ impl Harness {
     }
 
     fn seed_for(&self, index: usize) -> CoreResult<[u8; 32]> {
-        self.seeds.get(index).copied().ok_or(CoreError::UnknownAgent)
+        self.seeds
+            .get(index)
+            .copied()
+            .ok_or(CoreError::UnknownAgent)
     }
 
     fn keys_for(&self, index: usize) -> CoreResult<AgentKeys> {
@@ -234,7 +256,12 @@ impl Harness {
     }
 
     /// 自主注册 n 个 Agent，全部写进日志。
-    pub fn add_agents(&mut self, n: usize, skills: &[&str], stake: Credits) -> CoreResult<Vec<Did>> {
+    pub fn add_agents(
+        &mut self,
+        n: usize,
+        skills: &[&str],
+        stake: Credits,
+    ) -> CoreResult<Vec<Did>> {
         let mut dids = Vec::new();
         for _ in 0..n {
             let mut seed = [0xC0u8; 32];
@@ -389,7 +416,11 @@ impl Harness {
         let mut layer = AutonomyLayer::new(keys, policy);
         let at = self.kernel.tick();
         let turn = layer.turn(&mut self.kernel)?;
-        let planned: Vec<String> = turn.planned.iter().map(|k| k.as_str().to_string()).collect();
+        let planned: Vec<String> = turn
+            .planned
+            .iter()
+            .map(|k| k.as_str().to_string())
+            .collect();
         self.journal.push(JournalEntry {
             at,
             actor,
@@ -512,8 +543,11 @@ impl Harness {
                     let keys = AgentKeys::from_seed(seed_at(&seeds, entry.actor)?);
                     let mut layer = AutonomyLayer::new(keys, AutonomyPolicy::default());
                     let turn = layer.turn(&mut kernel)?;
-                    let replayed: Vec<String> =
-                        turn.planned.iter().map(|k| k.as_str().to_string()).collect();
+                    let replayed: Vec<String> = turn
+                        .planned
+                        .iter()
+                        .map(|k| k.as_str().to_string())
+                        .collect();
                     if &replayed != planned {
                         return Err(CoreError::InvalidKind);
                     }
@@ -589,7 +623,9 @@ mod tests {
         h.announce(0).unwrap();
         h.offer(0, 1, "skill.a", Credits(5)).unwrap();
         assert!(h.settle(0, 1, Credits(5), EvidenceGrade::Verified).unwrap());
-        assert!(!h.settle(0, 1, Credits(5), EvidenceGrade::Unverified).unwrap());
+        assert!(!h
+            .settle(0, 1, Credits(5), EvidenceGrade::Unverified)
+            .unwrap());
         h.autonomy_turn(0, AutonomyPolicy::default()).unwrap();
         h.lifecycle(1, LifecycleEvent::WorkStarted).unwrap();
         h.lifecycle(1, LifecycleEvent::Refused(RefusalCode::Timeout))
@@ -604,9 +640,16 @@ mod tests {
     fn the_same_script_produces_the_same_journal_and_world() {
         let a = script();
         let b = script();
-        assert_eq!(a.journal_fingerprint().unwrap(), b.journal_fingerprint().unwrap());
+        assert_eq!(
+            a.journal_fingerprint().unwrap(),
+            b.journal_fingerprint().unwrap()
+        );
         assert_eq!(a.outcome().unwrap(), b.outcome().unwrap());
-        assert_eq!(a.journal().len(), 12, "3 注册 + 通告 + 报价 + 2 结算 + 回合 + 3 生命周期 + 伪造");
+        assert_eq!(
+            a.journal().len(),
+            12,
+            "3 注册 + 通告 + 报价 + 2 结算 + 回合 + 3 生命周期 + 伪造"
+        );
         assert_eq!(a.journal_json().as_array().map(|j| j.len()), Some(12));
     }
 
@@ -614,7 +657,10 @@ mod tests {
     fn replaying_the_journal_rebuilds_the_identical_world() {
         let h = script();
         let outcome = h.verify_replay().unwrap();
-        assert_eq!(outcome.registry_fingerprint, h.outcome().unwrap().registry_fingerprint);
+        assert_eq!(
+            outcome.registry_fingerprint,
+            h.outcome().unwrap().registry_fingerprint
+        );
         assert_eq!(outcome.refusals, h.kernel().refusals().len());
         assert!(outcome.minted > 0);
         assert_eq!(outcome.slashed, 0);
@@ -644,9 +690,7 @@ mod tests {
         let mut broken = Harness::new(KernelConfig::default(), 8);
         broken.add_agents(1, &["x"], Credits(20)).unwrap();
         let did = broken.did_of(0).unwrap();
-        broken
-            .kernel_mut()
-            .force_quarantine_for_test(&did);
+        broken.kernel_mut().force_quarantine_for_test(&did);
         let checks = invariant_suite(broken.kernel());
         assert!(!au4a_core::all_passed(&checks));
         assert!(checks
@@ -662,7 +706,10 @@ mod tests {
         assert!(code.is_misconduct());
         h.lifecycle(0, LifecycleEvent::Refused(code)).unwrap();
         assert_eq!(
-            h.kernel().lifecycle_of(&h.did_of(0).unwrap()).unwrap().state(),
+            h.kernel()
+                .lifecycle_of(&h.did_of(0).unwrap())
+                .unwrap()
+                .state(),
             AgentState::Quarantined
         );
         assert!(au4a_core::all_passed(&invariant_suite(h.kernel())));

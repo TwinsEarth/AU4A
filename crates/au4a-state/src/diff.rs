@@ -260,18 +260,10 @@ impl StateDelta {
         }
         for op in &self.set {
             blocks.retain(|b| !(b.zone() == op.zone && b.key() == op.key));
-            blocks.push(StateBlock::new(
-                op.zone,
-                op.key.clone(),
-                op.value.clone(),
-            )?);
+            blocks.push(StateBlock::new(op.zone, op.key.clone(), op.value.clone())?);
         }
-        let applied = StateSnapshot::capture(
-            base.agent(),
-            base.source_node(),
-            base.epoch(),
-            blocks,
-        )?;
+        let applied =
+            StateSnapshot::capture(base.agent(), base.source_node(), base.epoch(), blocks)?;
         if applied.content_root()? != self.to_content_root {
             return Err(CoreError::InvalidSignature);
         }

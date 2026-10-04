@@ -132,7 +132,8 @@ impl SafetyEvent {
         if !is_hex64(&self.prev) || !is_hex64(&self.hash) {
             return Err(CoreError::Encoding);
         }
-        if Self::compute_hash(self.seq, self.at, self.kind, &self.payload, &self.prev)? == self.hash {
+        if Self::compute_hash(self.seq, self.at, self.kind, &self.payload, &self.prev)? == self.hash
+        {
             Ok(())
         } else {
             Err(CoreError::InvalidSignature)

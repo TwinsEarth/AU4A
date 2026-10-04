@@ -232,7 +232,10 @@ pub fn monitor_checks(kernel: &Kernel, revenue: &RevenueBook) -> Vec<SelfCheck> 
     let second = panel(kernel, revenue, &Value::Null);
     checks.push(match (&first, &second) {
         (Ok(a), Ok(b)) => double(
-            a == b && a.rows_earned_total().map(|s| s == b.total_earned).unwrap_or(false),
+            a == b
+                && a.rows_earned_total()
+                    .map(|s| s == b.total_earned)
+                    .unwrap_or(false),
             "monitor.read_only",
             format!(
                 "两次只读投影逐字段相同（账户 {} 个、注册 Agent {} 个），行内收益合计 = 总收益 {}",
@@ -264,8 +267,12 @@ mod tests {
         let mut kernel = Kernel::new(KernelConfig::default());
         let a = AgentKeys::from_seed(&[1; 32]);
         let b = AgentKeys::from_seed(&[2; 32]);
-        kernel.register(&a, "provider", &["compute"], Credits(10)).unwrap();
-        kernel.register(&b, "consumer", &["buy"], Credits(10)).unwrap();
+        kernel
+            .register(&a, "provider", &["compute"], Credits(10))
+            .unwrap();
+        kernel
+            .register(&b, "consumer", &["buy"], Credits(10))
+            .unwrap();
         let seller = a.did();
         let buyer = b.did();
         (kernel, seller, buyer)
@@ -300,7 +307,10 @@ mod tests {
         assert_eq!(totals.total, Credits(1_450));
         assert_eq!(totals.accounts, 2);
         assert!(totals.conservation_ok);
-        assert_eq!(totals.total, Credits(totals.available.get() + totals.locked.get()));
+        assert_eq!(
+            totals.total,
+            Credits(totals.available.get() + totals.locked.get())
+        );
     }
 
     #[test]
@@ -331,12 +341,27 @@ mod tests {
         assert_eq!(value["total_earned"], json!(200));
         // 账本是节点 /api/revenue 的超集：字段名保持不变。
         let seller_key = seller.as_str();
-        assert_eq!(value["ledger"]["accounts"][seller_key]["available"], json!(1_130));
-        assert_eq!(value["ledger"]["accounts"][seller_key]["earned"], json!(140));
-        assert_eq!(value["ledger"]["accounts"][seller_key]["kind"], json!("agent"));
+        assert_eq!(
+            value["ledger"]["accounts"][seller_key]["available"],
+            json!(1_130)
+        );
+        assert_eq!(
+            value["ledger"]["accounts"][seller_key]["earned"],
+            json!(140)
+        );
+        assert_eq!(
+            value["ledger"]["accounts"][seller_key]["kind"],
+            json!("agent")
+        );
         let owner_key = owner.did.as_str();
-        assert_eq!(value["ledger"]["accounts"][owner_key]["kind"], json!("human_operator"));
-        assert_eq!(value["ledger"]["accounts"][owner_key]["display"], json!("human-operator"));
+        assert_eq!(
+            value["ledger"]["accounts"][owner_key]["kind"],
+            json!("human_operator")
+        );
+        assert_eq!(
+            value["ledger"]["accounts"][owner_key]["display"],
+            json!("human-operator")
+        );
         assert_eq!(value["ledger"]["accounts"][owner_key]["earned"], json!(60));
         assert_eq!(value["ledger"]["accounts"][owner_key]["locked"], json!(0));
         assert_eq!(value["context"]["scenario"], json!("unit-test"));

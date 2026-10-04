@@ -362,12 +362,7 @@ impl LifecycleBook {
     }
 
     /// 对某个 Agent 施加事件；未登记则返回 `UnknownAgent`。
-    pub fn apply(
-        &mut self,
-        did: &Did,
-        event: LifecycleEvent,
-        at: u64,
-    ) -> CoreResult<Transition> {
+    pub fn apply(&mut self, did: &Did, event: LifecycleEvent, at: u64) -> CoreResult<Transition> {
         let life = self
             .lives
             .get_mut(did.as_str())
@@ -460,7 +455,9 @@ mod tests {
         assert_eq!(life.state(), AgentState::Active);
         assert_eq!(life.history().len(), 3);
         assert!(life.allowed_events().contains(&LifecycleEvent::WorkStarted));
-        assert!(!life.allowed_events().contains(&LifecycleEvent::CouncilReprieve));
+        assert!(!life
+            .allowed_events()
+            .contains(&LifecycleEvent::CouncilReprieve));
     }
 
     #[test]
@@ -471,10 +468,17 @@ mod tests {
             life.apply(LifecycleEvent::WorkStarted, 1),
             Err(RefusalCode::Conflict)
         );
-        assert_eq!(life.state(), AgentState::Provisional, "非法事件不得改变状态");
+        assert_eq!(
+            life.state(),
+            AgentState::Provisional,
+            "非法事件不得改变状态"
+        );
         assert!(life.history().is_empty());
         life.apply(LifecycleEvent::Admitted, 2).unwrap();
-        assert_eq!(life.apply(LifecycleEvent::Admitted, 3), Err(RefusalCode::Conflict));
+        assert_eq!(
+            life.apply(LifecycleEvent::Admitted, 3),
+            Err(RefusalCode::Conflict)
+        );
         assert_eq!(
             life.apply(LifecycleEvent::CouncilReprieve, 4),
             Err(RefusalCode::Conflict),
@@ -534,7 +538,10 @@ mod tests {
             }
             assert_eq!(life.state(), before);
         }
-        assert_eq!(life.apply(LifecycleEvent::Retired, 4).unwrap().to, AgentState::Retired);
+        assert_eq!(
+            life.apply(LifecycleEvent::Retired, 4).unwrap().to,
+            AgentState::Retired
+        );
     }
 
     #[test]
@@ -545,8 +552,14 @@ mod tests {
             vec![],
             vec![LifecycleEvent::Admitted],
             vec![LifecycleEvent::Admitted, LifecycleEvent::WorkStarted],
-            vec![LifecycleEvent::Admitted, LifecycleEvent::Refused(RefusalCode::Timeout)],
-            vec![LifecycleEvent::Admitted, LifecycleEvent::Refused(RefusalCode::Malformed)],
+            vec![
+                LifecycleEvent::Admitted,
+                LifecycleEvent::Refused(RefusalCode::Timeout),
+            ],
+            vec![
+                LifecycleEvent::Admitted,
+                LifecycleEvent::Refused(RefusalCode::Malformed),
+            ],
             vec![LifecycleEvent::Admitted, LifecycleEvent::Retired],
         ];
         for path in paths {
@@ -564,7 +577,13 @@ mod tests {
                 let can = fresh.can(event);
                 assert_eq!(allowed_before.contains(&event), can);
                 let applied = fresh.apply(event, 2);
-                assert_eq!(can, applied.is_ok(), "state={:?} event={:?}", probe.state(), event);
+                assert_eq!(
+                    can,
+                    applied.is_ok(),
+                    "state={:?} event={:?}",
+                    probe.state(),
+                    event
+                );
             }
         }
         // 委员会隔离 → 解除隔离 → 恢复 Active。
@@ -609,20 +628,31 @@ mod tests {
             k.register(&keys, format!("agent-{i}"), &["x"], au4a_core::Credits(20))
                 .unwrap();
             book.enroll(&keys.did());
-            book.apply(&keys.did(), LifecycleEvent::Admitted, i as u64).unwrap();
+            book.apply(&keys.did(), LifecycleEvent::Admitted, i as u64)
+                .unwrap();
         }
         assert_eq!(book.len(), 3);
         assert_eq!(book.count(AgentState::Active), 3);
         assert!(book.get(&keys(30).did()).is_some());
-        assert!(book.apply(&keys(99).did(), LifecycleEvent::Admitted, 1).is_err());
+        assert!(book
+            .apply(&keys(99).did(), LifecycleEvent::Admitted, 1)
+            .is_err());
 
         // 竞争失败 10 次 + 一次恶意：只有恶意那次进入隔离。
         let victim = keys(30).did();
         for i in 0..10 {
-            book.try_apply(&victim, LifecycleEvent::Refused(RefusalCode::RateLimited), i);
+            book.try_apply(
+                &victim,
+                LifecycleEvent::Refused(RefusalCode::RateLimited),
+                i,
+            );
         }
         assert_eq!(book.get(&victim).unwrap().state(), AgentState::Degraded);
-        book.try_apply(&victim, LifecycleEvent::Refused(RefusalCode::Unauthorized), 100);
+        book.try_apply(
+            &victim,
+            LifecycleEvent::Refused(RefusalCode::Unauthorized),
+            100,
+        );
         assert_eq!(book.get(&victim).unwrap().state(), AgentState::Quarantined);
         assert_eq!(book.count(AgentState::Quarantined), 1);
 

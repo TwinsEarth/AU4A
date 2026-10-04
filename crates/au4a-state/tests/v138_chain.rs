@@ -21,7 +21,12 @@ fn agent(seed: u8) -> AgentKeys {
 
 fn rich_state(seed: u8, v: i64) -> StateSnapshot {
     let blocks = vec![
-        StateBlock::new(StateZone::Fs, "/work/a.md", json!({"v": v, "bytes": 10 * v})).unwrap(),
+        StateBlock::new(
+            StateZone::Fs,
+            "/work/a.md",
+            json!({"v": v, "bytes": 10 * v}),
+        )
+        .unwrap(),
         StateBlock::new(StateZone::Fs, "/work/b.json", json!({"steps": [v, v + 1]})).unwrap(),
         StateBlock::new(StateZone::Memory, "last_task", json!(format!("task-{v}"))).unwrap(),
         StateBlock::new(StateZone::Memory, "counter", json!(v)).unwrap(),
@@ -76,7 +81,10 @@ fn every_stage_fault_rolls_back_and_stays_consistent() {
         assert!(!report.committed, "{point:?}");
         assert!(report.rollback_clean, "{point:?}");
         assert!(report.consistency.clean, "{point:?}");
-        assert_eq!(report.live_content_root, report.base_content_root, "{point:?}");
+        assert_eq!(
+            report.live_content_root, report.base_content_root,
+            "{point:?}"
+        );
         assert!(report.is_ok(), "{point:?}");
     }
 }
@@ -256,19 +264,30 @@ fn a_state_with_no_change_is_a_no_op_chain() {
 fn unicode_keys_and_control_characters_roundtrip() {
     let keys = agent(11);
     let blocks = vec![
-        StateBlock::new(StateZone::Fs, "/工作/笔记-📝.md", json!({"文本": "迁移\n完成"})).unwrap(),
+        StateBlock::new(
+            StateZone::Fs,
+            "/工作/笔记-📝.md",
+            json!({"文本": "迁移\n完成"}),
+        )
+        .unwrap(),
         StateBlock::new(StateZone::Context, "目标", json!({"说明": "从 A 到 B\t好"})).unwrap(),
     ];
     let snapshot = StateSnapshot::capture(&keys.did(), "node-a", 1, blocks).unwrap();
     snapshot.verify().unwrap();
     let object = au4a_state::snapshot_to_object(&snapshot).unwrap();
     let back = au4a_state::object_to_snapshot(&object).unwrap();
-    assert_eq!(back.content_root().unwrap(), snapshot.content_root().unwrap());
+    assert_eq!(
+        back.content_root().unwrap(),
+        snapshot.content_root().unwrap()
+    );
 
     let mut store = MemoryStore::new();
     write_snapshot(&mut store, "live:", &snapshot).unwrap();
     let moved = au4a_state::read_snapshot(&store, "live:", &keys.did(), "node-b", 9).unwrap();
-    assert_eq!(moved.content_root().unwrap(), snapshot.content_root().unwrap());
+    assert_eq!(
+        moved.content_root().unwrap(),
+        snapshot.content_root().unwrap()
+    );
 }
 
 #[test]
@@ -317,7 +336,10 @@ fn oversized_and_malformed_inputs_are_refused() {
         Err(CoreError::FloatForbidden)
     );
     // 空 key / 控制字符 key。
-    assert_eq!(StateBlock::new(StateZone::Memory, "", json!(1)), Err(CoreError::Encoding));
+    assert_eq!(
+        StateBlock::new(StateZone::Memory, "", json!(1)),
+        Err(CoreError::Encoding)
+    );
     assert_eq!(
         StateBlock::new(StateZone::Memory, "a\u{1}b", json!(1)),
         Err(CoreError::Encoding)
@@ -357,7 +379,9 @@ fn self_check_covers_the_full_chain() {
 fn scenario_still_passes_all_previous_guarantees() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(15);
-    kernel.register(&keys, "carrier", &["state.chain"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.chain"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     // 每一版的保证都在同一个 JSON 里，且互不矛盾。
     assert_eq!(out["identical"], json!(true));

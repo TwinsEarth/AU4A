@@ -23,7 +23,7 @@
 
 use std::collections::BTreeMap;
 
-use au4a_core::{canonicalize, content_hash, CoreError, CoreResult, Did, SelfCheck, short_id};
+use au4a_core::{canonicalize, content_hash, short_id, CoreError, CoreResult, Did, SelfCheck};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -144,7 +144,9 @@ pub fn publish(store: &ExperienceStore, policy: &PrivacyPolicy) -> CoreResult<Pu
     let mut peer_tags: BTreeMap<String, ()> = BTreeMap::new();
     for e in store.entries() {
         by_type.entry(e.task_type.clone()).or_default().push(e);
-        *by_outcome.entry(e.outcome.as_str().to_string()).or_insert(0) += 1;
+        *by_outcome
+            .entry(e.outcome.as_str().to_string())
+            .or_insert(0) += 1;
         for p in &e.peer_agents {
             peer_tags.insert(peer_tag(policy, p)?, ());
         }
@@ -171,7 +173,10 @@ pub fn publish(store: &ExperienceStore, policy: &PrivacyPolicy) -> CoreResult<Pu
         let success_bp = successes * 10_000 / sample as i64;
         let reward_sum: i64 = entries.iter().map(|e| e.reward.get()).sum();
         let mean_reward = reward_sum / sample as i64;
-        let context_sum: i64 = entries.iter().map(|e| e.context.chars().count() as i64).sum();
+        let context_sum: i64 = entries
+            .iter()
+            .map(|e| e.context.chars().count() as i64)
+            .sum();
         let mean_context = context_sum / sample as i64;
         let mut peers = BTreeMap::new();
         for e in entries {
@@ -201,7 +206,10 @@ pub fn publish(store: &ExperienceStore, policy: &PrivacyPolicy) -> CoreResult<Pu
     let policy_tag = short_id(&content_hash(
         format!(
             "{}:{}:{}:{}",
-            policy.salt, policy.min_bucket_sample, policy.reward_bucket_credits, policy.context_bucket_chars
+            policy.salt,
+            policy.min_bucket_sample,
+            policy.reward_bucket_credits,
+            policy.context_bucket_chars
         )
         .as_bytes(),
     ));
@@ -327,7 +335,13 @@ pub fn self_check() -> Vec<SelfCheck> {
     let policy = PrivacyPolicy::default();
     let mut store = match ExperienceStore::new(32) {
         Ok(s) => s,
-        Err(_) => return vec![crate::check("privacy.public_redacted", false, "经验库构造失败")],
+        Err(_) => {
+            return vec![crate::check(
+                "privacy.public_redacted",
+                false,
+                "经验库构造失败",
+            )]
+        }
     };
     // 3 条热门类型 + 1 条冷门类型（后者应被抑制），上下文带可搜索的秘密串
     for i in 0..4u64 {
@@ -338,7 +352,11 @@ pub fn self_check() -> Vec<SelfCheck> {
             task_type,
             &context,
             "deliver",
-            if i == 3 { Outcome::Failure } else { Outcome::Success },
+            if i == 3 {
+                Outcome::Failure
+            } else {
+                Outcome::Success
+            },
             au4a_core::Credits(37),
             i,
             &peers[..1],
@@ -363,7 +381,9 @@ pub fn self_check() -> Vec<SelfCheck> {
                 .filter(|a| !a.suppressed)
                 .all(|a| a.mean_reward_bucket == Some(25));
             let suppressed = v.suppressed_groups == 1
-                && v.aggregates.iter().any(|a| a.suppressed && a.success_bp.is_none());
+                && v.aggregates
+                    .iter()
+                    .any(|a| a.suppressed && a.success_bp.is_none());
             (
                 no_secret && no_did && no_task_id && bucketed && suppressed,
                 format!(
@@ -423,10 +443,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         salt: "another-salt-1.6".to_string(),
         ..policy.clone()
     };
-    let salt_matters = match (
-        peer_tag(&policy, &peers[0]),
-        peer_tag(&other, &peers[0]),
-    ) {
+    let salt_matters = match (peer_tag(&policy, &peers[0]), peer_tag(&other, &peers[0])) {
         (Ok(a), Ok(b)) => a != b && !a.contains("did:au4a:"),
         _ => false,
     };

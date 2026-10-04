@@ -17,7 +17,10 @@ fn main() {
     let cmd = args.first().map(String::as_str).unwrap_or("");
     let flag = |name: &str| args.iter().any(|a| a == name);
     let value = |name: &str| -> Option<String> {
-        args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+        args.iter()
+            .position(|a| a == name)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
     };
 
     match cmd {
@@ -25,9 +28,15 @@ fn main() {
 
         "tracks" => {
             if flag("--json") {
-                println!("{}", serde_json::to_string_pretty(&au4a_node::track_table()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&au4a_node::track_table()).unwrap()
+                );
             } else {
-                println!("au4a-node {} — 10 条轨道（10 个中版本）", au4a_node::version());
+                println!(
+                    "au4a-node {} — 10 条轨道（10 个中版本）",
+                    au4a_node::version()
+                );
                 for line in au4a_node::track_table() {
                     println!("  {line}");
                 }
@@ -39,18 +48,33 @@ fn main() {
             let passed = checks.iter().filter(|c| c.passed).count();
             let all = au4a_core::all_passed(&checks);
             if flag("--json") {
-                println!("{}", serde_json::to_string_pretty(&au4a_node::self_checks_json()).unwrap());
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&au4a_node::self_checks_json()).unwrap()
+                );
             } else {
-                println!("au4a-node {} 自检：{passed}/{} 通过", au4a_node::version(), checks.len());
+                println!(
+                    "au4a-node {} 自检：{passed}/{} 通过",
+                    au4a_node::version(),
+                    checks.len()
+                );
                 for c in &checks {
-                    println!("  [{}] {:<6} {:<28} {}", if c.passed { "ok" } else { "FAIL" }, c.track, c.name, c.detail);
+                    println!(
+                        "  [{}] {:<6} {:<28} {}",
+                        if c.passed { "ok" } else { "FAIL" },
+                        c.track,
+                        c.name,
+                        c.detail
+                    );
                 }
             }
             exit(if all { 0 } else { 1 });
         }
 
         "observe" => {
-            let agents = value("--agents").and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_AGENTS);
+            let agents = value("--agents")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_AGENTS);
             let (kernel, outcomes, dids) = match scenario::run_full(agents, |_| {}) {
                 Ok(v) => v,
                 Err(e) => {
@@ -58,26 +82,40 @@ fn main() {
                     exit(2);
                 }
             };
-            let summary = scenario::summary_json(&kernel, &outcomes, &dids).unwrap_or(serde_json::Value::Null);
+            let summary = scenario::summary_json(&kernel, &outcomes, &dids)
+                .unwrap_or(serde_json::Value::Null);
             if flag("--json") || flag("--once") {
                 println!("{}", serde_json::to_string_pretty(&summary).unwrap());
             } else {
                 println!("au4a-node {} 观察投影（只读）", au4a_node::version());
-                println!("  Agent：{}　已投递消息：{}　拒绝：{}",
+                println!(
+                    "  Agent：{}　已投递消息：{}　拒绝：{}",
                     dids.len(),
                     kernel.observe().messages_delivered,
-                    kernel.observe().refusal_count);
-                println!("  收益：总量 {}　发行 {}　罚没 {}",
-                    kernel.observe().ledger.total, kernel.observe().ledger.minted, kernel.observe().ledger.slashed);
+                    kernel.observe().refusal_count
+                );
+                println!(
+                    "  收益：总量 {}　发行 {}　罚没 {}",
+                    kernel.observe().ledger.total,
+                    kernel.observe().ledger.minted,
+                    kernel.observe().ledger.slashed
+                );
                 println!("  轨道结果：");
                 for o in &outcomes {
-                    println!("    [{}] {:<6} {}", if o.ok { "ok" } else { "FAIL" }, o.track, o.title);
+                    println!(
+                        "    [{}] {:<6} {}",
+                        if o.ok { "ok" } else { "FAIL" },
+                        o.track,
+                        o.title
+                    );
                 }
             }
         }
 
         "run" => {
-            let agents = value("--agents").and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_AGENTS);
+            let agents = value("--agents")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(DEFAULT_AGENTS);
             let observe = value("--observe");
 
             // 观察面先起来（人类可以立刻开始看），随后 Agent 才开跑。
@@ -95,7 +133,10 @@ fn main() {
             let mut observer = match &observe {
                 Some(addr) => match Observer::start(addr, view.clone()) {
                     Ok(o) => {
-                        println!("只读观察面板：{}/（仅 GET；POST/PUT/PATCH/DELETE 一律 405）", o.url());
+                        println!(
+                            "只读观察面板：{}/（仅 GET；POST/PUT/PATCH/DELETE 一律 405）",
+                            o.url()
+                        );
                         Some(o)
                     }
                     Err(e) => {
@@ -122,7 +163,8 @@ fn main() {
                 view.update(scenario::view_json(&kernel));
             }
 
-            let summary = scenario::summary_json(&kernel, &outcomes, &dids).unwrap_or(serde_json::Value::Null);
+            let summary = scenario::summary_json(&kernel, &outcomes, &dids)
+                .unwrap_or(serde_json::Value::Null);
             let ok = outcomes.iter().filter(|o| o.ok).count();
             if flag("--json") {
                 println!("{}", serde_json::to_string_pretty(&summary).unwrap());
@@ -136,7 +178,13 @@ fn main() {
                     started.elapsed()
                 );
                 for o in &outcomes {
-                    println!("  [{}] {:<6} {:<34} {}", if o.ok { "ok" } else { "FAIL" }, o.track, o.title, o.detail);
+                    println!(
+                        "  [{}] {:<6} {:<34} {}",
+                        if o.ok { "ok" } else { "FAIL" },
+                        o.track,
+                        o.title,
+                        o.detail
+                    );
                 }
             }
 

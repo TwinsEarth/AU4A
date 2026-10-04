@@ -79,7 +79,10 @@ impl ViolationLog {
 
     /// 台账里的违规总数（跨协作者）。
     pub fn total(&self) -> u32 {
-        self.by_peer.values().copied().fold(0u32, |a, b| a.saturating_add(b))
+        self.by_peer
+            .values()
+            .copied()
+            .fold(0u32, |a, b| a.saturating_add(b))
     }
 
     pub fn count_of(&self, peer: &Did) -> u32 {
@@ -116,17 +119,25 @@ impl ViolationLog {
         let mut log = ViolationLog::new();
         let mut recorded = 0usize;
         for i in 0..3u64 {
-            if let Ok(v) = Violation::new(&peer, &format!("task-{i}"), "peer-withheld-deliverable", i) {
+            if let Ok(v) =
+                Violation::new(&peer, &format!("task-{i}"), "peer-withheld-deliverable", i)
+            {
                 if log.record(v).is_ok() {
                     recorded += 1;
                 }
             }
         }
-        let counted = recorded == 3 && log.len() == 3 && log.total() == 3 && log.count_of(&peer) == 3;
+        let counted =
+            recorded == 3 && log.len() == 3 && log.total() == 3 && log.count_of(&peer) == 3;
         checks.push(crate::check(
             "violation.counting",
             counted,
-            format!("记录 3 条 → len={} total={} count_of={}", log.len(), log.total(), log.count_of(&peer)),
+            format!(
+                "记录 3 条 → len={} total={} count_of={}",
+                log.len(),
+                log.total(),
+                log.count_of(&peer)
+            ),
         ));
 
         let rejected = Violation::new(&peer, "task", "", 0).is_err()

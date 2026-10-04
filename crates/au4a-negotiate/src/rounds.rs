@@ -192,7 +192,11 @@ impl Negotiation {
         }
         if self.last_offer_by == by.did() {
             // 自问自答会把轮数刷成噪音，也绕过了「还价」的语义。
-            kernel.refuse(&by.did(), RefusalCode::Conflict, "counter by the author of the last offer");
+            kernel.refuse(
+                &by.did(),
+                RefusalCode::Conflict,
+                "counter by the author of the last offer",
+            );
             return Err(CoreError::InvalidKind);
         }
         if self.rounds_used() >= self.max_rounds {
@@ -248,7 +252,11 @@ impl Negotiation {
             return Err(CoreError::InvalidKind);
         }
         if self.last_offer_by == by.did() {
-            kernel.refuse(&by.did(), RefusalCode::Conflict, "cannot accept your own offer");
+            kernel.refuse(
+                &by.did(),
+                RefusalCode::Conflict,
+                "cannot accept your own offer",
+            );
             return Err(CoreError::InvalidKind);
         }
         let terms_hash = self.current_terms().hash()?;
@@ -261,7 +269,9 @@ impl Negotiation {
         )?;
         kernel.send(&env)?;
         self.journal.append(&env)?;
-        let record = self.machine.transact(Event::Accept, by, to, at, &self.parties)?;
+        let record = self
+            .machine
+            .transact(Event::Accept, by, to, at, &self.parties)?;
         self.journal.append_transition(&record, None)?;
         self.tip = Some(env.id);
         Ok(record)
@@ -289,7 +299,9 @@ impl Negotiation {
         )?;
         kernel.send(&env)?;
         self.journal.append(&env)?;
-        let record = self.machine.transact(Event::Reject, by, to, at, &self.parties)?;
+        let record = self
+            .machine
+            .transact(Event::Reject, by, to, at, &self.parties)?;
         self.journal.append_transition(&record, None)?;
         self.rejections.push(Rejection {
             round: self.rounds_used(),
@@ -324,9 +336,9 @@ impl Negotiation {
             return Err(CoreError::InvalidKind);
         }
         let at = kernel.tick();
-        let record = self
-            .machine
-            .transact(Event::Execute, initiator, counterparty, at, &self.parties)?;
+        let record =
+            self.machine
+                .transact(Event::Execute, initiator, counterparty, at, &self.parties)?;
         self.journal.append_transition(&record, None)?;
         Ok(record)
     }
@@ -351,7 +363,8 @@ impl Negotiation {
         contract.verify()?;
 
         let at = kernel.tick();
-        let claim = crate::breach::BreachClaim::file(claimant, &contract, kind, evidence, note, at)?;
+        let claim =
+            crate::breach::BreachClaim::file(claimant, &contract, kind, evidence, note, at)?;
         let accused = claim.accused.clone();
 
         // 一条真实的 CONTRACT_BREACH 消息：被诉方与任何观察者都能独立验签。
@@ -411,24 +424,17 @@ impl Negotiation {
             return Err(CoreError::InvalidKind);
         }
         let price = contract.terms.price;
-        kernel.settle(
-            &payer.did(),
-            &payee.did(),
-            price,
-            contract.terms.evidence,
-        )?;
+        kernel.settle(&payer.did(), &payee.did(), price, contract.terms.evidence)?;
         let at = kernel.tick();
-        let record = self.machine.transact(Event::Settle, payer, payee, at, &self.parties)?;
+        let record = self
+            .machine
+            .transact(Event::Settle, payer, payee, at, &self.parties)?;
         self.journal.append_transition(&record, None)?;
         Ok(price)
     }
 
     /// 立案仲裁：`ARBITRATION` 相位 + 已有一条有效申诉 + 两名第三方仲裁员。
-    pub fn open_case(
-        &mut self,
-        arbiters: &[Did],
-        at: u64,
-    ) -> CoreResult<ArbitrationCase> {
+    pub fn open_case(&mut self, arbiters: &[Did], at: u64) -> CoreResult<ArbitrationCase> {
         if self.phase() != Phase::Arbitration {
             return Err(CoreError::InvalidKind);
         }
@@ -461,9 +467,9 @@ impl Negotiation {
             return Err(CoreError::InvalidKind);
         }
         let at = kernel.tick();
-        let record = self
-            .machine
-            .transact(Event::Resolve, initiator, counterparty, at, &self.parties)?;
+        let record =
+            self.machine
+                .transact(Event::Resolve, initiator, counterparty, at, &self.parties)?;
         self.journal.append_transition(&record, None)?;
         Ok(record)
     }
@@ -512,7 +518,9 @@ impl Negotiation {
             self.tip = Some(env.id);
         }
 
-        let record = self.machine.transact(Event::Sign, proposer, responder, at, &self.parties)?;
+        let record = self
+            .machine
+            .transact(Event::Sign, proposer, responder, at, &self.parties)?;
         self.journal.append_transition(&record, None)?;
 
         let anchor = contract.anchor(proposer, kernel.tick())?;
@@ -610,7 +618,10 @@ mod tests {
         let bytes = n.archive().unwrap();
         let restored = Journal::decode(&bytes).unwrap();
         assert_eq!(restored.encode().unwrap(), bytes);
-        assert_eq!(restored.replay_digest().unwrap(), n.journal().replay_digest().unwrap());
+        assert_eq!(
+            restored.replay_digest().unwrap(),
+            n.journal().replay_digest().unwrap()
+        );
         n.summary().unwrap();
     }
 
@@ -633,7 +644,10 @@ mod tests {
         assert_eq!(n.phase(), before);
         assert_eq!(n.offers().len(), 3, "被拒的还价不得进入报价历史");
         assert_eq!(k.refusals().len(), refusals_before + 1);
-        assert_eq!(k.refusals().last().unwrap().1.code, RefusalCode::PolicyDenied);
+        assert_eq!(
+            k.refusals().last().unwrap().1.code,
+            RefusalCode::PolicyDenied
+        );
         assert!(!k.refusals().last().unwrap().1.code.is_misconduct());
 
         // 额度耗尽不影响接受／拒绝：协商仍可正常收尾。
@@ -657,7 +671,10 @@ mod tests {
         // 上限 1 轮仍然可用。
         n.counter(&mut k, &b, &a, terms(90)).unwrap();
         assert_eq!(n.rounds_used(), 1);
-        assert_eq!(n.counter(&mut k, &a, &b, terms(80)), Err(CoreError::Overflow));
+        assert_eq!(
+            n.counter(&mut k, &a, &b, terms(80)),
+            Err(CoreError::Overflow)
+        );
     }
 
     #[test]
@@ -666,7 +683,10 @@ mod tests {
         let (a, b) = pair(&mut k, 7, 8);
         let mut n = Negotiation::open(&mut k, &a, &b, terms(100), 4).unwrap();
         // 报价方不能自己还价。
-        assert_eq!(n.counter(&mut k, &a, &b, terms(90)), Err(CoreError::InvalidKind));
+        assert_eq!(
+            n.counter(&mut k, &a, &b, terms(90)),
+            Err(CoreError::InvalidKind)
+        );
         assert_eq!(k.refusals().last().unwrap().1.code, RefusalCode::Conflict);
         // 报价方不能接受自己的报价。
         assert_eq!(n.accept(&mut k, &a, &b), Err(CoreError::InvalidKind));
@@ -694,8 +714,14 @@ mod tests {
             n.counter(&mut k, &outsider, &a, terms(1)),
             Err(CoreError::UnknownAgent)
         );
-        assert_eq!(n.reject(&mut k, &outsider, &a, "x"), Err(CoreError::UnknownAgent));
-        assert_eq!(n.accept(&mut k, &outsider, &a), Err(CoreError::UnknownAgent));
+        assert_eq!(
+            n.reject(&mut k, &outsider, &a, "x"),
+            Err(CoreError::UnknownAgent)
+        );
+        assert_eq!(
+            n.accept(&mut k, &outsider, &a),
+            Err(CoreError::UnknownAgent)
+        );
         assert_eq!(n.offers().len(), 1);
     }
 
@@ -705,7 +731,10 @@ mod tests {
         let (a, b) = pair(&mut k, 12, 13);
         let mut n = Negotiation::open(&mut k, &a, &b, terms(100), 4).unwrap();
         n.accept(&mut k, &b, &a).unwrap();
-        assert_eq!(n.counter(&mut k, &a, &b, terms(90)), Err(CoreError::InvalidKind));
+        assert_eq!(
+            n.counter(&mut k, &a, &b, terms(90)),
+            Err(CoreError::InvalidKind)
+        );
         assert_eq!(n.reject(&mut k, &a, &b, "no"), Err(CoreError::InvalidKind));
         assert_eq!(n.accept(&mut k, &a, &b), Err(CoreError::InvalidKind));
     }
@@ -761,7 +790,11 @@ mod tests {
         n2.counter(&mut k2, &b2, &a2, terms(100)).unwrap();
         n2.accept(&mut k2, &a2, &b2).unwrap();
 
-        assert_eq!(n1.archive().unwrap(), n2.archive().unwrap(), "同种子必须同归档");
+        assert_eq!(
+            n1.archive().unwrap(),
+            n2.archive().unwrap(),
+            "同种子必须同归档"
+        );
         assert_eq!(n1.summary().unwrap(), n2.summary().unwrap());
     }
 }

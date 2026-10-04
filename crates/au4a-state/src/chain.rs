@@ -14,15 +14,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::diff::StateDelta;
-use crate::integrity::{audit_node, compare, NodeAudit, ConsistencyReport};
+use crate::integrity::{audit_node, compare, ConsistencyReport, NodeAudit};
 use crate::perf::{self, DeltaPlan, WorkCounter};
 use crate::recovery::{migrate, FaultInjector, FaultPoint, MigrationOutcome, NodeStore};
 use crate::signed::{SignedSnapshot, SnapshotPolicy, VerifiedSnapshot};
 use crate::snapshot::StateSnapshot;
 use crate::store::MemoryStore;
-use crate::transfer::{
-    pull_into_session, send_chunks, LocalNetwork, NodeId,
-};
+use crate::transfer::{pull_into_session, send_chunks, LocalNetwork, NodeId};
 use crate::udos;
 
 /// 链路参数（全部显式，保证可重放）。
@@ -156,7 +154,15 @@ pub fn run_chain(
     } else {
         // 至少发一块——接收会话需要一块「开工砖」才能建立（这是分帧协议的语义）。
         let first = options.first_batch_chunks.clamp(1, chunks.len());
-        send_chunks(&mut net, &from_node, to_node, &delta, options.chunk_ops, 0, first)?;
+        send_chunks(
+            &mut net,
+            &from_node,
+            to_node,
+            &delta,
+            options.chunk_ops,
+            0,
+            first,
+        )?;
         work.ops_transferred += chunks
             .iter()
             .take(first)
@@ -350,7 +356,10 @@ mod tests {
             .unwrap();
             assert!(!report.committed, "{point:?}");
             assert!(report.rollback_clean, "{point:?}");
-            assert_eq!(report.live_content_root, report.base_content_root, "{point:?}");
+            assert_eq!(
+                report.live_content_root, report.base_content_root,
+                "{point:?}"
+            );
             assert!(report.consistency.clean, "{point:?}");
             assert!(report.is_ok(), "{point:?}: {report:?}");
         }

@@ -155,7 +155,9 @@ impl TaprootAnchor {
         if internal_key.is_empty() || internal_key.len() != 64 {
             return Err(CoreError::InvalidKind);
         }
-        au4a_core::canonical_hash(&json!({ "internal_key": internal_key, "merkle_root": merkle_root }))
+        au4a_core::canonical_hash(
+            &json!({ "internal_key": internal_key, "merkle_root": merkle_root }),
+        )
     }
 
     /// 结构自洽性：输出键必须真的是由内部键与根派生出来的。
@@ -253,7 +255,8 @@ impl TaprootAdapter {
     }
 
     fn anchor(&mut self, net: &mut Testnet, tx: &ChainTx) -> Result<TaprootOutcome, ChainRefusal> {
-        let malformed = |detail: &str| ChainRefusal::new("taproot.anchor", RefusalCode::Malformed, detail);
+        let malformed =
+            |detail: &str| ChainRefusal::new("taproot.anchor", RefusalCode::Malformed, detail);
         let asset_id = tx
             .payload
             .get("asset_id")
@@ -290,14 +293,12 @@ impl TaprootAdapter {
         let mut leaves = Vec::with_capacity(amounts.len());
         let mut total = Credits::ZERO;
         for amount in &amounts {
-            let amount = Credits::new(*amount)
-                .map_err(|_| malformed("金额为负"))?;
+            let amount = Credits::new(*amount).map_err(|_| malformed("金额为负"))?;
             total = total
                 .checked_add(amount)
                 .map_err(|_| malformed("金额溢出"))?;
             leaves.push(
-                leaf_hash(&asset_id, amount, &anchor_tx)
-                    .map_err(|_| malformed("叶子哈希失败"))?,
+                leaf_hash(&asset_id, amount, &anchor_tx).map_err(|_| malformed("叶子哈希失败"))?,
             );
         }
         let merkle = merkle_root(&leaves).map_err(|_| malformed("Merkle 根计算失败"))?;
@@ -338,11 +339,7 @@ impl TaprootAdapter {
             .ok_or_else(|| {
                 ChainRefusal::new("taproot.proof", RefusalCode::Malformed, "缺少 asset_id")
             })?;
-        let index = tx
-            .payload
-            .get("index")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as usize;
+        let index = tx.payload.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
         let anchor = self.anchors.get(asset_id).ok_or_else(|| {
             ChainRefusal::new(
                 "taproot.proof",
@@ -506,12 +503,17 @@ mod tests {
     #[test]
     fn merkle_proofs_verify_and_tampering_breaks_them() {
         let leaves: Vec<String> = (1..=5)
-            .map(|i| leaf_hash("tap:USDT", Credits(i * 10), &Seal::new(format!("s{i}"), 0)).unwrap())
+            .map(|i| {
+                leaf_hash("tap:USDT", Credits(i * 10), &Seal::new(format!("s{i}"), 0)).unwrap()
+            })
             .collect();
         let root = merkle_root(&leaves).unwrap();
         for index in 0..leaves.len() {
             let proof = merkle_proof(&leaves, index).unwrap();
-            assert!(verify_merkle(&leaves[index], &proof, &root).unwrap(), "index {index}");
+            assert!(
+                verify_merkle(&leaves[index], &proof, &root).unwrap(),
+                "index {index}"
+            );
         }
         // 换一个叶子 → 不成立。
         let proof = merkle_proof(&leaves, 0).unwrap();
@@ -565,7 +567,8 @@ mod tests {
         net.mine_to(3);
         let anchor = adapter.anchor_of("tap:USDT").unwrap().clone();
         let proof = anchor.proof_for(0).unwrap();
-        let fake_leaf = leaf_hash("tap:USDT", Credits(9_999), &Seal::new(tx.id.clone(), 0)).unwrap();
+        let fake_leaf =
+            leaf_hash("tap:USDT", Credits(9_999), &Seal::new(tx.id.clone(), 0)).unwrap();
         let verify_tx = ChainTx::new(
             ChainId::BtcRegtest,
             "taproot.verify",

@@ -28,10 +28,7 @@ fn big_graph() -> AgentCapabilityGraph {
     let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
     for seed in 0..100u8 {
         let peer = AgentKeys::from_seed(&[seed; 32]);
-        let caps = vec![
-            cap("translate.en-zh", 3),
-            cap("sentiment.analyze", 2),
-        ];
+        let caps = vec![cap("translate.en-zh", 3), cap("sentiment.analyze", 2)];
         let signed = Declaration::new(peer.did(), 1, 1, caps)
             .expect("coherent")
             .sign(&peer)
@@ -87,8 +84,12 @@ fn index_results_equal_a_brute_force_scan() {
 fn every_filter_is_a_hard_condition() {
     let owner = AgentKeys::from_seed(&[210; 32]);
     let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
-    let cheap_bad = cap("translate.en-zh", 1).with_reliability_bp(5_000).with_latency(50, 100);
-    let dear_good = cap("translate.en-zh", 50).with_reliability_bp(9_900).with_latency(500, 5_000);
+    let cheap_bad = cap("translate.en-zh", 1)
+        .with_reliability_bp(5_000)
+        .with_latency(50, 100);
+    let dear_good = cap("translate.en-zh", 50)
+        .with_reliability_bp(9_900)
+        .with_latency(500, 5_000);
     for (seed, capability) in [(211u8, cheap_bad), (212, dear_good)] {
         let peer = AgentKeys::from_seed(&[seed; 32]);
         let signed = Declaration::new(peer.did(), 1, 1, vec![capability])
@@ -99,7 +100,11 @@ fn every_filter_is_a_hard_condition() {
     }
     let all = graph.query(&CapabilityQuery::new(skill("translate.en-zh")), 1);
     assert_eq!(all.matches.len(), 2);
-    assert_eq!(all.matches[0].capability.price_per_unit, Credits(50), "可靠度优先于价格");
+    assert_eq!(
+        all.matches[0].capability.price_per_unit,
+        Credits(50),
+        "可靠度优先于价格"
+    );
 
     let gated = graph.query(
         &CapabilityQuery::new(skill("translate.en-zh"))
@@ -109,7 +114,10 @@ fn every_filter_is_a_hard_condition() {
     );
     assert!(gated.is_empty(), "没有任何候选同时满足两个硬条件");
     assert_eq!(gated.refusal_code(), Some(RefusalCode::Unsupported));
-    assert!(!gated.refusal_code().expect("code").is_misconduct(), "查不到不是恶意");
+    assert!(
+        !gated.refusal_code().expect("code").is_misconduct(),
+        "查不到不是恶意"
+    );
     assert_eq!(gated.stats.matched, 0);
     assert_eq!(gated.stats.scanned, 2, "过滤在候选集内完成");
 }
@@ -133,7 +141,8 @@ fn format_filters_use_the_intersection_of_two_indexes() {
         graph.apply(&signed, 1);
     }
     let only_json = graph.query(
-        &CapabilityQuery::new(skill("translate.en-zh")).with_input_format(format("application/json")),
+        &CapabilityQuery::new(skill("translate.en-zh"))
+            .with_input_format(format("application/json")),
         1,
     );
     assert_eq!(only_json.stats.candidates, 1, "两个索引求交后只剩 1 条候选");
@@ -180,12 +189,20 @@ fn the_index_follows_evictions_expiry_and_invalidation() {
     }
     assert_eq!(graph.neighbor_count(), 2, "容量 2：第三个邻居挤掉第一个");
     assert_eq!(graph.index_summary()["entries"].as_u64(), Some(2));
-    assert!(graph.query(&CapabilityQuery::new(skill("translate.en-zh")), 1).stats.candidates == 2);
+    assert!(
+        graph
+            .query(&CapabilityQuery::new(skill("translate.en-zh")), 1)
+            .stats
+            .candidates
+            == 2
+    );
 
     // 过期清理 → 索引同步清空。
     assert_eq!(graph.expire_neighbors(1_000).len(), 2);
     assert!(graph.index_consistent());
-    assert!(graph.query(&CapabilityQuery::new(skill("translate.en-zh")), 1).is_empty());
+    assert!(graph
+        .query(&CapabilityQuery::new(skill("translate.en-zh")), 1)
+        .is_empty());
 
     // 显式失效 → 索引同步。
     let signed = Declaration::new(peers[2].did(), 2, 0, vec![cap("sentiment.analyze", 1)])
@@ -216,7 +233,10 @@ fn owners_own_capabilities_are_indexed_too() {
     let result = graph.query(&CapabilityQuery::new(skill("summarize.zh")), 0);
     assert_eq!(result.matches.len(), 1);
     assert_eq!(result.matches[0].did, owner.did());
-    assert_eq!(graph.providers_of(&skill("translate.zh-en")), vec![owner.did()]);
+    assert_eq!(
+        graph.providers_of(&skill("translate.zh-en")),
+        vec![owner.did()]
+    );
 }
 
 #[test]
@@ -238,8 +258,16 @@ fn scenario_reports_index_backed_queries() {
     let queries = value["queries"].as_array().expect("queries");
     assert_eq!(queries.len(), 2);
     let stats = &queries[0]["result"]["stats"];
-    assert_eq!(stats["nodes_total"].as_u64(), Some(5), "alice + 4 邻居各 1 条能力");
-    assert_eq!(stats["scanned"].as_u64(), Some(2), "translate 有 2 个提供者（bob 与 dave）");
+    assert_eq!(
+        stats["nodes_total"].as_u64(),
+        Some(5),
+        "alice + 4 邻居各 1 条能力"
+    );
+    assert_eq!(
+        stats["scanned"].as_u64(),
+        Some(2),
+        "translate 有 2 个提供者（bob 与 dave）"
+    );
     assert!(stats["scanned"].as_u64() < stats["nodes_total"].as_u64());
     // 排序第一关键字是负载加权可靠度：bob(9600bp) 胜过更便宜但可靠度更低的 dave(8000bp)。
     // 「便宜但格式不兼容」的取舍是 v1.1.6 路径规划的事，查询只按度量排序。

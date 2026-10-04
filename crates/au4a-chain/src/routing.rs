@@ -308,7 +308,11 @@ pub fn route(
 
     // 1. fail-closed：双轨不一致 → 一律缓办（不猜、不动账）。
     if !reconciliation_ok {
-        return Ok(defer(DecisionReason::ReconciliationFailed, Rail::Internal, 0));
+        return Ok(defer(
+            DecisionReason::ReconciliationFailed,
+            Rail::Internal,
+            0,
+        ));
     }
     // 2. 小额不上链。
     if request.amount < table.internal_threshold {
@@ -351,7 +355,11 @@ pub fn route(
             .filter(|t| t.fee_bp <= table.max_fee_bp)
             .collect();
         if by_fee.is_empty() {
-            return Ok(defer(DecisionReason::FeeAboveThreshold, by_amount[0].rail, 0));
+            return Ok(defer(
+                DecisionReason::FeeAboveThreshold,
+                by_amount[0].rail,
+                0,
+            ));
         }
         let best = by_fee[0];
         let mut decision = defer(DecisionReason::DeadlineTooTight, best.rail, 0);
@@ -361,16 +369,30 @@ pub fn route(
     // 3. 偏好轨（若合格）。
     if let Some(preferred) = request.preferred {
         if let Some(terms) = eligible.iter().find(|t| t.rail == preferred) {
-            return Ok(pick(terms, DecisionReason::PreferredRail, request, required_slack));
+            return Ok(pick(
+                terms,
+                DecisionReason::PreferredRail,
+                request,
+                required_slack,
+            ));
         }
     }
     // 4. 最便宜轨：费用 → 最终性 → 名字（确定性）。
     let mut sorted = eligible;
     sorted.sort_by(|a, b| {
-        (a.fee_bp, a.finality_ticks, a.rail.as_str()).cmp(&(b.fee_bp, b.finality_ticks, b.rail.as_str()))
+        (a.fee_bp, a.finality_ticks, a.rail.as_str()).cmp(&(
+            b.fee_bp,
+            b.finality_ticks,
+            b.rail.as_str(),
+        ))
     });
     let best = sorted.first().copied().ok_or(CoreError::InvalidKind)?;
-    Ok(pick(best, DecisionReason::CheapestRail, request, required_slack))
+    Ok(pick(
+        best,
+        DecisionReason::CheapestRail,
+        request,
+        required_slack,
+    ))
 }
 
 fn pick(
@@ -528,7 +550,7 @@ mod tests {
         assert_eq!(decision.rail, Rail::Rgb);
         assert_eq!(decision.reason, DecisionReason::PreferredRail);
         assert_eq!(decision.fee, Credits(8)); // 1000 × 80 / 10000
-        // 偏好轨不合格时退回最便宜轨，而不是失败。
+                                              // 偏好轨不合格时退回最便宜轨，而不是失败。
         let too_small = request(60, 100).with_preference(Rail::Rgb);
         let fallback = route(&too_small, &table, true).unwrap();
         assert_eq!(fallback.rail, Rail::X402);
@@ -592,8 +614,15 @@ mod tests {
         ledger.check_conservation().unwrap();
         // 桥回之后双轨归零，本地余额恢复。
         let recipient = did(4);
-        book.bridge_in(&mut ledger, &payer, &recipient, Credits(1_000), "rail:x402", "x402")
-            .unwrap();
+        book.bridge_in(
+            &mut ledger,
+            &payer,
+            &recipient,
+            Credits(1_000),
+            "rail:x402",
+            "x402",
+        )
+        .unwrap();
         ledger.check_conservation().unwrap();
         book.require_consistent(&ledger).unwrap();
         assert_eq!(ledger.balance(&recipient).available, Credits(1_000));

@@ -161,7 +161,12 @@ impl GovernorToken {
 
     /// 是否声称真实链上执行（本版必须恒为 `false`）。
     pub fn claims_real_chain(&self) -> bool {
-        self.binding.real_chain || self.execution.as_ref().map(|e| e.tx_ref.is_some()).unwrap_or(false)
+        self.binding.real_chain
+            || self
+                .execution
+                .as_ref()
+                .map(|e| e.tx_ref.is_some())
+                .unwrap_or(false)
     }
 
     /// 把治理层的某条动议投影成 GovernorToken 语义对象。
@@ -314,7 +319,9 @@ mod tests {
         });
         let agents: Vec<AgentKeys> = (0..4).map(keys).collect();
         for k in &agents {
-            kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+            kernel
+                .register(k, "t", &["governance.vote"], Credits(20))
+                .expect("register");
             council.note_reputation(&k.did(), 5_000);
             council.note_uptime(&k.did(), 200);
         }
@@ -323,7 +330,9 @@ mod tests {
             .iter()
             .map(|k| ElectionBallot::cast(k, CommitteeKind::Task, &picks).expect("cast"))
             .collect();
-        council.elect(&mut kernel, CommitteeKind::Task, &ballots).expect("elect");
+        council
+            .elect(&mut kernel, CommitteeKind::Task, &ballots)
+            .expect("elect");
         (kernel, council, agents)
     }
 
@@ -335,10 +344,15 @@ mod tests {
             &agents[0],
             CommitteeKind::Task,
             "链上映射",
-            Action::SetPolicy { key: String::from("k"), value: 1 },
+            Action::SetPolicy {
+                key: String::from("k"),
+                value: 1,
+            },
         )
         .expect("draft");
-        let proposal = council.propose(&mut kernel, &identity, draft).expect("propose");
+        let proposal = council
+            .propose(&mut kernel, &identity, draft)
+            .expect("propose");
 
         // 提交后、未开轮 → pending。
         let token = GovernorToken::project(&council, &proposal.id).expect("project");
@@ -363,11 +377,17 @@ mod tests {
         assert_eq!(token.for_votes, 3);
 
         // 执行 → executed（但没有真实交易引用）。
-        council.execute(&mut kernel, &identity, &proposal.id).expect("execute");
+        council
+            .execute(&mut kernel, &identity, &proposal.id)
+            .expect("execute");
         let token = GovernorToken::project(&council, &proposal.id).expect("project");
         assert_eq!(token.state, GovState::Executed);
         assert!(token.execution.is_some());
-        assert!(token.execution.as_ref().map(|e| e.tx_ref.is_none()).unwrap_or(false));
+        assert!(token
+            .execution
+            .as_ref()
+            .map(|e| e.tx_ref.is_none())
+            .unwrap_or(false));
         assert!(!token.claims_real_chain());
     }
 
@@ -381,10 +401,15 @@ mod tests {
             &agents[0],
             CommitteeKind::Task,
             "会被否决",
-            Action::SetPolicy { key: String::from("d1"), value: 1 },
+            Action::SetPolicy {
+                key: String::from("d1"),
+                value: 1,
+            },
         )
         .expect("draft");
-        let rejected = council.propose(&mut kernel, &identity, draft).expect("propose");
+        let rejected = council
+            .propose(&mut kernel, &identity, draft)
+            .expect("propose");
         let round = council.open_round(&mut kernel, &rejected.id).expect("open");
         for i in 0..3 {
             let v = crate::Vote::cast(&agents[i], &rejected.id, round.round, crate::Choice::No)
@@ -401,12 +426,19 @@ mod tests {
             &agents[0],
             CommitteeKind::Task,
             "会被否决权阻断",
-            Action::SetPolicy { key: String::from("d2"), value: 1 },
+            Action::SetPolicy {
+                key: String::from("d2"),
+                value: 1,
+            },
         )
         .expect("draft");
-        let blocked = council.propose(&mut kernel, &identity, draft).expect("propose");
+        let blocked = council
+            .propose(&mut kernel, &identity, draft)
+            .expect("propose");
         let human = crate::HumanObserver::new("operator");
-        let veto = human.veto(&council, &blocked.id, "会伤害新加入者").expect("veto");
+        let veto = human
+            .veto(&council, &blocked.id, "会伤害新加入者")
+            .expect("veto");
         council.apply_veto(&mut kernel, &veto).expect("apply");
         let token = GovernorToken::project(&council, &blocked.id).expect("project");
         assert_eq!(token.state, GovState::Canceled);
@@ -425,10 +457,15 @@ mod tests {
             &agents[0],
             CommitteeKind::Task,
             "可复算",
-            Action::SetPolicy { key: String::from("r"), value: 2 },
+            Action::SetPolicy {
+                key: String::from("r"),
+                value: 2,
+            },
         )
         .expect("draft");
-        let proposal = council.propose(&mut kernel, &identity, draft).expect("propose");
+        let proposal = council
+            .propose(&mut kernel, &identity, draft)
+            .expect("propose");
         let a = GovernorToken::project(&council, &proposal.id).expect("a");
         let b = GovernorToken::project(&council, &proposal.id).expect("b");
         assert_eq!(a.id, b.id);

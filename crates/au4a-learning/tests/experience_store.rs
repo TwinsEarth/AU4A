@@ -55,7 +55,13 @@ fn capacity_evicts_oldest_and_reports_it() {
     let peers = dids(1);
     let mut store = ExperienceStore::new(3).unwrap();
     for i in 0..4 {
-        let e = exp(&format!("t-{i}"), "summarize.zh", Outcome::Partial, 5, &peers);
+        let e = exp(
+            &format!("t-{i}"),
+            "summarize.zh",
+            Outcome::Partial,
+            5,
+            &peers,
+        );
         let result = store.record(e).unwrap();
         if i < 3 {
             assert!(matches!(result, RecordOutcome::Added { .. }));
@@ -81,7 +87,16 @@ fn malformed_experience_is_refused() {
     );
     // 非法任务类型字符（含空格）
     assert_eq!(
-        Experience::new("id", "bad type", "c", "a", Outcome::Success, Credits(0), 1, &[]),
+        Experience::new(
+            "id",
+            "bad type",
+            "c",
+            "a",
+            Outcome::Success,
+            Credits(0),
+            1,
+            &[]
+        ),
         Err(CoreError::InvalidKind)
     );
     // 超长上下文
@@ -105,13 +120,31 @@ fn malformed_experience_is_refused() {
     );
     // 上下文含控制字符
     assert_eq!(
-        Experience::new("id", "t", "a\u{7}b", "a", Outcome::Success, Credits(0), 1, &[]),
+        Experience::new(
+            "id",
+            "t",
+            "a\u{7}b",
+            "a",
+            Outcome::Success,
+            Credits(0),
+            1,
+            &[]
+        ),
         Err(CoreError::InvalidKind)
     );
     // 协作者超上限
     let too_many = dids(17);
     assert_eq!(
-        Experience::new("id", "t", "c", "a", Outcome::Success, Credits(0), 1, &too_many),
+        Experience::new(
+            "id",
+            "t",
+            "c",
+            "a",
+            Outcome::Success,
+            Credits(0),
+            1,
+            &too_many
+        ),
         Err(CoreError::InvalidKind)
     );
     // 手工构造的未排序协作者列表必须被 validate 拒绝（内容键唯一性的前提）
@@ -125,8 +158,23 @@ fn malformed_experience_is_refused() {
 #[test]
 fn peers_are_normalized_sorted_and_deduplicated() {
     let peers = dids(3);
-    let mut shuffled = vec![peers[2].clone(), peers[0].clone(), peers[1].clone(), peers[0].clone()];
-    let e = Experience::new("id", "t", "c", "a", Outcome::Success, Credits(1), 1, &shuffled).unwrap();
+    let mut shuffled = vec![
+        peers[2].clone(),
+        peers[0].clone(),
+        peers[1].clone(),
+        peers[0].clone(),
+    ];
+    let e = Experience::new(
+        "id",
+        "t",
+        "c",
+        "a",
+        Outcome::Success,
+        Credits(1),
+        1,
+        &shuffled,
+    )
+    .unwrap();
     let mut sorted = peers.clone();
     sorted.sort();
     assert_eq!(e.peer_agents, sorted);
@@ -134,7 +182,17 @@ fn peers_are_normalized_sorted_and_deduplicated() {
 
     // 顺序不同、集合相同 → 同一个内容键
     shuffled = vec![peers[1].clone(), peers[2].clone(), peers[0].clone()];
-    let e2 = Experience::new("id", "t", "c", "a", Outcome::Success, Credits(1), 1, &shuffled).unwrap();
+    let e2 = Experience::new(
+        "id",
+        "t",
+        "c",
+        "a",
+        Outcome::Success,
+        Credits(1),
+        1,
+        &shuffled,
+    )
+    .unwrap();
     assert_eq!(e.key().unwrap(), e2.key().unwrap());
 }
 
@@ -152,7 +210,13 @@ fn storage_is_byte_identical_across_two_independent_runs() {
             };
             let id = format!("t-{i:03}");
             store
-                .record(exp(&id, "classify.zh", outcome, rng.range_i64(0, 50), &peers))
+                .record(exp(
+                    &id,
+                    "classify.zh",
+                    outcome,
+                    rng.range_i64(0, 50),
+                    &peers,
+                ))
                 .unwrap();
         }
         store
@@ -170,7 +234,13 @@ fn canonical_json_roundtrips_and_tampering_is_refused() {
     let mut store = ExperienceStore::new(8).unwrap();
     for i in 0..5 {
         store
-            .record(exp(&format!("t-{i}"), "translate.en-zh", Outcome::Success, 3, &peers))
+            .record(exp(
+                &format!("t-{i}"),
+                "translate.en-zh",
+                Outcome::Success,
+                3,
+                &peers,
+            ))
             .unwrap();
     }
     let json = store.canonical_json().unwrap();
@@ -229,7 +299,11 @@ fn by_task_type_and_recent_windows_are_deterministic() {
     let peers = dids(1);
     let mut store = ExperienceStore::new(16).unwrap();
     for i in 0..6 {
-        let kind = if i % 2 == 0 { "translate.en-zh" } else { "summarize.zh" };
+        let kind = if i % 2 == 0 {
+            "translate.en-zh"
+        } else {
+            "summarize.zh"
+        };
         store
             .record(exp(&format!("t-{i}"), kind, Outcome::Success, 1, &peers))
             .unwrap();
@@ -259,7 +333,12 @@ fn track_self_check_is_green_and_scenario_is_reproducible() {
     assert_eq!(a["experiences"], 24);
     // 学习者 + 3 个协作者，全部自主注册（不经过任何人类账户）
     assert_eq!(k1.agent_count(), 4);
-    assert_eq!(k1.ledger().balance(&AgentKeys::from_seed(&[0x16; 32]).did()).locked, Credits(10));
+    assert_eq!(
+        k1.ledger()
+            .balance(&AgentKeys::from_seed(&[0x16; 32]).did())
+            .locked,
+        Credits(10)
+    );
     k1.ledger().check_conservation().unwrap();
     // 幂等：同一内核上再跑一次不报 DuplicateAgent
     let c = au4a_learning::scenario(&mut k1).unwrap();
@@ -267,7 +346,11 @@ fn track_self_check_is_green_and_scenario_is_reproducible() {
     assert_eq!(k1.agent_count(), 4);
 
     // 进度事件必须真的产生（观察层「看进度」的数据源）
-    assert!(k1.observe().progress.iter().any(|e| e.kind == "1.6.experience.collect"));
+    assert!(k1
+        .observe()
+        .progress
+        .iter()
+        .any(|e| e.kind == "1.6.experience.collect"));
 }
 
 #[test]
@@ -276,7 +359,10 @@ fn results_json_reports_passing_checks() {
     assert_eq!(r["track"], "1.6");
     assert_eq!(r["version"], au4a_learning::VERSION);
     assert_eq!(r["all_passed"], serde_json::json!(true));
-    assert_eq!(r["checks"], serde_json::json!(au4a_learning::self_check().len()));
+    assert_eq!(
+        r["checks"],
+        serde_json::json!(au4a_learning::self_check().len())
+    );
     assert_eq!(r["scenario"]["experiences"], 24);
     // 摘要必须能被规范 JSON 编码（禁止浮点），观察层按整数读
     au4a_core::canonicalize(&r).unwrap();

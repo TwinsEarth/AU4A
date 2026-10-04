@@ -170,7 +170,11 @@ impl Ledger {
             return Err(CoreError::ZeroAmount);
         }
         let acct = self.balance(who);
-        let take = if acct.locked < amount { acct.locked } else { amount };
+        let take = if acct.locked < amount {
+            acct.locked
+        } else {
+            amount
+        };
         self.account_mut(who).locked = acct.locked.checked_sub(take)?;
         self.slashed = self.slashed.checked_add(take)?;
         self.check_conservation()
@@ -227,7 +231,9 @@ mod tests {
     use crate::did::AgentKeys;
 
     fn dids(n: u8) -> Vec<Did> {
-        (0..n).map(|i| AgentKeys::from_seed(&[i; 32]).did()).collect()
+        (0..n)
+            .map(|i| AgentKeys::from_seed(&[i; 32]).did())
+            .collect()
     }
 
     #[test]

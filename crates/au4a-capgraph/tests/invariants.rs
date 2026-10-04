@@ -13,8 +13,9 @@
 //! I7 自有能力与自身声明永远一致（`own_epoch` 与历史末条一致）。
 
 use au4a_capgraph::{
-    verify_pipeline, AgentCapabilityGraph, CapGraphConfig, Capability, CapabilityQuery, Declaration,
-    FormatId, PipelineRequest, PipelineStep, PlanCost, PlanOutcome, SkillId, HISTORY_CAPACITY,
+    verify_pipeline, AgentCapabilityGraph, CapGraphConfig, Capability, CapabilityQuery,
+    Declaration, FormatId, PipelineRequest, PipelineStep, PlanCost, PlanOutcome, SkillId,
+    HISTORY_CAPACITY,
 };
 use au4a_core::{AgentKeys, CoreError, Credits};
 
@@ -170,7 +171,8 @@ fn invariants_hold_across_a_deterministic_random_workload() {
                     }
                     capabilities.sort_by(|a, b| a.skill.cmp(&b.skill));
                     capabilities.dedup_by(|a, b| a.skill == b.skill);
-                    if let Ok(declaration) = Declaration::new(peer.did(), epoch, step as u64, capabilities)
+                    if let Ok(declaration) =
+                        Declaration::new(peer.did(), epoch, step as u64, capabilities)
                     {
                         if let Ok(signed) = declaration.sign(peer) {
                             let _ = world.graph.apply(&signed, step as u64);
@@ -215,12 +217,42 @@ fn a_planned_pipeline_is_always_independently_verifiable() {
     let owner = AgentKeys::from_seed(&[170; 32]);
     let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
     let shapes: [(u8, &str, i64, [&str; 1], [&str; 1]); 6] = [
-        (1, "translate.en-zh", 3, ["text/plain"], ["application/json"]),
+        (
+            1,
+            "translate.en-zh",
+            3,
+            ["text/plain"],
+            ["application/json"],
+        ),
         (2, "translate.en-zh", 1, ["text/plain"], ["text/html"]),
-        (3, "translate.en-zh", 5, ["application/json"], ["application/json"]),
-        (4, "sentiment.analyze", 2, ["application/json"], ["application/json"]),
-        (5, "sentiment.analyze", 1, ["text/plain"], ["application/json"]),
-        (6, "sentiment.analyze", 4, ["application/json"], ["text/plain"]),
+        (
+            3,
+            "translate.en-zh",
+            5,
+            ["application/json"],
+            ["application/json"],
+        ),
+        (
+            4,
+            "sentiment.analyze",
+            2,
+            ["application/json"],
+            ["application/json"],
+        ),
+        (
+            5,
+            "sentiment.analyze",
+            1,
+            ["text/plain"],
+            ["application/json"],
+        ),
+        (
+            6,
+            "sentiment.analyze",
+            4,
+            ["application/json"],
+            ["text/plain"],
+        ),
     ];
     for (seed, name, price, inputs, outputs) in shapes {
         let keys = AgentKeys::from_seed(&[seed; 32]);
@@ -271,8 +303,9 @@ fn a_planned_pipeline_is_always_independently_verifiable() {
             PlanOutcome::Path(pipeline) => {
                 planned += 1;
                 // I6：任何被返回的流水线都必须能被独立校验器验通。
-                verify_pipeline(&graph, request, &PlanCost::default(), &pipeline)
-                    .unwrap_or_else(|err| panic!("校验失败：{err}（请求 {:?}）", request.to_value()));
+                verify_pipeline(&graph, request, &PlanCost::default(), &pipeline).unwrap_or_else(
+                    |err| panic!("校验失败：{err}（请求 {:?}）", request.to_value()),
+                );
                 if let Some(budget) = request.max_total_price {
                     assert!(pipeline.total_price <= budget);
                 }
@@ -284,7 +317,10 @@ fn a_planned_pipeline_is_always_independently_verifiable() {
                 }
             }
             PlanOutcome::NoPath(no_path) => {
-                assert!(!no_path.reason.detail().is_empty(), "无路径必须给出具体原因");
+                assert!(
+                    !no_path.reason.detail().is_empty(),
+                    "无路径必须给出具体原因"
+                );
             }
         }
     }
@@ -296,8 +332,20 @@ fn no_path_and_relaxed_path_are_consistent() {
     let owner = AgentKeys::from_seed(&[180; 32]);
     let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
     for (seed, name, price, inputs, outputs) in [
-        (181u8, "translate.en-zh", 3i64, ["text/plain"], ["application/json"]),
-        (182, "sentiment.analyze", 2, ["application/json"], ["application/json"]),
+        (
+            181u8,
+            "translate.en-zh",
+            3i64,
+            ["text/plain"],
+            ["application/json"],
+        ),
+        (
+            182,
+            "sentiment.analyze",
+            2,
+            ["application/json"],
+            ["application/json"],
+        ),
     ] {
         let keys = AgentKeys::from_seed(&[seed; 32]);
         let capability = Capability::new(skill(name), Credits(price))
@@ -328,7 +376,10 @@ fn no_path_and_relaxed_path_are_consistent() {
         Some(au4a_core::RefusalCode::PolicyDenied),
         "预算问题属于策略拒绝"
     );
-    assert!(graph.plan(&base, &PlanCost::default(), 0).is_path(), "放宽后仍有路径");
+    assert!(
+        graph.plan(&base, &PlanCost::default(), 0).is_path(),
+        "放宽后仍有路径"
+    );
 
     // 期限 1ms → 无路径，拒绝码是 timeout。
     let rushed = base.clone().with_deadline_ms(1);
@@ -386,9 +437,16 @@ fn an_agent_can_only_be_known_through_its_own_signature() {
     });
     let smuggled = au4a_capgraph::SignedDeclaration::from_value(&payload).expect("parses");
     let outcome = graph.apply(&smuggled, 0);
-    assert_eq!(outcome.refusal(), Some(au4a_core::RefusalCode::Unauthorized));
+    assert_eq!(
+        outcome.refusal(),
+        Some(au4a_core::RefusalCode::Unauthorized)
+    );
     assert!(outcome.refusal().expect("code").is_misconduct());
     assert_eq!(graph.capability_count(), 0);
-    assert_eq!(graph.last_version_of(&victim.did()), None, "图里没有任何关于受害者的记录");
+    assert_eq!(
+        graph.last_version_of(&victim.did()),
+        None,
+        "图里没有任何关于受害者的记录"
+    );
     assert_eq!(graph.neighbor_count(), 0);
 }

@@ -4,9 +4,7 @@
 //! 覆盖全部能力恰好一次、拒绝带类型化理由、权限来源里没有人类/运营方。
 
 use au4a_core::{AgentKeys, Credits, RefusalCode};
-use au4a_kernel::{
-    authority_roots, Authority, Capability, Kernel, KernelConfig,
-};
+use au4a_kernel::{authority_roots, Authority, Capability, Kernel, KernelConfig};
 
 fn seeded(n: u8) -> Kernel {
     let mut k = Kernel::new(KernelConfig::default());
@@ -32,7 +30,10 @@ fn every_capability_gets_exactly_one_answer() {
     for i in 0..3 {
         let report = k.permissions(&did(i).did()).unwrap();
         assert!(report.is_total_partition());
-        assert_eq!(report.allowed.len() + report.denied.len(), Capability::ALL.len());
+        assert_eq!(
+            report.allowed.len() + report.denied.len(),
+            Capability::ALL.len()
+        );
         let json = report.to_json();
         assert_eq!(json["total_partition"], true);
         let can = json["can"].as_array().map(|a| a.len()).unwrap_or(0);

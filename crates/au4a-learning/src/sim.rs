@@ -358,7 +358,9 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
     let profiles = peer_profiles(config.seed, config.peers)?;
     let bounds = PolicyBounds::default();
     let targets = PolicyTargets::default();
-    let window = (config.ticks_per_round as usize).saturating_mul(3).max(MIN_SAMPLES);
+    let window = (config.ticks_per_round as usize)
+        .saturating_mul(3)
+        .max(MIN_SAMPLES);
     let mut store = ExperienceStore::new(window)?;
     let mut violations = ViolationLog::new();
     // v1.6.5：行为调整的意图由模型更新落地（学习率/动量/阻尼/遗忘/漂移钳制），信誉台账记录观测到的结果。
@@ -505,7 +507,10 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
             accepted: acc.accepted,
             successes: acc.successes,
             partials: acc.partials,
-            failures: acc.ticks.saturating_sub(acc.successes).saturating_sub(acc.partials),
+            failures: acc
+                .ticks
+                .saturating_sub(acc.successes)
+                .saturating_sub(acc.partials),
             violations: acc.violations,
             revenue: acc.revenue,
             mean_reward: round_mean,
@@ -554,8 +559,11 @@ fn pick_option(
 ) -> Option<(usize, usize)> {
     let mut best: Option<(i64, usize, usize)> = None;
     for (task_index, task) in TASK_PROFILES.iter().enumerate() {
-        let peer_index =
-            hash_below(config.seed, &[global, task_index as u64, 3], profiles.len() as u64) as usize;
+        let peer_index = hash_below(
+            config.seed,
+            &[global, task_index as u64, 3],
+            profiles.len() as u64,
+        ) as usize;
         let Some(peer) = profiles.get(peer_index) else {
             continue;
         };

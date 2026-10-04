@@ -208,8 +208,15 @@ mod tests {
     #[test]
     fn tampering_or_forging_a_claim_is_refused() {
         let (c, a, b) = contract();
-        let claim = BreachClaim::file(&a, &c, BreachKind::LateDelivery, EvidenceGrade::Verified, "late", 3)
-            .unwrap();
+        let claim = BreachClaim::file(
+            &a,
+            &c,
+            BreachKind::LateDelivery,
+            EvidenceGrade::Verified,
+            "late",
+            3,
+        )
+        .unwrap();
 
         let mut kind_swapped = claim.clone();
         kind_swapped.kind = BreachKind::WrongEvidence;
@@ -239,14 +246,28 @@ mod tests {
         let (mut c, a, _) = contract();
         let outsider = agent(5);
         assert_eq!(
-            BreachClaim::file(&outsider, &c, BreachKind::NonDelivery, EvidenceGrade::Verified, "x", 1),
+            BreachClaim::file(
+                &outsider,
+                &c,
+                BreachKind::NonDelivery,
+                EvidenceGrade::Verified,
+                "x",
+                1
+            ),
             Err(CoreError::UnknownAgent)
         );
 
         // 单方签署的合约不能用来告人。
         c.signatures.pop();
         assert_eq!(
-            BreachClaim::file(&a, &c, BreachKind::NonDelivery, EvidenceGrade::Verified, "x", 1),
+            BreachClaim::file(
+                &a,
+                &c,
+                BreachKind::NonDelivery,
+                EvidenceGrade::Verified,
+                "x",
+                1
+            ),
             Err(CoreError::NotSealed)
         );
     }
@@ -270,7 +291,14 @@ mod tests {
         let mut broken = c.clone();
         broken.terms.price = Credits(1);
         assert_eq!(
-            BreachClaim::file(&a, &broken, BreachKind::NonDelivery, EvidenceGrade::Verified, "x", 1),
+            BreachClaim::file(
+                &a,
+                &broken,
+                BreachKind::NonDelivery,
+                EvidenceGrade::Verified,
+                "x",
+                1
+            ),
             Err(CoreError::InvalidSignature)
         );
     }

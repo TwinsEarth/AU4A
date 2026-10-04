@@ -272,7 +272,14 @@ mod tests {
         book.bridge_out(&mut ledger, &who, Credits(400), "rgb:usdt", "rgb")
             .unwrap();
         let event = book
-            .bridge_in(&mut ledger, &who, &recipient, Credits(250), "rgb:usdt", "rgb")
+            .bridge_in(
+                &mut ledger,
+                &who,
+                &recipient,
+                Credits(250),
+                "rgb:usdt",
+                "rgb",
+            )
             .unwrap();
         assert_eq!(event.direction, BridgeDirection::In);
         assert_eq!(book.escrowed(), Credits(150));

@@ -13,13 +13,7 @@ fn dids(n: u8) -> Vec<Did> {
         .collect()
 }
 
-fn exp(
-    id: &str,
-    task_type: &str,
-    outcome: Outcome,
-    reward: i64,
-    peers: &[Did],
-) -> Experience {
+fn exp(id: &str, task_type: &str, outcome: Outcome, reward: i64, peers: &[Did]) -> Experience {
     let context = format!("ctx-{id}");
     Experience::new(
         id,
@@ -258,10 +252,14 @@ fn market_rounds_carry_the_signal_composite() {
         assert!(r.signal_composite_bp <= 10_000);
         assert!(r.signal_composite_bp >= -10_000);
     }
-    assert!(learning
-        .rounds
+    assert!(
+        learning
+            .rounds
+            .iter()
+            .any(|r| r.signal_composite_bp != control.rounds[r.round as usize].signal_composite_bp),
+        "学习组与对照组的信号不必相同（选择不同 → 结果不同）"
+    );
+    assert!(au4a_learning::self_check()
         .iter()
-        .any(|r| r.signal_composite_bp != control.rounds[r.round as usize].signal_composite_bp),
-        "学习组与对照组的信号不必相同（选择不同 → 结果不同）");
-    assert!(au4a_learning::self_check().iter().any(|c| c.name == "signal.exact_weighting"));
+        .any(|c| c.name == "signal.exact_weighting"));
 }

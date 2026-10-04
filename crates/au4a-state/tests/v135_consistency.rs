@@ -74,9 +74,17 @@ fn damaged_state_is_located_per_zone_and_key() {
     assert_eq!(report.found(FindingCode::Modified).len(), 1);
     assert_eq!(report.found(FindingCode::Missing).len(), 1);
     assert_eq!(report.found(FindingCode::Extra).len(), 1);
-    let fs = report.zones.iter().find(|z| z.zone == StateZone::Fs).unwrap();
+    let fs = report
+        .zones
+        .iter()
+        .find(|z| z.zone == StateZone::Fs)
+        .unwrap();
     assert_eq!(fs.modified, vec!["/work/a".to_string()]);
-    let memory = report.zones.iter().find(|z| z.zone == StateZone::Memory).unwrap();
+    let memory = report
+        .zones
+        .iter()
+        .find(|z| z.zone == StateZone::Memory)
+        .unwrap();
     assert_eq!(memory.missing, vec!["counter".to_string()]);
     assert!(summarize(&report).contains("memory"));
 }
@@ -87,7 +95,9 @@ fn store_level_damage_is_found_without_going_through_read_snapshot() {
     let expected = snap(&keys, 1);
     let mut store = MemoryStore::new();
     write_snapshot(&mut store, "live:", &expected).unwrap();
-    assert!(compare_store(&store, "live:", &expected).unwrap().is_clean());
+    assert!(compare_store(&store, "live:", &expected)
+        .unwrap()
+        .is_clean());
 
     store.put("live:fs:/work/a", json!({"v": 42})).unwrap();
     store.remove("live:memory:counter").unwrap();
@@ -100,7 +110,10 @@ fn store_level_damage_is_found_without_going_through_read_snapshot() {
     assert_eq!(report.found(FindingCode::Extra).len(), 1);
     assert_eq!(report.found(FindingCode::BadKey).len(), 1);
     // 观测到的内容根与期望不同，且被如实报告出来。
-    assert_ne!(report.observed_content_root.as_deref(), Some(report.expected_content_root.as_str()));
+    assert_ne!(
+        report.observed_content_root.as_deref(),
+        Some(report.expected_content_root.as_str())
+    );
     // 4 块原始 -1 删除 +1 多余 = 4（坏键不计入块，只计入 findings）。
     assert_eq!(report.observed_blocks, 4);
 }
@@ -109,8 +122,12 @@ fn store_level_damage_is_found_without_going_through_read_snapshot() {
 fn a_clean_node_audit_reports_no_orphans_or_intent() {
     let keys = agent(4);
     let base = snap(&keys, 1);
-    let mut node = NodeStore::open(NodeId::new("node-b").unwrap(), keys.did(), MemoryStore::new())
-        .unwrap();
+    let mut node = NodeStore::open(
+        NodeId::new("node-b").unwrap(),
+        keys.did(),
+        MemoryStore::new(),
+    )
+    .unwrap();
     node.install(&base, true).unwrap();
     let audit = audit_node(&node).unwrap();
     assert!(audit.is_clean(), "{:?}", audit.findings);
@@ -125,8 +142,12 @@ fn a_clean_node_audit_reports_no_orphans_or_intent() {
 fn an_unfinished_migration_is_visible_in_the_node_audit() {
     let keys = agent(5);
     let base = snap(&keys, 1);
-    let mut node = NodeStore::open(NodeId::new("node-b").unwrap(), keys.did(), MemoryStore::new())
-        .unwrap();
+    let mut node = NodeStore::open(
+        NodeId::new("node-b").unwrap(),
+        keys.did(),
+        MemoryStore::new(),
+    )
+    .unwrap();
     node.install(&base, true).unwrap();
     node.store_mut()
         .put(
@@ -157,8 +178,12 @@ fn after_a_2pc_commit_source_and_target_agree_block_by_block() {
         1,
     )
     .unwrap();
-    let mut node = NodeStore::open(NodeId::new("node-b").unwrap(), keys.did(), MemoryStore::new())
-        .unwrap();
+    let mut node = NodeStore::open(
+        NodeId::new("node-b").unwrap(),
+        keys.did(),
+        MemoryStore::new(),
+    )
+    .unwrap();
     node.install(&base, true).unwrap();
     let outcome = migrate(&mut node, plan, &delta, &signed, &mut FaultInjector::none()).unwrap();
     assert!(outcome.is_confirmed());
@@ -189,8 +214,12 @@ fn a_rolled_back_node_still_agrees_with_the_base() {
         1,
     )
     .unwrap();
-    let mut node = NodeStore::open(NodeId::new("node-b").unwrap(), keys.did(), MemoryStore::new())
-        .unwrap();
+    let mut node = NodeStore::open(
+        NodeId::new("node-b").unwrap(),
+        keys.did(),
+        MemoryStore::new(),
+    )
+    .unwrap();
     node.install(&base, true).unwrap();
     let outcome = migrate(
         &mut node,
@@ -219,9 +248,21 @@ fn zone_roots_are_the_units_of_diagnosis() {
     let changed = StateSnapshot::capture(&keys.did(), "node-b", 1, blocks).unwrap();
 
     let report = compare(&base, &changed).unwrap();
-    let fs = report.zones.iter().find(|z| z.zone == StateZone::Fs).unwrap();
-    let memory = report.zones.iter().find(|z| z.zone == StateZone::Memory).unwrap();
-    let context = report.zones.iter().find(|z| z.zone == StateZone::Context).unwrap();
+    let fs = report
+        .zones
+        .iter()
+        .find(|z| z.zone == StateZone::Fs)
+        .unwrap();
+    let memory = report
+        .zones
+        .iter()
+        .find(|z| z.zone == StateZone::Memory)
+        .unwrap();
+    let context = report
+        .zones
+        .iter()
+        .find(|z| z.zone == StateZone::Context)
+        .unwrap();
     assert!(fs.equal && context.equal, "未改动的区摘要必须保持相等");
     assert!(!memory.equal);
     assert_eq!(memory.modified, vec!["counter".to_string()]);
@@ -242,7 +283,9 @@ fn self_check_covers_consistency() {
 fn scenario_reports_clean_consistency_and_localized_damage() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(9);
-    kernel.register(&keys, "carrier", &["state.verify"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.verify"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["consistency"]["identical"], json!(true));
     assert_eq!(out["consistency"]["changed_blocks"], json!(0));
@@ -250,7 +293,10 @@ fn scenario_reports_clean_consistency_and_localized_damage() {
     assert_eq!(out["consistency"]["node_findings"], json!(0));
     assert_eq!(out["consistency"]["damage_detected"]["modified"], json!(1));
     assert_eq!(out["consistency"]["damage_detected"]["missing"], json!(1));
-    assert!(out["consistency"]["summary"].as_str().unwrap().starts_with("一致"));
+    assert!(out["consistency"]["summary"]
+        .as_str()
+        .unwrap()
+        .starts_with("一致"));
     kernel.ledger().check_conservation().unwrap();
 }
 

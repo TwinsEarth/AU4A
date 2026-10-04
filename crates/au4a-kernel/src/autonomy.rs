@@ -17,8 +17,7 @@
 //!   而不是等某个中心化角色来封禁它。
 
 use au4a_core::{
-    AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, EvidenceGrade, Refusal,
-    RefusalCode,
+    AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, EvidenceGrade, Refusal, RefusalCode,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -238,8 +237,7 @@ impl AutonomyPolicy {
                 }
                 "settle.request" => {
                     let amount = env.body["amount"].as_i64().unwrap_or(0);
-                    let grade = env
-                        .body["grade"]
+                    let grade = env.body["grade"]
                         .as_str()
                         .and_then(EvidenceGrade::parse)
                         .unwrap_or(EvidenceGrade::Unverified);
@@ -591,7 +589,11 @@ mod tests {
         let me = card_for(1, &["translate"]);
         let mut c = ctx(10);
         c.last_announce_at = Some(10);
-        assert_eq!(policy.plan(&me, &c), vec![Intent::Idle], "刚通告过就不再通告");
+        assert_eq!(
+            policy.plan(&me, &c),
+            vec![Intent::Idle],
+            "刚通告过就不再通告"
+        );
         c.now = 10 + policy.announce_every;
         assert_eq!(policy.plan(&me, &c), vec![Intent::Announce]);
     }
@@ -646,7 +648,9 @@ mod tests {
         for key in &keys {
             let lower = key.to_lowercase();
             assert!(
-                !lower.contains("human") && !lower.contains("approv") && !lower.contains("operator"),
+                !lower.contains("human")
+                    && !lower.contains("approv")
+                    && !lower.contains("operator"),
                 "决策输入不能有人类通道：{key}"
             );
         }
@@ -735,7 +739,9 @@ mod tests {
     fn a_turn_really_drives_the_shared_kernel() {
         let mut kernel = Kernel::new(KernelConfig::default());
         let mut layer = AutonomyLayer::new(keys(6), AutonomyPolicy::default());
-        layer.join(&mut kernel, "autonomous", &["translate"], Credits(20)).unwrap();
+        layer
+            .join(&mut kernel, "autonomous", &["translate"], Credits(20))
+            .unwrap();
 
         let turn = layer.turn(&mut kernel).unwrap();
         assert_eq!(turn.planned, vec![IntentKind::Announce]);
@@ -754,7 +760,9 @@ mod tests {
         let run = || {
             let mut kernel = Kernel::new(KernelConfig::default());
             let mut layer = AutonomyLayer::new(keys(7), AutonomyPolicy::default());
-            layer.join(&mut kernel, "replay", &["translate"], Credits(20)).unwrap();
+            layer
+                .join(&mut kernel, "replay", &["translate"], Credits(20))
+                .unwrap();
             for _ in 0..3 {
                 layer.turn(&mut kernel).unwrap();
             }
@@ -768,9 +776,14 @@ mod tests {
         let mut kernel = Kernel::new(KernelConfig::default());
         let payer = keys(8);
         let payee = keys(9);
-        kernel.register(&payer, "payer", &["x"], Credits(20)).unwrap();
-        kernel.register(&payee, "payee", &["y"], Credits(20)).unwrap();
-        let mut layer = AutonomyLayer::new(AgentKeys::from_seed(&[8u8; 32]), AutonomyPolicy::default());
+        kernel
+            .register(&payer, "payer", &["x"], Credits(20))
+            .unwrap();
+        kernel
+            .register(&payee, "payee", &["y"], Credits(20))
+            .unwrap();
+        let mut layer =
+            AutonomyLayer::new(AgentKeys::from_seed(&[8u8; 32]), AutonomyPolicy::default());
         // 让对方先把 settle.request 投进队列，payer 的自治层会自己决定结算。
         let request = Envelope::new(
             payee.did(),
@@ -800,10 +813,22 @@ mod tests {
     fn classify_error_keeps_misconduct_apart_from_competition() {
         assert!(classify_error(&CoreError::InvalidSignature).is_misconduct());
         assert!(classify_error(&CoreError::NotSealed).is_misconduct());
-        assert_eq!(classify_error(&CoreError::InvalidSignature), RefusalCode::Unauthorized);
+        assert_eq!(
+            classify_error(&CoreError::InvalidSignature),
+            RefusalCode::Unauthorized
+        );
         assert!(!classify_error(&CoreError::UnknownAgent).is_misconduct());
-        assert_eq!(classify_error(&CoreError::UnknownAgent), RefusalCode::StaleEpoch);
-        assert_eq!(classify_error(&CoreError::FrameTooLarge), RefusalCode::ResourceExhausted);
-        assert_eq!(classify_error(&CoreError::InsufficientFunds), RefusalCode::PolicyDenied);
+        assert_eq!(
+            classify_error(&CoreError::UnknownAgent),
+            RefusalCode::StaleEpoch
+        );
+        assert_eq!(
+            classify_error(&CoreError::FrameTooLarge),
+            RefusalCode::ResourceExhausted
+        );
+        assert_eq!(
+            classify_error(&CoreError::InsufficientFunds),
+            RefusalCode::PolicyDenied
+        );
     }
 }

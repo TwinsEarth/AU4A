@@ -84,8 +84,7 @@ pub fn residual_ppm(observed: i64, predicted: i64) -> i64 {
         return 0;
     }
     let diff = predicted.saturating_sub(observed) as i128;
-    ((diff * 1_000_000) / observed as i128)
-        .clamp(i64::MIN as i128, i64::MAX as i128) as i64
+    ((diff * 1_000_000) / observed as i128).clamp(i64::MIN as i128, i64::MAX as i128) as i64
 }
 
 /// 给定参数下的逐点残差（ppm，顺序与 bundle 记录一致）。
@@ -99,20 +98,14 @@ pub fn residuals(bundle: &DataBundle, params: &ScalingParams) -> CoreResult<Vec<
     Ok(out)
 }
 
-fn candidate_p0(
-    n0: u64,
-    alpha: u32,
-    nodes: u64,
-    observed_aggregate: i64,
-) -> CoreResult<i64> {
+fn candidate_p0(n0: u64, alpha: u32, nodes: u64, observed_aggregate: i64) -> CoreResult<i64> {
     if nodes == 0 || observed_aggregate <= 0 {
         return Err(CoreError::InvalidKind);
     }
     let base = coordination_base(n0, alpha);
     let n_alpha = coordination_base(nodes, alpha);
     // p0 = T_obs · (N0^α + n^α) / (n · N0^α)
-    let numerator = (observed_aggregate as u128)
-        .saturating_mul(base.saturating_add(n_alpha));
+    let numerator = (observed_aggregate as u128).saturating_mul(base.saturating_add(n_alpha));
     let denominator = (nodes as u128).saturating_mul(base);
     if denominator == 0 {
         return Err(CoreError::Overflow);
@@ -244,13 +237,19 @@ mod tests {
         let truth = ScalingParams::new(1_000, 2, 1_000_000, 0);
         let at_truth = residuals(&bundle, &truth).unwrap();
         for value in &at_truth {
-            assert!(value.abs() <= 1_000, "真值附近残差应接近 0，得到 {value} ppm");
+            assert!(
+                value.abs() <= 1_000,
+                "真值附近残差应接近 0，得到 {value} ppm"
+            );
         }
         let wrong = ScalingParams::new(2_000, 2, 1_000_000, 0);
         let at_wrong = residuals(&bundle, &wrong).unwrap();
         let worst_truth = at_truth.iter().map(|v| v.abs()).max().unwrap();
         let worst_wrong = at_wrong.iter().map(|v| v.abs()).max().unwrap();
-        assert!(worst_wrong > worst_truth, "错误参数的残差必须更大（拟合有区分度）");
+        assert!(
+            worst_wrong > worst_truth,
+            "错误参数的残差必须更大（拟合有区分度）"
+        );
     }
 
     #[test]
@@ -283,15 +282,30 @@ mod tests {
             n0_step: 1,
             alphas: vec![2],
         };
-        assert_eq!(fit(&bundle, &empty_search).err(), Some(CoreError::InvalidKind));
+        assert_eq!(
+            fit(&bundle, &empty_search).err(),
+            Some(CoreError::InvalidKind)
+        );
     }
 
     #[test]
     fn a_sweep_can_be_fitted_back_to_the_swept_parameter() {
-        let bundle = sweep(&[10, 100, 1_000, 10_000], &[500], &[2], 1_000_000, 0, 100_000).unwrap();
+        let bundle = sweep(
+            &[10, 100, 1_000, 10_000],
+            &[500],
+            &[2],
+            1_000_000,
+            0,
+            100_000,
+        )
+        .unwrap();
         let search = FitSearch::around(500, 300, 10, vec![2]);
         let report = fit(&bundle, &search).unwrap();
-        assert!(report.n0_estimate.abs_diff(500) <= 30, "N0={}", report.n0_estimate);
+        assert!(
+            report.n0_estimate.abs_diff(500) <= 30,
+            "N0={}",
+            report.n0_estimate
+        );
         assert_eq!(report.alpha_estimate, 2);
     }
 }

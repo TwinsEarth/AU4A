@@ -65,7 +65,9 @@ pub use fx::{
     ChainExecution, DecisionReason, ExchangeBook, ExchangeIntent, ExchangeRequest, IntentStatus,
     RouteAction, RoutePlan, RouteTable, Urgency, Venue,
 };
-pub use monitor::{ledger_totals, monitor_json, revenue_panel, LedgerTotals, RevenuePanel, RevenueRow};
+pub use monitor::{
+    ledger_totals, monitor_json, revenue_panel, LedgerTotals, RevenuePanel, RevenueRow,
+};
 pub use pricing::{unit_price, PriceComponents, PriceInputs, PriceKnobs, PriceQuote};
 pub use settlement::{
     Beneficiary, BeneficiaryKind, DecisionRights, ProviderRole, Receipt, RevenueBook, RevenueShare,
@@ -139,8 +141,8 @@ pub fn self_check() -> Vec<SelfCheck> {
             stake_target_bp: 0,
             max_spend_bp: 10_000,
         };
-        let verdict = balance::check_spend(&ledger, &a, Credits(60), &policy)
-            .map_err(|e| e.to_string())?;
+        let verdict =
+            balance::check_spend(&ledger, &a, Credits(60), &policy).map_err(|e| e.to_string())?;
         if verdict != SpendVerdict::BelowReserve {
             return Err(format!("期望 below_reserve，实际 {}", verdict.as_str()));
         }
@@ -171,7 +173,10 @@ pub fn self_check() -> Vec<SelfCheck> {
         };
         let a = pricing::quote(&inputs, &PriceKnobs::DEFAULT).map_err(|e| e.to_string())?;
         let b = pricing::quote(&inputs, &PriceKnobs::DEFAULT).map_err(|e| e.to_string())?;
-        if a != b || a.fingerprint().map_err(|e| e.to_string())? != b.fingerprint().map_err(|e| e.to_string())? {
+        if a != b
+            || a.fingerprint().map_err(|e| e.to_string())?
+                != b.fingerprint().map_err(|e| e.to_string())?
+        {
             return Err("同一输入给出了不同报价".to_string());
         }
         if a.multiplier_bp != 11_000 || a.unit_price != Credits(1_100_000) {
@@ -285,7 +290,9 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check("fx.no_fake_chain", || {
         let who = agent(10).did();
         let mut ledger = Ledger::new();
-        ledger.mint(&who, Credits(10_000)).map_err(|e| e.to_string())?;
+        ledger
+            .mint(&who, Credits(10_000))
+            .map_err(|e| e.to_string())?;
         let plan = fx::route(
             &fx::ExchangeRequest {
                 from: who.clone(),
@@ -319,7 +326,9 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check("stake.self_custody", || {
         let who = agent(11).did();
         let mut ledger = Ledger::new();
-        ledger.mint(&who, Credits(1_000)).map_err(|e| e.to_string())?;
+        ledger
+            .mint(&who, Credits(1_000))
+            .map_err(|e| e.to_string())?;
         let terms = StakeTerms::DEFAULT;
         let mut book = StakeBook::new();
         book.stake(&mut ledger, &terms, &who, Credits(300))
@@ -350,15 +359,29 @@ pub fn self_check() -> Vec<SelfCheck> {
         let claimant = agent(12).did();
         let respondent = agent(13).did();
         let mut ledger = Ledger::new();
-        ledger.mint(&respondent, Credits(10_000)).map_err(|e| e.to_string())?;
-        ledger.lock(&respondent, Credits(50)).map_err(|e| e.to_string())?;
+        ledger
+            .mint(&respondent, Credits(10_000))
+            .map_err(|e| e.to_string())?;
+        ledger
+            .lock(&respondent, Credits(50))
+            .map_err(|e| e.to_string())?;
         let terms = ArbitrationTerms::DEFAULT;
         let mut court = Court::new();
         let dispute = court
-            .open(&claimant, &respondent, Credits(1_000_000), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(1_000_000),
+                EvidenceGrade::Verified,
+                1,
+            )
             .map_err(|e| format!("立案被拒绝：{e}"))?;
-        court.vote(&dispute.id, &agent(14).did(), true, 9_000).map_err(|e| e.to_string())?;
-        court.vote(&dispute.id, &agent(15).did(), true, 1_000).map_err(|e| e.to_string())?;
+        court
+            .vote(&dispute.id, &agent(14).did(), true, 9_000)
+            .map_err(|e| e.to_string())?;
+        court
+            .vote(&dispute.id, &agent(15).did(), true, 1_000)
+            .map_err(|e| e.to_string())?;
         let first = court
             .rule(&mut ledger, &dispute.id, &terms, 2)
             .map_err(|e| format!("裁决被拒绝：{e}"))?;
@@ -373,12 +396,18 @@ pub fn self_check() -> Vec<SelfCheck> {
         court
             .appeal(&dispute.id, &respondent, "new evidence", &terms, 3)
             .map_err(|e| format!("申诉被拒绝：{e}"))?;
-        court.vote(&dispute.id, &agent(14).did(), false, 9_000).map_err(|e| e.to_string())?;
-        court.vote(&dispute.id, &agent(15).did(), false, 1_000).map_err(|e| e.to_string())?;
+        court
+            .vote(&dispute.id, &agent(14).did(), false, 9_000)
+            .map_err(|e| e.to_string())?;
+        court
+            .vote(&dispute.id, &agent(15).did(), false, 1_000)
+            .map_err(|e| e.to_string())?;
         let second = court
             .rule(&mut ledger, &dispute.id, &terms, 4)
             .map_err(|e| e.to_string())?;
-        ledger.check_conservation().map_err(|e| format!("守恒断言失败：{e}"))?;
+        ledger
+            .check_conservation()
+            .map_err(|e| format!("守恒断言失败：{e}"))?;
         if second.slashed != Credits::ZERO || second.slashed_total != Credits(50) {
             return Err(format!(
                 "驳回后罚没总额应保持 50，实际本次 {} 累计 {}",
@@ -397,9 +426,19 @@ pub fn self_check() -> Vec<SelfCheck> {
         let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
         let a = agent(16);
         let b = agent(17);
-        ensure_registered(&mut kernel, &a, "gate.a", &["x"], Credits(10)).map_err(|e| e.to_string())?;
-        ensure_registered(&mut kernel, &b, "gate.b", &["y"], Credits(10)).map_err(|e| e.to_string())?;
-        if settlement::settle_direct(&mut kernel, &a.did(), &b.did(), Credits(10), EvidenceGrade::Unverified).is_ok() {
+        ensure_registered(&mut kernel, &a, "gate.a", &["x"], Credits(10))
+            .map_err(|e| e.to_string())?;
+        ensure_registered(&mut kernel, &b, "gate.b", &["y"], Credits(10))
+            .map_err(|e| e.to_string())?;
+        if settlement::settle_direct(
+            &mut kernel,
+            &a.did(),
+            &b.did(),
+            Credits(10),
+            EvidenceGrade::Unverified,
+        )
+        .is_ok()
+        {
             return Err("Unverified 证据竟然完成了结算".to_string());
         }
         let request = settlement::SettlementRequest {
@@ -413,11 +452,20 @@ pub fn self_check() -> Vec<SelfCheck> {
         let decision = settlement::route(&request, &settlement::SettlementPolicy::DEFAULT)
             .map_err(|e| e.to_string())?;
         if decision.route != settlement::SettlementRoute::Withheld {
-            return Err(format!("Unverified 应被拒付，实际 {}", decision.route.as_str()));
+            return Err(format!(
+                "Unverified 应被拒付，实际 {}",
+                decision.route.as_str()
+            ));
         }
         // Verified 可以结算。
-        settlement::settle_direct(&mut kernel, &a.did(), &b.did(), Credits(10), EvidenceGrade::Verified)
-            .map_err(|e| format!("Verified 结算被拒绝：{e}"))?;
+        settlement::settle_direct(
+            &mut kernel,
+            &a.did(),
+            &b.did(),
+            Credits(10),
+            EvidenceGrade::Verified,
+        )
+        .map_err(|e| format!("Verified 结算被拒绝：{e}"))?;
         kernel
             .ledger()
             .check_conservation()
@@ -617,7 +665,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &["translate.en-zh"],
         Credits(100),
     )?;
-    kernel.emit("economy.registered", "3 个 Agent 自证身份并自带质押完成注册");
+    kernel.emit(
+        "economy.registered",
+        "3 个 Agent 自证身份并自带质押完成注册",
+    );
 
     // 演示主体需要一笔工作余额：首次运行时创世额度已经够用，重复运行时补足（如实上报）。
     let seller_topup = ensure_working_balance(kernel, &seller, Credits(900))?;
@@ -726,7 +777,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         RefusalCode::PolicyDenied,
         format!("支出 {overreach} 被余额策略拒绝：{}", verdict.as_str()),
     );
-    kernel.emit("economy.refused", format!("{}：{}", verdict.as_str(), overreach));
+    kernel.emit(
+        "economy.refused",
+        format!("{}：{}", verdict.as_str(), overreach),
+    );
 
     // 自主补足质押：不穿过底线，也不超过预算；已经达标时 ZeroAmount 表示「无需补足」。
     let locked = match book.autostake(kernel.ledger_mut(), &seller, Credits(1_000)) {
@@ -734,7 +788,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         Err(CoreError::ZeroAmount) => Credits::ZERO,
         Err(err) => return Err(err),
     };
-    kernel.emit("economy.staked", format!("卖方自主锁定 {locked} 微积分质押"));
+    kernel.emit(
+        "economy.staked",
+        format!("卖方自主锁定 {locked} 微积分质押"),
+    );
 
     // 自主兑换路由决策：金额阈值 / 时效 / 费用三个条件决定是否上链。
     // 本轨道只做决策与账务预留——**绝不伪造链上成功**（真实执行属 v1.8）。
@@ -752,7 +809,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let mut exchange = fx::ExchangeBook::new();
     if executable.action == fx::RouteAction::RouteOnchain {
         // 预留前先过 Agent 自己的余额策略：兑换也是支出。
-        if !book.check(kernel.ledger(), &seller, executable.amount())?.allowed() {
+        if !book
+            .check(kernel.ledger(), &seller, executable.amount())?
+            .allowed()
+        {
             return Err(CoreError::InsufficientFunds);
         }
         let at = kernel.tick();
@@ -858,7 +918,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         ),
     );
     let appeal_at = kernel.now();
-    let appeal = court.appeal(&dispute.id, &rival, "new evidence submitted", &terms_arb, appeal_at)?;
+    let appeal = court.appeal(
+        &dispute.id,
+        &rival,
+        "new evidence submitted",
+        &terms_arb,
+        appeal_at,
+    )?;
     court.vote(&dispute.id, &seller, false, 7_000)?;
     court.vote(&dispute.id, &arbiter, false, 3_000)?;
     let second_at = kernel.now();
@@ -892,14 +958,25 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let withheld = settlement::pay_split(
         kernel,
         &withheld_req,
-        &[share_of(&seller, 10_000, ProviderRole::Skill, BeneficiaryKind::Agent)],
+        &[share_of(
+            &seller,
+            10_000,
+            ProviderRole::Skill,
+            BeneficiaryKind::Agent,
+        )],
         &SettlementPolicy::DEFAULT,
     )?;
     if !matches!(withheld, SettlementOutcome::Withheld(_)) {
         return Err(CoreError::InvalidKind);
     }
     // 2) 收款方有未结争议 → 托管：先锁定，争议未结时退回付款方（所有权不变）。
-    let open_case = court.open(&buyer, &seller, Credits(50), EvidenceGrade::Verified, kernel.now())?;
+    let open_case = court.open(
+        &buyer,
+        &seller,
+        Credits(50),
+        EvidenceGrade::Verified,
+        kernel.now(),
+    )?;
     let escrow_req = SettlementRequest {
         payer: buyer.clone(),
         payee: seller.clone(),
@@ -911,7 +988,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let escrowed = settlement::pay_split(
         kernel,
         &escrow_req,
-        &[share_of(&seller, 10_000, ProviderRole::Skill, BeneficiaryKind::Agent)],
+        &[share_of(
+            &seller,
+            10_000,
+            ProviderRole::Skill,
+            BeneficiaryKind::Agent,
+        )],
         &SettlementPolicy::DEFAULT,
     )?;
     if !matches!(escrowed, SettlementOutcome::Escrowed(_)) {
@@ -944,7 +1026,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     };
     let shares = vec![
         share_of(&rival, 7_000, ProviderRole::Compute, BeneficiaryKind::Agent),
-        share_of(&owner, 3_000, ProviderRole::Data, BeneficiaryKind::HumanOperator),
+        share_of(
+            &owner,
+            3_000,
+            ProviderRole::Data,
+            BeneficiaryKind::HumanOperator,
+        ),
     ];
     // 分成也是支出：先过买方自己的余额策略。
     if !book.check(kernel.ledger(), &buyer, Credits(200))?.allowed() {
@@ -1096,7 +1183,10 @@ mod tests {
         assert_eq!(a["settled"][0]["amount"], json!(408));
         assert_eq!(a["refusals"][0]["verdict"], json!("below_reserve"));
         // 兑换路由决策：小额内部、时效不足缓办、可执行则走 ETH（费率 3、到账 397）。
-        assert_eq!(a["exchange"]["decisions"][0]["action"], json!("keep_internal"));
+        assert_eq!(
+            a["exchange"]["decisions"][0]["action"],
+            json!("keep_internal")
+        );
         assert_eq!(
             a["exchange"]["decisions"][0]["reason"],
             json!("below_onchain_minimum")
@@ -1106,7 +1196,10 @@ mod tests {
             a["exchange"]["decisions"][1]["reason"],
             json!("deadline_too_tight")
         );
-        assert_eq!(a["exchange"]["decisions"][2]["action"], json!("route_onchain"));
+        assert_eq!(
+            a["exchange"]["decisions"][2]["action"],
+            json!("route_onchain")
+        );
         assert_eq!(a["exchange"]["decisions"][2]["venue"], json!("eth"));
         assert_eq!(a["exchange"]["decisions"][2]["fee"], json!(3));
         assert_eq!(a["exchange"]["decisions"][2]["net"], json!(397));
@@ -1123,7 +1216,10 @@ mod tests {
         assert_eq!(a["stake"]["released"], json!(40));
         assert_eq!(a["stake"]["refused_stranger"], json!(true));
         assert_eq!(a["stake"]["consistent"], json!(true));
-        assert_eq!(a["refusals"][1]["verdict"], json!("unstake_without_position"));
+        assert_eq!(
+            a["refusals"][1]["verdict"],
+            json!("unstake_without_position")
+        );
         // 仲裁：索赔 300、对手锁定 100 → 罚没被锁定余额截断为 100；申诉后重裁驳回，累计仍为 100。
         assert_eq!(a["dispute"]["unverified_refused"], json!(true));
         assert_eq!(a["dispute"]["first_ruling"]["upheld"], json!(true));
@@ -1144,8 +1240,14 @@ mod tests {
         assert_eq!(a["settlement"]["receipts"][0]["amount"], json!(140));
         assert_eq!(a["settlement"]["receipts"][0]["role"], json!("compute"));
         assert_eq!(a["settlement"]["receipts"][1]["amount"], json!(60));
-        assert_eq!(a["settlement"]["receipts"][1]["kind"], json!("human_operator"));
-        assert_eq!(a["settlement"]["human_operator"]["may_decide"], json!(false));
+        assert_eq!(
+            a["settlement"]["receipts"][1]["kind"],
+            json!("human_operator")
+        );
+        assert_eq!(
+            a["settlement"]["human_operator"]["may_decide"],
+            json!(false)
+        );
         assert_eq!(
             a["settlement"]["human_operator"]["decision_rights"],
             json!("income_only")

@@ -105,7 +105,12 @@ pub struct ElectionBallot {
 impl ElectionBallot {
     /// 由选民私钥铸造选票（先规范化去重，再签名）。
     pub fn cast(keys: &AgentKeys, committee: CommitteeKind, choices: &[Did]) -> CoreResult<Self> {
-        let deduped: Vec<Did> = choices.iter().cloned().collect::<BTreeSet<_>>().into_iter().collect();
+        let deduped: Vec<Did> = choices
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let mut ballot = Self {
             voter: keys.did(),
             committee,
@@ -264,9 +269,7 @@ pub fn run(
                 voter: ballot.voter.clone(),
                 reason: format!(
                     "vote_weight {weight} < floor {} (信誉 {}bp × 在线 {})",
-                    cfg.min_voter_weight,
-                    voter.reputation_bp,
-                    voter.uptime
+                    cfg.min_voter_weight, voter.reputation_bp, voter.uptime
                 ),
             });
             continue;
@@ -353,7 +356,10 @@ pub fn run(
 
 fn ineligible_reason(c: &Candidate, cfg: &ElectionConfig) -> String {
     if c.reputation_bp < cfg.min_reputation_bp {
-        format!("信誉 {}bp < 门槛 {}bp", c.reputation_bp, cfg.min_reputation_bp)
+        format!(
+            "信誉 {}bp < 门槛 {}bp",
+            c.reputation_bp, cfg.min_reputation_bp
+        )
     } else if c.uptime < cfg.min_uptime {
         format!("在线 {} < 门槛 {}", c.uptime, cfg.min_uptime)
     } else {
@@ -395,11 +401,22 @@ mod tests {
         let roster = vec![
             a.clone(),
             b.clone(),
-            Candidate { did: voter.did(), reputation_bp: 4_000, uptime: 80, stake: Credits(100) },
-            Candidate { did: voter2.did(), reputation_bp: 4_500, uptime: 90, stake: Credits(100) },
+            Candidate {
+                did: voter.did(),
+                reputation_bp: 4_000,
+                uptime: 80,
+                stake: Credits(100),
+            },
+            Candidate {
+                did: voter2.did(),
+                reputation_bp: 4_500,
+                uptime: 90,
+                stake: Credits(100),
+            },
         ];
         let ballots = vec![
-            ElectionBallot::cast(&voter, CommitteeKind::Task, &[a.did.clone(), b.did.clone()]).unwrap(),
+            ElectionBallot::cast(&voter, CommitteeKind::Task, &[a.did.clone(), b.did.clone()])
+                .unwrap(),
             ElectionBallot::cast(&voter2, CommitteeKind::Task, &[b.did.clone()]).unwrap(),
         ];
         let mut shuffled = ballots.clone();
@@ -422,10 +439,22 @@ mod tests {
     #[test]
     fn cross_committee_replay_is_refused() {
         let voter = AgentKeys::from_seed(&[5u8; 32]);
-        let roster = vec![Candidate { did: voter.did(), reputation_bp: 4_000, uptime: 80, stake: Credits(100) }];
+        let roster = vec![Candidate {
+            did: voter.did(),
+            reputation_bp: 4_000,
+            uptime: 80,
+            stake: Credits(100),
+        }];
         let ballot = ElectionBallot::cast(&voter, CommitteeKind::Task, &[voter.did()]).unwrap();
         assert_eq!(
-            run(CommitteeKind::Security, 1, &ElectionConfig::default(), &roster, &[ballot], 1),
+            run(
+                CommitteeKind::Security,
+                1,
+                &ElectionConfig::default(),
+                &roster,
+                &[ballot],
+                1
+            ),
             Err(CoreError::InvalidKind)
         );
     }
@@ -446,8 +475,18 @@ mod tests {
         let v2 = AgentKeys::from_seed(&[9u8; 32]);
         let outsider = AgentKeys::from_seed(&[10u8; 32]);
         let roster = vec![
-            Candidate { did: v1.did(), reputation_bp: 4_000, uptime: 80, stake: Credits(100) },
-            Candidate { did: v2.did(), reputation_bp: 4_000, uptime: 80, stake: Credits(100) },
+            Candidate {
+                did: v1.did(),
+                reputation_bp: 4_000,
+                uptime: 80,
+                stake: Credits(100),
+            },
+            Candidate {
+                did: v2.did(),
+                reputation_bp: 4_000,
+                uptime: 80,
+                stake: Credits(100),
+            },
         ];
         let dup = vec![
             ElectionBallot::cast(&v1, CommitteeKind::Task, &[v1.did()]).unwrap(),
@@ -457,7 +496,8 @@ mod tests {
             run(CommitteeKind::Task, 1, &cfg, &roster, &dup, 1),
             Err(CoreError::DuplicateAgent)
         );
-        let foreign = vec![ElectionBallot::cast(&outsider, CommitteeKind::Task, &[v1.did()]).unwrap()];
+        let foreign =
+            vec![ElectionBallot::cast(&outsider, CommitteeKind::Task, &[v1.did()]).unwrap()];
         assert_eq!(
             run(CommitteeKind::Task, 1, &cfg, &roster, &foreign, 1),
             Err(CoreError::UnknownAgent)
@@ -470,8 +510,18 @@ mod tests {
         let real = AgentKeys::from_seed(&[11u8; 32]);
         let sock = AgentKeys::from_seed(&[12u8; 32]);
         let roster = vec![
-            Candidate { did: real.did(), reputation_bp: 5_000, uptime: 100, stake: Credits(100) },
-            Candidate { did: sock.did(), reputation_bp: 0, uptime: 1, stake: Credits(100) },
+            Candidate {
+                did: real.did(),
+                reputation_bp: 5_000,
+                uptime: 100,
+                stake: Credits(100),
+            },
+            Candidate {
+                did: sock.did(),
+                reputation_bp: 0,
+                uptime: 1,
+                stake: Credits(100),
+            },
         ];
         let ballots = vec![
             ElectionBallot::cast(&real, CommitteeKind::Task, &[real.did()]).unwrap(),

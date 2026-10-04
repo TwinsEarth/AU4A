@@ -219,20 +219,15 @@ mod tests {
         reordered.reverse();
         let third = collect(&reordered).unwrap();
         assert_eq!(third.len(), first.len());
-        assert_ne!(third.digest, first.digest, "顺序参与规范字节，digest 应不同");
+        assert_ne!(
+            third.digest, first.digest,
+            "顺序参与规范字节，digest 应不同"
+        );
         // 但两条记录互换后重排，digest 必须能回到原值。
         let mut sorted = third.records.clone();
-        sorted.sort_by(|a, b| {
-            a.scenario
-                .cmp(&b.scenario)
-                .then(a.nodes.cmp(&b.nodes))
-        });
+        sorted.sort_by(|a, b| a.scenario.cmp(&b.scenario).then(a.nodes.cmp(&b.nodes)));
         let mut original = first.records.clone();
-        original.sort_by(|a, b| {
-            a.scenario
-                .cmp(&b.scenario)
-                .then(a.nodes.cmp(&b.nodes))
-        });
+        original.sort_by(|a, b| a.scenario.cmp(&b.scenario).then(a.nodes.cmp(&b.nodes)));
         assert_eq!(sorted, original);
     }
 
@@ -244,11 +239,23 @@ mod tests {
         assert_eq!(DataBundle::from_json(&json).unwrap(), bundle);
         assert_eq!(collect(&[]).err(), Some(CoreError::InvalidKind));
         assert_eq!(
-            collect(&[ScenarioSpec::new("bad", vec![], ScalingParams::default(), 100)]).err(),
+            collect(&[ScenarioSpec::new(
+                "bad",
+                vec![],
+                ScalingParams::default(),
+                100
+            )])
+            .err(),
             Some(CoreError::InvalidKind)
         );
         assert_eq!(
-            collect(&[ScenarioSpec::new("bad", vec![100], ScalingParams::default(), 0)]).err(),
+            collect(&[ScenarioSpec::new(
+                "bad",
+                vec![100],
+                ScalingParams::default(),
+                0
+            )])
+            .err(),
             Some(CoreError::ZeroAmount)
         );
     }
@@ -277,7 +284,10 @@ mod tests {
         .unwrap();
         assert_eq!(bundle, again);
         // 每条记录都带完整的参数，因此数据包自解释。
-        assert!(bundle.records.iter().all(|record| record.params.p0_milli == 1_000_000));
+        assert!(bundle
+            .records
+            .iter()
+            .all(|record| record.params.p0_milli == 1_000_000));
     }
 
     #[test]

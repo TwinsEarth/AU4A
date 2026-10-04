@@ -4,8 +4,8 @@
 //! 篡改被判 `unauthorized`（恶意码）、陈旧/冲突版本被拒、幂等重放不推进版本。
 
 use au4a_capgraph::{
-    AgentCapabilityGraph, CapGraphConfig, Capability, Declaration, DeclareOutcome, SignedDeclaration,
-    SkillId,
+    AgentCapabilityGraph, CapGraphConfig, Capability, Declaration, DeclareOutcome,
+    SignedDeclaration, SkillId,
 };
 use au4a_core::{AgentKeys, CoreError, Credits, RefusalCode};
 use au4a_kernel::{Kernel, KernelConfig};
@@ -30,18 +30,22 @@ fn declare(keys: &AgentKeys, epoch: u64, skills: &[&str]) -> SignedDeclaration {
 fn an_agent_can_write_its_own_capabilities_without_any_registry() {
     let a = keys(1);
     let mut graph = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
-    let outcome = graph.apply(&declare(&a, 1, &["translate.en-zh", "sentiment.analyze"]), 0);
+    let outcome = graph.apply(
+        &declare(&a, 1, &["translate.en-zh", "sentiment.analyze"]),
+        0,
+    );
     assert!(outcome.is_applied(), "{:?}", outcome.to_value());
     assert_eq!(graph.own_epoch(), 1);
     assert_eq!(
-        graph.own_capabilities().iter().map(|c| c.skill.as_str()).collect::<Vec<_>>(),
+        graph
+            .own_capabilities()
+            .iter()
+            .map(|c| c.skill.as_str())
+            .collect::<Vec<_>>(),
         vec!["sentiment.analyze", "translate.en-zh"],
         "声明内部按技能名升序，规范字节唯一"
     );
-    assert_eq!(
-        graph.to_value()["owner"].as_str(),
-        Some(a.did().as_str())
-    );
+    assert_eq!(graph.to_value()["owner"].as_str(), Some(a.did().as_str()));
 }
 
 #[test]
@@ -86,7 +90,11 @@ fn replaying_the_same_declaration_is_idempotent() {
         ));
     }
     assert_eq!(graph.neighbor(&b.did()).expect("record").epoch, 1);
-    assert_eq!(graph.neighbor(&b.did()).expect("record").at, 0, "重放不刷新接受时刻");
+    assert_eq!(
+        graph.neighbor(&b.did()).expect("record").at,
+        0,
+        "重放不刷新接受时刻"
+    );
 }
 
 #[test]
@@ -94,7 +102,10 @@ fn nobody_declares_on_behalf_of_someone_else() {
     let a = keys(6);
     let b = keys(7);
     let declaration = Declaration::new(a.did(), 1, 1, vec![cap("x", 3)]).expect("coherent");
-    assert_eq!(declaration.clone().sign(&b), Err(CoreError::InvalidSignature));
+    assert_eq!(
+        declaration.clone().sign(&b),
+        Err(CoreError::InvalidSignature)
+    );
     // 即使对方拿到了 A 的公钥与一份合法载荷，也签不出 A 的签名。
     let signed = declaration.sign(&a).expect("A signs");
     let mut value = signed.to_value().expect("serialisable");
@@ -120,7 +131,10 @@ fn a_tampered_declaration_is_misconduct_grade_refusal() {
     let outcome = graph.apply(&tampered, 0);
     let code = outcome.refusal().expect("refused");
     assert_eq!(code, RefusalCode::Unauthorized);
-    assert!(code.is_misconduct(), "签名不成立一次即恶意（au4a-core 的拒绝分类）");
+    assert!(
+        code.is_misconduct(),
+        "签名不成立一次即恶意（au4a-core 的拒绝分类）"
+    );
     assert!(!code.retryable(), "伪造不可重试");
     assert_eq!(graph.capability_count(), 0);
 }
@@ -139,9 +153,14 @@ fn the_per_agent_skill_cap_is_enforced_on_both_paths() {
         graph.apply(&too_many, 0).refusal(),
         Some(RefusalCode::PolicyDenied)
     );
-    assert_eq!(graph.apply(&declare(&a, 1, &["a1", "a2"]), 0).is_applied(), true);
     assert_eq!(
-        graph.apply(&declare(&b, 1, &["b1", "b2", "b3"]), 0).refusal(),
+        graph.apply(&declare(&a, 1, &["a1", "a2"]), 0).is_applied(),
+        true
+    );
+    assert_eq!(
+        graph
+            .apply(&declare(&b, 1, &["b1", "b2", "b3"]), 0)
+            .refusal(),
         Some(RefusalCode::PolicyDenied)
     );
     assert_eq!(graph.capability_count(), 2, "被拒的声明不留痕");
@@ -167,7 +186,10 @@ fn scenario_is_replayable_and_carries_a_version() {
     // 能跑、不 panic、带版本号、同样输入给同样输出。
     let mut kernel = Kernel::new(KernelConfig::default());
     let value = au4a_capgraph::scenario(&mut kernel).expect("scenario runs");
-    assert!(value["version"].as_str().unwrap_or_default().starts_with("v1.1."));
+    assert!(value["version"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("v1.1."));
     let mut other = Kernel::new(KernelConfig::default());
     let again = au4a_capgraph::scenario(&mut other).expect("scenario runs");
     assert_eq!(value, again, "逻辑时钟 + 固定种子 → 可重放");

@@ -150,7 +150,10 @@ mod tests {
     fn identical_records_are_not_recorded_twice() {
         let mut history = VersionHistory::new();
         assert!(history.record(record(1, 1, "h1")));
-        assert!(!history.record(record(1, 1, "h1")), "重复入账会让版本计数虚高");
+        assert!(
+            !history.record(record(1, 1, "h1")),
+            "重复入账会让版本计数虚高"
+        );
         assert_eq!(history.len(), 1);
         assert_eq!(history.bumps(), 1);
         assert!(history.record(record(1, 2, "h2")));
@@ -164,7 +167,10 @@ mod tests {
             history.record(record(1, version, &format!("h{version}")));
         }
         assert_eq!(history.len(), HISTORY_CAPACITY);
-        assert_eq!(history.last_version(&did(1)), Some(HISTORY_CAPACITY as u64 + 10));
+        assert_eq!(
+            history.last_version(&did(1)),
+            Some(HISTORY_CAPACITY as u64 + 10)
+        );
         assert_eq!(history.hash_of(&did(1), 1), None, "最旧的记录被丢弃");
         assert_eq!(
             history.hash_of(&did(1), HISTORY_CAPACITY as u64 + 10),

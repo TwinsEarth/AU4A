@@ -24,19 +24,37 @@ fn fixed_seed_evaluation_quantifies_the_lift() {
     assert!(report.violations_reduction >= 0);
     assert!(report.median_success_lift_bp > 0);
     assert!(report.improved_seeds * 2 >= report.seeds);
-    assert!(report.negative_seeds * 3 <= report.seeds, "明显变差的种子不能超过 1/3");
+    assert!(
+        report.negative_seeds * 3 <= report.seeds,
+        "明显变差的种子不能超过 1/3"
+    );
     // 每个种子里学习组都真的改了参数，对照组都没改
     for s in &report.per_seed {
         assert!(s.params_differ, "seed={} 两组参数必须不同", s.seed);
-        assert!(s.learning_price_bp < 12_000, "学习组定价必须下移（seed={}）", s.seed);
+        assert!(
+            s.learning_price_bp < 12_000,
+            "学习组定价必须下移（seed={}）",
+            s.seed
+        );
         assert!(s.learning_revenue >= Credits::ZERO);
     }
     // 汇总数字必须与逐种子数字自洽
-    let sum_revenue: i64 = report.per_seed.iter().map(|s| s.learning_revenue.get()).sum();
+    let sum_revenue: i64 = report
+        .per_seed
+        .iter()
+        .map(|s| s.learning_revenue.get())
+        .sum();
     assert_eq!(sum_revenue, report.learning.revenue.get());
-    let sum_control: i64 = report.per_seed.iter().map(|s| s.control_revenue.get()).sum();
+    let sum_control: i64 = report
+        .per_seed
+        .iter()
+        .map(|s| s.control_revenue.get())
+        .sum();
     assert_eq!(sum_control, report.control.revenue.get());
-    assert_eq!(report.control.params_changed_runs, 0, "对照组不应有一次参数变化");
+    assert_eq!(
+        report.control.params_changed_runs, 0,
+        "对照组不应有一次参数变化"
+    );
     assert_eq!(report.learning.params_changed_runs, report.seeds as u32);
     println!(
         "eval evidence: seeds={} control(success={}bp revenue={} violations={}) learning(success={}bp revenue={} violations={}) lift(success=+{}bp median=+{}bp min={}bp max={}bp revenue=+{}bp improved_seeds={} negative={})",
@@ -113,7 +131,10 @@ fn ablations_show_which_lever_carries_the_improvement() {
     let rows = ablations(&config).unwrap();
     assert_eq!(rows.len(), 4);
     let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
-    assert_eq!(labels, vec!["price-only", "task-only", "peer-only", "all-levers"]);
+    assert_eq!(
+        labels,
+        vec!["price-only", "task-only", "peer-only", "all-levers"]
+    );
 
     let price = rows.iter().find(|r| r.label == "price-only").unwrap();
     let task = rows.iter().find(|r| r.label == "task-only").unwrap();
@@ -121,7 +142,10 @@ fn ablations_show_which_lever_carries_the_improvement() {
     let all = rows.iter().find(|r| r.label == "all-levers").unwrap();
 
     // 定价是主杠杆（接受率远低于目标 → 降价带来最多成交量）
-    assert!(price.success_lift_bp > 0, "只学定价也必须有正提升：{price:?}");
+    assert!(
+        price.success_lift_bp > 0,
+        "只学定价也必须有正提升：{price:?}"
+    );
     assert!(price.revenue_lift_bp > 0);
     // 三个杠杆全开必须至少不差于只学任务/只学协作
     assert!(all.success_lift_bp > 0);

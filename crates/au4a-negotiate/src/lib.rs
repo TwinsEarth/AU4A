@@ -24,9 +24,7 @@ pub mod msg;
 pub mod rounds;
 pub mod state;
 
-pub use arbitration::{
-    ArbitrationCase, ArbitrationPolicy, Enforcement, Ruling, Verdict,
-};
+pub use arbitration::{ArbitrationCase, ArbitrationPolicy, Enforcement, Ruling, Verdict};
 pub use breach::BreachClaim;
 pub use contract::{Anchor, Contract, ANCHOR_EVENT};
 pub use journal::{Journal, JOURNAL_VERSION};
@@ -58,7 +56,9 @@ pub(crate) const RESPONDER_SEED: [u8; 32] = [0x34; 32];
 ///
 /// 注册是幂等的：内核里已有同名 Agent 就复用它的名片，
 /// 这样 `scenario` 在同一个内核上被多次调用（端到端演示 + 10 次部署验证）不会因重复注册而失败。
-pub(crate) fn scenario_agents(kernel: &mut Kernel) -> CoreResult<(au4a_core::AgentKeys, au4a_core::AgentKeys)> {
+pub(crate) fn scenario_agents(
+    kernel: &mut Kernel,
+) -> CoreResult<(au4a_core::AgentKeys, au4a_core::AgentKeys)> {
     let proposer = au4a_core::AgentKeys::from_seed(&PROPOSER_SEED);
     let responder = au4a_core::AgentKeys::from_seed(&RESPONDER_SEED);
     ensure_agent(kernel, &proposer, "negotiate.proposer", &["summarize.zh"])?;
@@ -99,7 +99,9 @@ fn msg_kinds_check() -> CoreResult<String> {
         }
         seen.push(k);
     }
-    Ok(format!("{ALL_KINDS:?} 六个类型名均为合法 MsgKind 且互不相同"))
+    Ok(format!(
+        "{ALL_KINDS:?} 六个类型名均为合法 MsgKind 且互不相同"
+    ))
 }
 
 fn msg_roundtrip_check() -> CoreResult<String> {
@@ -109,7 +111,11 @@ fn msg_roundtrip_check() -> CoreResult<String> {
     let h = terms.hash()?;
     let msgs = [
         NegotiationMsg::request("selfcheck", terms.clone())?,
-        NegotiationMsg::counter("selfcheck", 1, Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?)?,
+        NegotiationMsg::counter(
+            "selfcheck",
+            1,
+            Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?,
+        )?,
         NegotiationMsg::accept("selfcheck", 1, &h)?,
         NegotiationMsg::reject("selfcheck", 1, "price")?,
         NegotiationMsg::sign_contract("c-selfcheck", &h)?,
@@ -243,7 +249,10 @@ fn rounds_cap_check() -> CoreResult<String> {
     if negotiation.rounds_used() != 1 || negotiation.offers().len() != 2 {
         return Err(au4a_core::CoreError::InvalidKind);
     }
-    Ok("max_rounds=1：第 2 次还价 → Err(Overflow) + 内核记 policy_denied，轮数与报价数不变".to_string())
+    Ok(
+        "max_rounds=1：第 2 次还价 → Err(Overflow) + 内核记 policy_denied，轮数与报价数不变"
+            .to_string(),
+    )
 }
 
 fn rounds_reject_check() -> CoreResult<String> {
@@ -260,7 +269,12 @@ fn rounds_reject_check() -> CoreResult<String> {
     if negotiation.rounds_used() != 0 || negotiation.rejections().len() != 5 {
         return Err(au4a_core::CoreError::InvalidKind);
     }
-    negotiation.counter(&mut kernel, &b, &a, Terms::new("summarize.zh", Credits(90), 10, EvidenceGrade::Verified)?)?;
+    negotiation.counter(
+        &mut kernel,
+        &b,
+        &a,
+        Terms::new("summarize.zh", Credits(90), 10, EvidenceGrade::Verified)?,
+    )?;
     if negotiation.rounds_used() != 1 {
         return Err(au4a_core::CoreError::InvalidKind);
     }
@@ -344,8 +358,10 @@ fn breach_requires_contract_check() -> CoreResult<String> {
     if negotiation.machine().history().last().map(|r| r.sigs.len()) != Some(1) {
         return Err(au4a_core::CoreError::NotSealed);
     }
-    Ok("无合约申诉被拒；双签合约下单签申诉进入 ARBITRATION（1 个当场签名 + 合约条款授权）"
-        .to_string())
+    Ok(
+        "无合约申诉被拒；双签合约下单签申诉进入 ARBITRATION（1 个当场签名 + 合约条款授权）"
+            .to_string(),
+    )
 }
 
 fn arbitration_conservation_check() -> CoreResult<String> {
@@ -355,7 +371,12 @@ fn arbitration_conservation_check() -> CoreResult<String> {
     let arb2 = au4a_core::AgentKeys::from_seed(&[0x06; 32]);
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
     ensure_agent(&mut kernel, &client, "selfcheck.client", &["summarize.zh"])?;
-    ensure_agent(&mut kernel, &provider, "selfcheck.provider", &["summarize.zh"])?;
+    ensure_agent(
+        &mut kernel,
+        &provider,
+        "selfcheck.provider",
+        &["summarize.zh"],
+    )?;
 
     let terms = Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?;
     let mut negotiation = Negotiation::open(&mut kernel, &client, &provider, terms, 2)?;
@@ -470,7 +491,10 @@ fn example_two_paths_check() -> CoreResult<String> {
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 pub fn self_check() -> Vec<SelfCheck> {
     vec![
-        check("track.wired", Ok(format!("{TITLE} {RANGE} 已接入 au4a-node"))),
+        check(
+            "track.wired",
+            Ok(format!("{TITLE} {RANGE} 已接入 au4a-node")),
+        ),
         check("msg.kinds", msg_kinds_check()),
         check("msg.roundtrip", msg_roundtrip_check()),
         check("msg.rejection", msg_rejection_check()),

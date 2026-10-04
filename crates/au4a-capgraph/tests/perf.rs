@@ -9,8 +9,8 @@
 //! 而数出来的东西必须是**确定性**的（同一负载两次运行得到逐字节相同的计数）。
 
 use au4a_capgraph::{
-    AgentCapabilityGraph, CapGraphConfig, Capability, CapabilityQuery, Declaration, QueryCache,
-    QueryPerf, QueryResult, SkillId, rank_top_k, index::rank_and_truncate,
+    index::rank_and_truncate, rank_top_k, AgentCapabilityGraph, CapGraphConfig, Capability,
+    CapabilityQuery, Declaration, QueryCache, QueryPerf, QueryResult, SkillId,
 };
 use au4a_core::{AgentKeys, Credits, Did};
 use au4a_kernel::{Kernel, KernelConfig};
@@ -76,7 +76,11 @@ fn a_full_neighbor_cache_keeps_the_index_in_step() {
     let surviving: Vec<Did> = graph.neighbors().map(|r| r.did.clone()).collect();
     for did in &dids {
         let indexed = graph.providers_of(&skill("translate.en-zh")).contains(did);
-        assert_eq!(indexed, surviving.contains(did), "索引与邻居集合不一致：{did}");
+        assert_eq!(
+            indexed,
+            surviving.contains(did),
+            "索引与邻居集合不一致：{did}"
+        );
     }
     assert_eq!(graph.query_perf().index_rebuilds, 0);
 }
@@ -87,7 +91,10 @@ fn bounded_top_k_is_identical_to_full_sort_and_does_not_full_sort() {
     let query = CapabilityQuery::new(skill("translate.en-zh"));
     let bounded = graph.query(&query.clone().with_limit(3), 1);
     let perf_after_bounded = graph.query_perf();
-    assert!(bounded.stats.bounded_selection, "limit < 命中数时应走有界选择");
+    assert!(
+        bounded.stats.bounded_selection,
+        "limit < 命中数时应走有界选择"
+    );
     assert_eq!(perf_after_bounded.bounded_selections, 1);
     assert_eq!(perf_after_bounded.full_sorts, 0, "有界选择不做全排序");
 
@@ -102,7 +109,10 @@ fn bounded_top_k_is_identical_to_full_sort_and_does_not_full_sort() {
     let bounded_direct = rank_top_k(full.matches.clone(), 3, &mut perf);
     let reference = rank_and_truncate(full.matches.clone(), 3);
     assert_eq!(
-        bounded_direct.iter().map(|m| m.did.as_str()).collect::<Vec<_>>(),
+        bounded_direct
+            .iter()
+            .map(|m| m.did.as_str())
+            .collect::<Vec<_>>(),
         reference.iter().map(|m| m.did.as_str()).collect::<Vec<_>>()
     );
     assert_eq!(perf.bounded_selections, 1);
@@ -119,7 +129,11 @@ fn query_cache_hits_and_invalidates_on_every_mutation() {
     assert_eq!(first, second, "命中缓存的结果必须与首次一致");
     assert_eq!(graph.query_cache_stats().hits, 1);
     assert_eq!(graph.query_cache_stats().misses, 1);
-    assert_eq!(graph.revision(), revision_after_first, "只读查询不推进修订号");
+    assert_eq!(
+        graph.revision(),
+        revision_after_first,
+        "只读查询不推进修订号"
+    );
 
     // 任何一次数据变更都推进修订号 → 旧键自然失效。
     let owner = AgentKeys::from_seed(&[241; 32]);
@@ -218,7 +232,11 @@ fn scenario_reports_operation_counts_and_a_cache_hit() {
     let value = au4a_capgraph::scenario(&mut kernel).expect("scenario runs");
     assert_eq!(value["query_cache_hit"].as_bool(), Some(true));
     let perf = &value["perf"];
-    assert_eq!(perf["queries"]["index_rebuilds"].as_u64(), Some(0), "正常路径不整表重建");
+    assert_eq!(
+        perf["queries"]["index_rebuilds"].as_u64(),
+        Some(0),
+        "正常路径不整表重建"
+    );
     assert!(
         perf["queries"]["full_sorts"].as_u64().unwrap_or(0) >= 1,
         "规划内部使用 limit=0（要全部候选），走全排序——诚实计数"
@@ -231,7 +249,11 @@ fn scenario_reports_operation_counts_and_a_cache_hit() {
         perf["queries"]["queries"].as_u64().unwrap_or(0) >= 5,
         "查询次数：translate(命中缓存不计) + best + sentiment + 两次规划"
     );
-    assert_eq!(perf["index"]["entries"].as_u64(), Some(5), "5 个 Agent 各 1 条能力");
+    assert_eq!(
+        perf["index"]["entries"].as_u64(),
+        Some(5),
+        "5 个 Agent 各 1 条能力"
+    );
     assert!(
         perf["query_cache"]["misses"].as_u64().unwrap_or(0) >= 1,
         "第一次查询必然未命中"

@@ -326,7 +326,9 @@ impl NoPathReason {
     pub fn detail(&self) -> String {
         match self {
             Self::EmptyRequest => "request has no steps".to_string(),
-            Self::NoProvider { step, skill } => format!("step {step}: no provider for skill {skill}"),
+            Self::NoProvider { step, skill } => {
+                format!("step {step}: no provider for skill {skill}")
+            }
             Self::NoCompatibleFormat {
                 step,
                 required,
@@ -337,7 +339,9 @@ impl NoPathReason {
             Self::ConstraintRejected { step, skill } => {
                 format!("step {step}: every provider of {skill} was rejected by constraints")
             }
-            Self::BudgetExceeded { allowed } => format!("cheapest pipeline costs more than {allowed}"),
+            Self::BudgetExceeded { allowed } => {
+                format!("cheapest pipeline costs more than {allowed}")
+            }
             Self::DeadlineExceeded { allowed_ms } => {
                 format!("fastest pipeline is slower than {allowed_ms} ms")
             }
@@ -473,18 +477,16 @@ pub fn plan(
                 relaxed.max_total_price = None;
                 relaxed.deadline_ms = None;
                 match plan(graph, &relaxed, cost, now) {
-                    PlanOutcome::Path(feasible) => {
-                        match request.max_total_price {
-                            Some(budget) if feasible.total_price.get() > budget.get() => {
-                                NoPathReason::BudgetExceeded {
-                                    allowed: budget.get(),
-                                }
+                    PlanOutcome::Path(feasible) => match request.max_total_price {
+                        Some(budget) if feasible.total_price.get() > budget.get() => {
+                            NoPathReason::BudgetExceeded {
+                                allowed: budget.get(),
                             }
-                            _ => NoPathReason::DeadlineExceeded {
-                                allowed_ms: request.deadline_ms.map(u64::from).unwrap_or(0),
-                            },
                         }
-                    }
+                        _ => NoPathReason::DeadlineExceeded {
+                            allowed_ms: request.deadline_ms.map(u64::from).unwrap_or(0),
+                        },
+                    },
                     PlanOutcome::NoPath(inner) => inner.reason,
                 }
             } else {
@@ -506,7 +508,10 @@ fn collect_candidates(
     for (index, step) in request.steps.iter().enumerate() {
         let mut query = CapabilityQuery::new(step.skill.clone()).with_limit(0);
         let output = if index == last_index {
-            request.final_output_format.clone().or(step.output_format.clone())
+            request
+                .final_output_format
+                .clone()
+                .or(step.output_format.clone())
         } else {
             step.output_format.clone()
         };
@@ -567,7 +572,8 @@ fn search_labels(
         .map(|row| vec![Vec::new(); row.len()])
         .collect();
     // 堆序：代价 → 延迟 → 价格 → 步号 → DID → 槽位 → 标签下标（全序，确定性）。
-    let mut heap: BinaryHeap<Reverse<(i64, u64, i64, usize, Did, usize, usize)>> = BinaryHeap::new();
+    let mut heap: BinaryHeap<Reverse<(i64, u64, i64, usize, Did, usize, usize)>> =
+        BinaryHeap::new();
 
     for (slot, candidate) in candidates[0].iter().enumerate() {
         if !candidate.capability.accepts_format(&request.input_format) {
@@ -627,9 +633,9 @@ fn search_labels(
             let over_budget = request
                 .max_total_price
                 .map_or(false, |budget| candidate_label.price > budget.get());
-            let over_deadline = request
-                .deadline_ms
-                .map_or(false, |deadline| candidate_label.latency > u64::from(deadline));
+            let over_deadline = request.deadline_ms.map_or(false, |deadline| {
+                candidate_label.latency > u64::from(deadline)
+            });
             if over_budget || over_deadline {
                 stats.constraint_pruned += 1;
                 continue;
@@ -739,13 +745,15 @@ fn build_pipeline(
             cost: node_cost(capability, cost, handoff),
         });
     }
-    let total_price = nodes
-        .iter()
-        .fold(0i64, |acc, node| acc.saturating_add(node.price_per_unit.get()));
+    let total_price = nodes.iter().fold(0i64, |acc, node| {
+        acc.saturating_add(node.price_per_unit.get())
+    });
     let total_latency_ms = nodes
         .iter()
         .fold(0u64, |acc, node| acc.saturating_add(node.latency_ms));
-    let total_cost = nodes.iter().fold(0i64, |acc, node| acc.saturating_add(node.cost));
+    let total_cost = nodes
+        .iter()
+        .fold(0i64, |acc, node| acc.saturating_add(node.cost));
     Pipeline {
         nodes,
         total_price: Credits(total_price),
@@ -783,7 +791,10 @@ pub fn verify_pipeline(
     for (position, node) in pipeline.nodes.iter().enumerate() {
         let step = &request.steps[position];
         if node.skill != step.skill {
-            return Err(format!("第 {position} 步技能不符：{} != {}", node.skill, step.skill));
+            return Err(format!(
+                "第 {position} 步技能不符：{} != {}",
+                node.skill, step.skill
+            ));
         }
         let key = (node.did.clone(), node.slot);
         let capability = graph
@@ -798,7 +809,10 @@ pub fn verify_pipeline(
         // 格式链：第一步吃请求输入；之后每一跳都必须落在双方的格式集合里。
         if position == 0 {
             if !capability.accepts_format(&request.input_format) {
-                return Err(format!("第一步不接受请求的输入格式 {}", request.input_format));
+                return Err(format!(
+                    "第一步不接受请求的输入格式 {}",
+                    request.input_format
+                ));
             }
         } else {
             let previous = &pipeline.nodes[position - 1];
@@ -813,7 +827,10 @@ pub fn verify_pipeline(
             }
         }
         if !capability.produces_format(&node.output_format) {
-            return Err(format!("第 {position} 步不产出所声称的 {}", node.output_format));
+            return Err(format!(
+                "第 {position} 步不产出所声称的 {}",
+                node.output_format
+            ));
         }
         if position + 1 == pipeline.nodes.len() {
             if let Some(final_format) = &request.final_output_format {
@@ -827,7 +844,10 @@ pub fn verify_pipeline(
         }
         if let Some(step_format) = &step.output_format {
             if &node.output_format != step_format {
-                return Err(format!("第 {position} 步产出格式不符：{}", node.output_format));
+                return Err(format!(
+                    "第 {position} 步产出格式不符：{}",
+                    node.output_format
+                ));
             }
         }
         if let Some(max_price) = step.max_price_per_unit {
@@ -906,9 +926,12 @@ fn classify_failure(candidates: &[StepCandidates], request: &PipelineRequest) ->
     }
     for step in 0..candidates.len().saturating_sub(1) {
         let reachable = candidates[step].iter().any(|previous| {
-            candidates[step + 1]
-                .iter()
-                .any(|next| previous.capability.handoff_format(&next.capability).is_some())
+            candidates[step + 1].iter().any(|next| {
+                previous
+                    .capability
+                    .handoff_format(&next.capability)
+                    .is_some()
+            })
         });
         if !reachable {
             return NoPathReason::NoCompatibleFormat {
@@ -1017,8 +1040,14 @@ mod tests {
         let outcome = plan(&mut graph, &two_step_request(), &PlanCost::default(), 0);
         let pipeline = outcome.pipeline().expect("a path exists");
         assert_eq!(pipeline.skills().len(), 2);
-        assert_eq!(pipeline.nodes[0].did, dids[0], "第一步必须是 bob（唯一产出 json 的翻译）");
-        assert_eq!(pipeline.nodes[1].did, dids[1], "第二步必须是 carol（唯一接受 json 的情感分析）");
+        assert_eq!(
+            pipeline.nodes[0].did, dids[0],
+            "第一步必须是 bob（唯一产出 json 的翻译）"
+        );
+        assert_eq!(
+            pipeline.nodes[1].did, dids[1],
+            "第二步必须是 carol（唯一接受 json 的情感分析）"
+        );
         assert_eq!(pipeline.nodes[0].output_format.as_str(), "application/json");
         assert_eq!(pipeline.nodes[1].input_format.as_str(), "application/json");
         assert_eq!(pipeline.total_price, Credits(5));
@@ -1030,7 +1059,10 @@ mod tests {
         let (mut graph, dids) = demo_graph();
         // 贪心的第一选择：该技能下最便宜的能力（dave，1 微积分，产出 text/html）。
         let cheapest = graph
-            .query(&CapabilityQuery::new(skill("translate.en-zh")).with_limit(0), 0)
+            .query(
+                &CapabilityQuery::new(skill("translate.en-zh")).with_limit(0),
+                0,
+            )
             .matches
             .into_iter()
             .min_by_key(|m| m.capability.price_per_unit.get())
@@ -1040,7 +1072,10 @@ mod tests {
 
         // 从 dave 出发没有任何可接续的情感分析能力 → 贪心必然失败。
         let continues = graph
-            .query(&CapabilityQuery::new(skill("sentiment.analyze")).with_limit(0), 0)
+            .query(
+                &CapabilityQuery::new(skill("sentiment.analyze")).with_limit(0),
+                0,
+            )
             .matches
             .iter()
             .filter(|m| dave_capability.handoff_format(&m.capability).is_some())
@@ -1092,7 +1127,10 @@ mod tests {
         );
         match plan(&mut graph, &request, &PlanCost::default(), 0) {
             PlanOutcome::NoPath(no_path) => {
-                assert!(matches!(no_path.reason, NoPathReason::NoProvider { step: 0, .. }));
+                assert!(matches!(
+                    no_path.reason,
+                    NoPathReason::NoProvider { step: 0, .. }
+                ));
                 assert_eq!(no_path.refusal_code(), RefusalCode::Unsupported);
             }
             PlanOutcome::Path(pipeline) => panic!("不该有路径：{:?}", pipeline.to_value()),
@@ -1115,13 +1153,18 @@ mod tests {
         let too_slow = two_step_request().with_deadline_ms(150);
         match plan(&mut graph, &too_slow, &PlanCost::default(), 0) {
             PlanOutcome::NoPath(no_path) => {
-                assert_eq!(no_path.reason, NoPathReason::DeadlineExceeded { allowed_ms: 150 });
+                assert_eq!(
+                    no_path.reason,
+                    NoPathReason::DeadlineExceeded { allowed_ms: 150 }
+                );
                 assert_eq!(no_path.refusal_code(), RefusalCode::Timeout);
             }
             PlanOutcome::Path(p) => panic!("150ms 不该可行：{:?}", p.to_value()),
         }
         // 预算 5、期限 200ms 恰好可行。
-        let exact = two_step_request().with_budget(Credits(5)).with_deadline_ms(200);
+        let exact = two_step_request()
+            .with_budget(Credits(5))
+            .with_deadline_ms(200);
         let pipeline = plan(&mut graph, &exact, &PlanCost::default(), 0)
             .pipeline()
             .expect("恰好可行")
@@ -1155,8 +1198,18 @@ mod tests {
     fn planning_is_deterministic_and_reports_its_search_size() {
         let (mut first_graph, _) = demo_graph();
         let (mut second_graph, _) = demo_graph();
-        let first = plan(&mut first_graph, &two_step_request(), &PlanCost::default(), 0);
-        let second = plan(&mut second_graph, &two_step_request(), &PlanCost::default(), 0);
+        let first = plan(
+            &mut first_graph,
+            &two_step_request(),
+            &PlanCost::default(),
+            0,
+        );
+        let second = plan(
+            &mut second_graph,
+            &two_step_request(),
+            &PlanCost::default(),
+            0,
+        );
         assert_eq!(first.to_value(), second.to_value(), "同样输入 → 同样流水线");
         let pipeline = first.pipeline().expect("path");
         assert_eq!(pipeline.search.candidates, 4, "两个技能各 2 个候选");
@@ -1218,6 +1271,10 @@ mod tests {
             .pipeline()
             .expect("dave produces html")
             .clone();
-        assert_eq!(pipeline.nodes[0].price_per_unit, Credits(1), "此时最便宜的就是对的");
+        assert_eq!(
+            pipeline.nodes[0].price_per_unit,
+            Credits(1),
+            "此时最便宜的就是对的"
+        );
     }
 }

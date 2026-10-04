@@ -331,11 +331,15 @@ pub fn adjust(
         }
         let violations_of_peer = violations.count_of(&peer);
         if violations_of_peer > 0 {
-            after = (after - targets.violation_penalty_bp).clamp(bounds.bias_min_bp, bounds.bias_max_bp);
+            after = (after - targets.violation_penalty_bp)
+                .clamp(bounds.bias_min_bp, bounds.bias_max_bp);
             if !why.is_empty() {
                 why.push_str("; ");
             }
-            why.push_str(&format!("violations={violations_of_peer} penalty={}bp", targets.violation_penalty_bp));
+            why.push_str(&format!(
+                "violations={violations_of_peer} penalty={}bp",
+                targets.violation_penalty_bp
+            ));
         }
         if after != before {
             peer_moved.insert(peer.clone(), after - before);
@@ -416,7 +420,10 @@ pub fn price_decision(signals: &Signals, targets: &PolicyTargets) -> (i64, Strin
             .saturating_sub(signals.prev_mean_reward.get());
         if delta < -floor {
             dir = -base;
-            note = format!("；平滑收益下滑 {} 微积分/任务（噪声死区 {floor}）→ 反向", -delta);
+            note = format!(
+                "；平滑收益下滑 {} 微积分/任务（噪声死区 {floor}）→ 反向",
+                -delta
+            );
         }
     }
     // 安全阀 2：信誉在下降时不涨价（不论方向是接受率给的还是收益安全阀翻转出来的）
@@ -511,7 +518,13 @@ pub fn self_check() -> Vec<SelfCheck> {
     // 场景：类型 A 全成功高收益，类型 B 全失败零收益；peer0 成功、peer1 失败。
     let mut store = match ExperienceStore::new(32) {
         Ok(s) => s,
-        Err(_) => return vec![crate::check("policy.evidence_gate", false, "经验库构造失败")],
+        Err(_) => {
+            return vec![crate::check(
+                "policy.evidence_gate",
+                false,
+                "经验库构造失败",
+            )]
+        }
     };
     let mut ok = true;
     for i in 0..8u64 {
@@ -546,7 +559,9 @@ pub fn self_check() -> Vec<SelfCheck> {
     let weak = Signals::cold_start(1, 5_000, Credits(10));
     let held = adjust(&baseline, &report, &violations, &weak, &bounds, &targets);
     let hold_ok = held
-        .map(|a| !a.changed && a.next == baseline && a.reasons[0].contains("evidence-below-threshold"))
+        .map(|a| {
+            !a.changed && a.next == baseline && a.reasons[0].contains("evidence-below-threshold")
+        })
         .unwrap_or(false);
     checks.push(crate::check(
         "policy.evidence_gate",
@@ -572,18 +587,8 @@ pub fn self_check() -> Vec<SelfCheck> {
             let price_down = a.price_moved_bp == -bounds.price_step_bp;
             let good_up = a.task_bias_moved_bp.get("good.type").copied().unwrap_or(0) > 0;
             let bad_down = a.task_bias_moved_bp.get("bad.type").copied().unwrap_or(0) < 0;
-            let peer_up = a
-                .peer_bias_moved_bp
-                .get(&peers[0])
-                .copied()
-                .unwrap_or(0)
-                > 0;
-            let peer_down = a
-                .peer_bias_moved_bp
-                .get(&peers[1])
-                .copied()
-                .unwrap_or(0)
-                < 0;
+            let peer_up = a.peer_bias_moved_bp.get(&peers[0]).copied().unwrap_or(0) > 0;
+            let peer_down = a.peer_bias_moved_bp.get(&peers[1]).copied().unwrap_or(0) < 0;
             (
                 a.changed && price_down && good_up && bad_down && peer_up && peer_down,
                 format!(
@@ -605,12 +610,22 @@ pub fn self_check() -> Vec<SelfCheck> {
     let penalty_ok = match crate::violation::Violation::new(&peers[0], "t-0", "withheld", 1) {
         Ok(v) => {
             let _ = with_violation.record(v);
-            adjust(&baseline, &report, &with_violation, &signals, &bounds, &targets)
-                .map(|a| {
-                    a.next.bias_of_peer(&peers[0])
-                        < moved.as_ref().map(|m| m.next.bias_of_peer(&peers[0])).unwrap_or(0)
-                })
-                .unwrap_or(false)
+            adjust(
+                &baseline,
+                &report,
+                &with_violation,
+                &signals,
+                &bounds,
+                &targets,
+            )
+            .map(|a| {
+                a.next.bias_of_peer(&peers[0])
+                    < moved
+                        .as_ref()
+                        .map(|m| m.next.bias_of_peer(&peers[0]))
+                        .unwrap_or(0)
+            })
+            .unwrap_or(false)
         }
         Err(_) => false,
     };
@@ -630,8 +645,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         .map(|a| {
             a.next.price_bp >= bounds.price_min_bp
                 && a.next.price_bp <= bounds.price_max_bp
-                && a
-                    .next
+                && a.next
                     .task_bias_bp
                     .values()
                     .all(|v| *v >= bounds.bias_min_bp && *v <= bounds.bias_max_bp)

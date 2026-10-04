@@ -6,7 +6,7 @@
 
 use au4a_core::EvidenceGrade;
 use au4a_state::{
-    capability_manifest, capabilities, coverage_check, results_json, self_check, CAPABILITIES,
+    capabilities, capability_manifest, coverage_check, results_json, self_check, CAPABILITIES,
 };
 
 /// 声明里允许出现的模块前缀（api 字段必须落在这些模块里）。
@@ -127,7 +127,10 @@ fn the_cpu_proto_capability_says_so_in_its_note() {
 #[test]
 fn results_json_carries_the_same_manifest() {
     let value = results_json().unwrap();
-    assert_eq!(value["capabilities"]["count"], value["coverage"]["capabilities"]);
+    assert_eq!(
+        value["capabilities"]["count"],
+        value["coverage"]["capabilities"]
+    );
     assert_eq!(value["coverage"]["unclaimed_checks"], serde_json::json!([]));
     assert_eq!(value["coverage"]["unknown_checks"], serde_json::json!([]));
     assert_eq!(value["checks"], self_check().len());

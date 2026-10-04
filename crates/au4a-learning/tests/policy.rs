@@ -110,7 +110,10 @@ fn all_three_levers_move_in_the_right_direction() {
     assert!(out.peer_bias_moved_bp[&peers[1]] < 0);
     // 每一步都有理由，且能追溯到数据
     assert!(out.reasons.iter().any(|r| r.starts_with("pricing:")));
-    assert!(out.reasons.iter().any(|r| r.starts_with("task-select: good.type")));
+    assert!(out
+        .reasons
+        .iter()
+        .any(|r| r.starts_with("task-select: good.type")));
     assert!(out.reasons.iter().any(|r| r.starts_with("peer-select:")));
     assert!(out.reasons.len() >= 4, "每一步都必须给出理由");
 
@@ -182,7 +185,10 @@ fn revenue_trend_overrides_the_accept_rate_direction() {
         &PolicyTargets::default(),
     )
     .unwrap();
-    assert_eq!(out2.price_moved_bp, -bounds.price_step_bp, "收益变好必须继续");
+    assert_eq!(
+        out2.price_moved_bp, -bounds.price_step_bp,
+        "收益变好必须继续"
+    );
 }
 
 #[test]
@@ -305,7 +311,10 @@ fn task_scoring_is_a_pure_integer_combination() {
     // good: quality 10000，mean_reward 80 → reward_bp 8000 → (20000+8000)/3 = 9333
     assert_eq!(task_score_bp(good, Credits(100)), 9_333);
     // 参考收益为 0 时收益项按 0 计（不做除零）
-    assert_eq!(task_score_bp(good, Credits::ZERO), (2 * good.quality_bp) / 3);
+    assert_eq!(
+        task_score_bp(good, Credits::ZERO),
+        (2 * good.quality_bp) / 3
+    );
 }
 
 #[test]

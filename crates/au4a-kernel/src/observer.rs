@@ -256,13 +256,20 @@ pub fn observer_self_checks(kernel: &Kernel) -> Vec<SelfCheck> {
         SelfCheck::pass(
             crate::TRACK,
             "observer.routes",
-            format!("{} 条只读路由（进度/结果/收益）全部渲染成功", report.projections.len()),
+            format!(
+                "{} 条只读路由（进度/结果/收益）全部渲染成功",
+                report.projections.len()
+            ),
         )
     } else {
         SelfCheck::fail(
             crate::TRACK,
             "observer.routes",
-            format!("路由数 {} != {}", report.projections.len(), ObserverRoute::ALL.len()),
+            format!(
+                "路由数 {} != {}",
+                report.projections.len(),
+                ObserverRoute::ALL.len()
+            ),
         )
     });
     checks.push(if read_only {
@@ -281,7 +288,11 @@ pub fn observer_self_checks(kernel: &Kernel) -> Vec<SelfCheck> {
             "渲染前后注册表指纹 / 观察投影 / 逻辑时钟读数均未变化",
         )
     } else {
-        SelfCheck::fail(crate::TRACK, "observer.no_side_effect", "观察改变了内核状态")
+        SelfCheck::fail(
+            crate::TRACK,
+            "observer.no_side_effect",
+            "观察改变了内核状态",
+        )
     });
     checks.push(if no_write_effects {
         SelfCheck::pass(
@@ -290,7 +301,11 @@ pub fn observer_self_checks(kernel: &Kernel) -> Vec<SelfCheck> {
             "结构枚举：ObserverCapability 只有 Read 变体，没有任何路由声明副作用",
         )
     } else {
-        SelfCheck::fail(crate::TRACK, "observer.no_write_route", "存在声明了副作用的路由")
+        SelfCheck::fail(
+            crate::TRACK,
+            "observer.no_write_route",
+            "存在声明了副作用的路由",
+        )
     });
     checks
 }
@@ -317,7 +332,11 @@ mod tests {
         for route in ObserverRoute::ALL {
             assert_eq!(route.capability(), ObserverCapability::Read);
             assert!(!route.capability().writable());
-            assert!(route.effects().is_empty(), "{} 声明了副作用", route.as_str());
+            assert!(
+                route.effects().is_empty(),
+                "{} 声明了副作用",
+                route.as_str()
+            );
         }
         assert_eq!(ObserverCapability::ALL.len(), 1, "写能力连类型都没有");
     }
@@ -337,7 +356,15 @@ mod tests {
         // 人类不能发起/批准/调度/定价/裁决：路由名里没有这类动词。
         for route in ObserverRoute::ALL {
             let name = route.as_str();
-            for verb in ["approve", "grant", "schedule", "price", "adjudicate", "mint", "propose"] {
+            for verb in [
+                "approve",
+                "grant",
+                "schedule",
+                "price",
+                "adjudicate",
+                "mint",
+                "propose",
+            ] {
                 assert!(!name.contains(verb), "路由 {name} 像是一个写入口");
             }
         }

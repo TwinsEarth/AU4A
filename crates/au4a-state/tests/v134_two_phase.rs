@@ -51,7 +51,8 @@ fn rig(seed: u8) -> Rig {
         1,
     )
     .unwrap();
-    let mut node = NodeStore::open(NodeId::new("node-b").unwrap(), did, MemoryStore::new()).unwrap();
+    let mut node =
+        NodeStore::open(NodeId::new("node-b").unwrap(), did, MemoryStore::new()).unwrap();
     node.install(&base, true).unwrap();
     Rig {
         base,
@@ -72,21 +73,39 @@ fn a_happy_path_runs_prepare_commit_confirm_in_order() {
         .prepare(&mut node, &r.delta, &r.signed, &mut FaultInjector::none())
         .unwrap();
     assert_eq!(m.phase(), Phase::Prepared);
-    assert_eq!(prepared.target_content_root, r.target.content_root().unwrap());
+    assert_eq!(
+        prepared.target_content_root,
+        r.target.content_root().unwrap()
+    );
     assert_eq!(prepared.blocks, 3);
     // prepare 之后 live 仍然是 base！
-    assert_eq!(node.live_content_root().unwrap(), r.base.content_root().unwrap());
+    assert_eq!(
+        node.live_content_root().unwrap(),
+        r.base.content_root().unwrap()
+    );
 
     let committed = m.commit(&mut node, &mut FaultInjector::none()).unwrap();
     assert_eq!(m.phase(), Phase::Committed);
-    assert_eq!(committed.live_content_root, r.target.content_root().unwrap());
-    assert_eq!(node.live_content_root().unwrap(), r.target.content_root().unwrap());
+    assert_eq!(
+        committed.live_content_root,
+        r.target.content_root().unwrap()
+    );
+    assert_eq!(
+        node.live_content_root().unwrap(),
+        r.target.content_root().unwrap()
+    );
 
     let confirmed = m.confirm(&mut node, &mut FaultInjector::none()).unwrap();
     assert_eq!(m.phase(), Phase::Confirmed);
-    assert_eq!(confirmed.live_content_root, r.target.content_root().unwrap());
+    assert_eq!(
+        confirmed.live_content_root,
+        r.target.content_root().unwrap()
+    );
     assert!(node.intent().unwrap().is_none());
-    assert!(node.orphan_generations(node.head().unwrap()).unwrap().is_empty());
+    assert!(node
+        .orphan_generations(node.head().unwrap())
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -168,8 +187,14 @@ fn phase_guards_reject_out_of_order_calls() {
     let r = rig(4);
     let mut node = r.node.clone();
     let mut m = Migration::begin(r.plan.clone());
-    assert_eq!(m.commit(&mut node, &mut FaultInjector::none()), Err(CoreError::InvalidVersion));
-    assert_eq!(m.confirm(&mut node, &mut FaultInjector::none()), Err(CoreError::InvalidVersion));
+    assert_eq!(
+        m.commit(&mut node, &mut FaultInjector::none()),
+        Err(CoreError::InvalidVersion)
+    );
+    assert_eq!(
+        m.confirm(&mut node, &mut FaultInjector::none()),
+        Err(CoreError::InvalidVersion)
+    );
     assert_eq!(m.rollback(&mut node), Ok(0));
     assert_eq!(m.phase(), Phase::RolledBack);
 
@@ -182,7 +207,10 @@ fn phase_guards_reject_out_of_order_calls() {
     );
     m2.commit(&mut node, &mut FaultInjector::none()).unwrap();
     m2.confirm(&mut node, &mut FaultInjector::none()).unwrap();
-    assert_eq!(m2.confirm(&mut node, &mut FaultInjector::none()), Err(CoreError::InvalidVersion));
+    assert_eq!(
+        m2.confirm(&mut node, &mut FaultInjector::none()),
+        Err(CoreError::InvalidVersion)
+    );
 }
 
 #[test]
@@ -196,11 +224,17 @@ fn rollback_after_commit_flips_the_head_back() {
     m.commit(&mut node, &mut FaultInjector::none()).unwrap();
     let committed_gen = node.head().unwrap();
     assert_ne!(base_gen, committed_gen);
-    assert_eq!(node.live_content_root().unwrap(), r.target.content_root().unwrap());
+    assert_eq!(
+        node.live_content_root().unwrap(),
+        r.target.content_root().unwrap()
+    );
 
     m.rollback(&mut node).unwrap();
     assert_eq!(node.head().unwrap(), base_gen);
-    assert_eq!(node.live_content_root().unwrap(), r.base.content_root().unwrap());
+    assert_eq!(
+        node.live_content_root().unwrap(),
+        r.base.content_root().unwrap()
+    );
     assert!(node.orphan_generations(base_gen).unwrap().is_empty());
 }
 
@@ -222,7 +256,10 @@ fn a_wrong_base_is_refused_before_touching_the_target_node() {
     assert!(!outcome.is_confirmed());
     // 被拒绝的迁移不得改动任何东西。
     assert_eq!(node.head().unwrap(), head_before);
-    assert_eq!(node.live_content_root().unwrap(), r.target.content_root().unwrap());
+    assert_eq!(
+        node.live_content_root().unwrap(),
+        r.target.content_root().unwrap()
+    );
 }
 
 #[test]
@@ -247,7 +284,10 @@ fn a_wrong_signed_snapshot_blocks_the_migration() {
     .unwrap();
     assert!(!outcome.is_confirmed());
     assert_eq!(node.head().unwrap(), head_before);
-    assert_eq!(node.live_content_root().unwrap(), r.base.content_root().unwrap());
+    assert_eq!(
+        node.live_content_root().unwrap(),
+        r.base.content_root().unwrap()
+    );
 }
 
 #[test]
@@ -321,13 +361,21 @@ fn self_check_covers_two_phase_and_rollback() {
 fn scenario_commits_one_migration_and_rolls_back_another() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(10);
-    kernel.register(&keys, "carrier", &["state.2pc"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.2pc"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["two_phase"]["committed"], json!(true));
-    assert_eq!(out["two_phase"]["target_live_content_root"], out["target_content_root"]);
+    assert_eq!(
+        out["two_phase"]["target_live_content_root"],
+        out["target_content_root"]
+    );
     assert_eq!(out["two_phase"]["orphan_generations"], json!(0));
     assert_eq!(out["two_phase"]["rollback_clean"], json!(true));
-    assert_eq!(out["two_phase"]["rollback_live_content_root"], out["before_content_root"]);
+    assert_eq!(
+        out["two_phase"]["rollback_live_content_root"],
+        out["before_content_root"]
+    );
     assert_eq!(out["two_phase"]["outcome"]["outcome"], json!("rolled_back"));
     kernel.ledger().check_conservation().unwrap();
 }
@@ -372,8 +420,14 @@ fn a_second_migration_on_the_same_node_uses_a_new_generation() {
     .unwrap();
     assert!(second.is_confirmed());
     assert!(node.head().unwrap() > gen_after_first);
-    assert_eq!(node.live_content_root().unwrap(), v3.content_root().unwrap());
-    assert!(node.orphan_generations(node.head().unwrap()).unwrap().is_empty());
+    assert_eq!(
+        node.live_content_root().unwrap(),
+        v3.content_root().unwrap()
+    );
+    assert!(node
+        .orphan_generations(node.head().unwrap())
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -399,6 +453,9 @@ fn migration_is_replayable_from_the_same_inputs() {
     )
     .unwrap();
     assert_eq!(a.to_value(), b.to_value());
-    assert_eq!(n1.live_content_root().unwrap(), n2.live_content_root().unwrap());
+    assert_eq!(
+        n1.live_content_root().unwrap(),
+        n2.live_content_root().unwrap()
+    );
     let _: Did = r1.plan.agent.clone();
 }

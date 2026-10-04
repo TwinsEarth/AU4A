@@ -24,8 +24,7 @@ fn keys(seed: u8) -> AgentKeys {
 }
 
 fn capability(price: i64, reliability_bp: u16) -> Capability {
-    Capability::new(skill("translate.en-zh"), Credits(price))
-        .with_reliability_bp(reliability_bp)
+    Capability::new(skill("translate.en-zh"), Credits(price)).with_reliability_bp(reliability_bp)
 }
 
 fn declaration(keys: &AgentKeys, epoch: u64, price: i64) -> Declaration {
@@ -61,7 +60,10 @@ fn a_forged_price_is_refused_and_changes_nothing() {
     let mut value = signed.to_value().expect("serialisable");
     value["declaration"]["capabilities"][0]["price_per_unit"] = serde_json::json!(0);
     let tampered = SignedDeclaration::from_value(&value).expect("parses");
-    assert_eq!(graph.apply(&tampered, 1).refusal(), Some(RefusalCode::Unauthorized));
+    assert_eq!(
+        graph.apply(&tampered, 1).refusal(),
+        Some(RefusalCode::Unauthorized)
+    );
     assert_eq!(graph.to_value().to_string(), before);
 }
 
@@ -105,7 +107,8 @@ fn an_envelope_for_someone_else_cannot_smuggle_a_declaration() {
     let attacker = keys(9);
     let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
     let signed = declaration(&victim, 1, 5).sign(&victim).expect("signed");
-    let body = serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
+    let body =
+        serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
     let smuggled = Envelope::new(attacker.did(), None, "capgraph.announce", 1, None, body)
         .expect("envelope")
         .seal(&attacker)
@@ -146,8 +149,20 @@ fn a_starved_budget_yields_a_typed_no_path_not_a_bad_plan() {
     let carol = keys(14);
     let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
     for (peer, name, price, inputs, outputs) in [
-        (&bob, "translate.en-zh", 50i64, ["text/plain"], ["application/json"]),
-        (&carol, "sentiment.analyze", 50, ["application/json"], ["application/json"]),
+        (
+            &bob,
+            "translate.en-zh",
+            50i64,
+            ["text/plain"],
+            ["application/json"],
+        ),
+        (
+            &carol,
+            "sentiment.analyze",
+            50,
+            ["application/json"],
+            ["application/json"],
+        ),
     ] {
         let capability = Capability::new(skill(name), Credits(price))
             .with_formats(&inputs, &outputs)
@@ -205,7 +220,10 @@ fn a_hostile_query_cannot_widen_its_own_scope() {
     let signed = declaration(&bob, 1, 3).sign(&bob).expect("signed");
     graph.apply(&signed, 0);
 
-    let huge = graph.query(&CapabilityQuery::new(skill("translate.en-zh")).with_limit(usize::MAX), 0);
+    let huge = graph.query(
+        &CapabilityQuery::new(skill("translate.en-zh")).with_limit(usize::MAX),
+        0,
+    );
     assert_eq!(huge.matches.len(), 1);
     assert_eq!(huge.stats.scanned, 1);
 
@@ -214,7 +232,10 @@ fn a_hostile_query_cannot_widen_its_own_scope() {
         0,
     );
     assert!(impossible.is_empty());
-    assert_eq!(impossible.stats.scanned, 1, "过滤在候选集内完成，没有扩大扫描范围");
+    assert_eq!(
+        impossible.stats.scanned, 1,
+        "过滤在候选集内完成，没有扩大扫描范围"
+    );
     assert_eq!(impossible.refusal_code(), Some(RefusalCode::Unsupported));
 }
 
@@ -223,10 +244,17 @@ fn a_wrong_kind_or_wrong_protocol_is_refused_at_the_channel() {
     let alice = keys(19);
     let bob = keys(20);
     let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
-    let foreign = Envelope::new(bob.did(), None, kinds::AGENT_CARD, 1, None, serde_json::json!({}))
-        .expect("envelope")
-        .seal(&bob)
-        .expect("sealed");
+    let foreign = Envelope::new(
+        bob.did(),
+        None,
+        kinds::AGENT_CARD,
+        1,
+        None,
+        serde_json::json!({}),
+    )
+    .expect("envelope")
+    .seal(&bob)
+    .expect("sealed");
     assert_eq!(
         ingest(&mut graph, &foreign, 0).refusal(),
         Some(RefusalCode::Unsupported)
@@ -269,7 +297,8 @@ fn a_malicious_sender_gets_quarantined_while_victims_stay_clean() {
     }
     // bob 用自己的信封携带受害者的声明（身份错配）。
     let signed = declaration(&victim, 1, 5).sign(&victim).expect("signed");
-    let body = serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
+    let body =
+        serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
     let smuggled = Envelope::new(bob.did(), None, "capgraph.announce", 1, None, body)
         .expect("envelope")
         .seal(&bob)
@@ -282,10 +311,13 @@ fn a_malicious_sender_gets_quarantined_while_victims_stay_clean() {
     let (who, refusal) = kernel.refusals().last().expect("refusal");
     assert_eq!(who, &bob.did(), "拒绝记在伪造者头上");
     assert_eq!(refusal.code, RefusalCode::Unauthorized);
-    assert!(!kernel
-        .refusals()
-        .iter()
-        .any(|(did, _)| did == &victim.did()), "受害者不应被连带记录");
+    assert!(
+        !kernel
+            .refusals()
+            .iter()
+            .any(|(did, _)| did == &victim.did()),
+        "受害者不应被连带记录"
+    );
     assert_eq!(graph.capability_count(), 0);
 }
 
@@ -295,8 +327,12 @@ fn a_direct_unicast_to_an_unknown_recipient_is_not_delivered() {
     let bob = keys(25);
     let ghost = keys(26);
     let mut kernel = Kernel::new(KernelConfig::default());
-    kernel.register(&alice, "a", &[], Credits(20)).expect("register");
-    kernel.register(&bob, "b", &[], Credits(20)).expect("register");
+    kernel
+        .register(&alice, "a", &[], Credits(20))
+        .expect("register");
+    kernel
+        .register(&bob, "b", &[], Credits(20))
+        .expect("register");
     let env = announce_to(&bob, &declaration(&bob, 1, 1), ghost.did(), 1, None).expect("announce");
     assert!(kernel.send(&env).is_err(), "未知收件人必须被内核拒绝");
     assert_eq!(kernel.queue_len(), 0);

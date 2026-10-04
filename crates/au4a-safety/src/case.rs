@@ -87,7 +87,9 @@ impl CaseStatus {
     }
 
     pub fn parse(s: &str) -> Option<Self> {
-        CaseStatus::ALL.into_iter().find(|status| status.as_str() == s)
+        CaseStatus::ALL
+            .into_iter()
+            .find(|status| status.as_str() == s)
     }
 }
 

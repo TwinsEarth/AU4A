@@ -299,15 +299,29 @@ mod tests {
         au4a_core::canonicalize(&json).unwrap();
         assert_eq!(json["kind"], serde_json::json!("vertex_found"));
         let reasons = json["reasons"].as_array().unwrap();
-        assert!(reasons.iter().any(|r| r == &serde_json::json!("marginal_turned_negative")));
+        assert!(reasons
+            .iter()
+            .any(|r| r == &serde_json::json!("marginal_turned_negative")));
     }
 
     #[test]
     fn invalid_requests_are_refused() {
         let params = ScalingParams::new(1_000, 2, 1_000_000, 1);
-        assert_eq!(adjudicate(&params, 0, 1, 100).err(), Some(CoreError::ZeroAmount));
-        assert_eq!(adjudicate(&params, 100, 0, 100).err(), Some(CoreError::InvalidKind));
-        assert_eq!(adjudicate(&params, 100, 100, 100).err(), Some(CoreError::InvalidKind));
-        assert_eq!(adjudicate(&params, 100, 200, 100).err(), Some(CoreError::InvalidKind));
+        assert_eq!(
+            adjudicate(&params, 0, 1, 100).err(),
+            Some(CoreError::ZeroAmount)
+        );
+        assert_eq!(
+            adjudicate(&params, 100, 0, 100).err(),
+            Some(CoreError::InvalidKind)
+        );
+        assert_eq!(
+            adjudicate(&params, 100, 100, 100).err(),
+            Some(CoreError::InvalidKind)
+        );
+        assert_eq!(
+            adjudicate(&params, 100, 200, 100).err(),
+            Some(CoreError::InvalidKind)
+        );
     }
 }

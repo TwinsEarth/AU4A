@@ -6,9 +6,8 @@
 use au4a_core::{AgentKeys, Credits};
 use au4a_kernel::{Kernel, KernelConfig};
 use au4a_state::{
-    materialize, measure_receive, measure_transfer, plan, resume_savings, self_check,
-    DigestCache, LocalNetwork, NodeId, StateBlock, StateDelta, StateSnapshot, StateZone,
-    WorkCounter,
+    materialize, measure_receive, measure_transfer, plan, resume_savings, self_check, DigestCache,
+    LocalNetwork, NodeId, StateBlock, StateDelta, StateSnapshot, StateZone, WorkCounter,
 };
 use serde_json::json;
 
@@ -87,7 +86,11 @@ fn the_plan_names_the_changed_blocks_without_cloning_values() {
     let from = snapshot(&keys, 1, 50, 1);
     let mut blocks: Vec<StateBlock> = (0..50)
         .map(|i| {
-            let v = if i == 7 || i == 33 { json!(2) } else { json!(1) };
+            let v = if i == 7 || i == 33 {
+                json!(2)
+            } else {
+                json!(1)
+            };
             StateBlock::new(StateZone::Memory, format!("k{i:02}"), v).unwrap()
         })
         .collect();
@@ -136,8 +139,16 @@ fn resuming_costs_strictly_less_than_restarting() {
     let (session, accepted) = measure_receive(&mut net, &nb, None, &mut work).unwrap();
     assert_eq!(accepted, 3);
     net.drop_pending(&nb).unwrap();
-    let frames = measure_transfer(&mut net, &na, &nb, &delta, 4, session.resume_from(), &mut work)
-        .unwrap();
+    let frames = measure_transfer(
+        &mut net,
+        &na,
+        &nb,
+        &delta,
+        4,
+        session.resume_from(),
+        &mut work,
+    )
+    .unwrap();
     assert_eq!(frames, total_chunks - 3);
     assert!(work.ops_skipped > 0);
     assert!(work.ops_transferred < delta.op_count() as u64);
@@ -219,7 +230,9 @@ fn self_check_covers_performance_claims() {
 fn scenario_reports_deterministic_work_counters() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(7);
-    kernel.register(&keys, "carrier", &["state.perf"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.perf"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["perf"]["second_capture_hashes"], json!(0));
     assert_eq!(out["perf"]["hashes_reused"], json!(6));

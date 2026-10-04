@@ -262,11 +262,7 @@ impl PermissionQuery {
 }
 
 /// 一次权限查询的完整回答（结构化 JSON）。
-pub fn query_permissions(
-    kernel: &Kernel,
-    config: &SafetyConfig,
-    about: &Did,
-) -> CoreResult<Value> {
+pub fn query_permissions(kernel: &Kernel, config: &SafetyConfig, about: &Did) -> CoreResult<Value> {
     PermissionBoundary::of(kernel, config, about).to_json()
 }
 
@@ -283,7 +279,14 @@ mod tests {
         let arbiter = setup::keys(setup::ROLE_ARBITER);
         let service = setup::keys(setup::ROLE_SERVICE);
         setup::ensure_agent(&mut kernel, &reporter, "reporter", &["audit"], Credits(20)).unwrap();
-        setup::ensure_agent(&mut kernel, &arbiter, "arbiter", &["arbitrate"], Credits(20)).unwrap();
+        setup::ensure_agent(
+            &mut kernel,
+            &arbiter,
+            "arbiter",
+            &["arbitrate"],
+            Credits(20),
+        )
+        .unwrap();
         let config = SafetyConfig::single_arbiter(service.did(), arbiter.did());
         (kernel, config, reporter, arbiter)
     }
@@ -337,7 +340,10 @@ mod tests {
         let boundary = PermissionBoundary::of(&kernel, &config, &fresh.did());
         assert!(!boundary.registered);
         assert_eq!(boundary.allowed, vec![Permission::Register]);
-        for p in Permission::ALL.into_iter().filter(|p| *p != Permission::Register) {
+        for p in Permission::ALL
+            .into_iter()
+            .filter(|p| *p != Permission::Register)
+        {
             assert_eq!(boundary.denial(p), Some(&DenialReason::NotRegistered));
         }
         // 免费权限（查询/订阅）不需要质押，但需要先注册——顺序在语义上很重要。
@@ -474,6 +480,9 @@ mod tests {
             boundary.denial(Permission::Settle),
             Some(&DenialReason::NotRegistered)
         );
-        assert_eq!(PermissionBoundary::from_json(&Value::Null), Err(CoreError::Encoding));
+        assert_eq!(
+            PermissionBoundary::from_json(&Value::Null),
+            Err(CoreError::Encoding)
+        );
     }
 }

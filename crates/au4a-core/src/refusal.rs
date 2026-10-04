@@ -161,8 +161,14 @@ mod tests {
 
     #[test]
     fn repetition_escalates_but_only_to_warn() {
-        assert_eq!(escalate(RefusalCode::Timeout, REPEAT_THRESHOLD - 1), Escalation::None);
-        assert_eq!(escalate(RefusalCode::Timeout, REPEAT_THRESHOLD), Escalation::Warn);
+        assert_eq!(
+            escalate(RefusalCode::Timeout, REPEAT_THRESHOLD - 1),
+            Escalation::None
+        );
+        assert_eq!(
+            escalate(RefusalCode::Timeout, REPEAT_THRESHOLD),
+            Escalation::Warn
+        );
         assert_eq!(escalate(RefusalCode::Timeout, 10_000), Escalation::Warn);
     }
 

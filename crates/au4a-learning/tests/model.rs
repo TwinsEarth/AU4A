@@ -9,7 +9,9 @@ use au4a_learning::model::{
     LearningModel, ModelConfig, ReputationLedger, REPUTATION_FAILURE, REPUTATION_MAX,
     REPUTATION_MIN, REPUTATION_PARTIAL, REPUTATION_SUCCESS, REPUTATION_VIOLATION,
 };
-use au4a_learning::policy::{adjust, PolicyAdjustment, PolicyBounds, PolicyParams, PolicyTargets, Signals};
+use au4a_learning::policy::{
+    adjust, PolicyAdjustment, PolicyBounds, PolicyParams, PolicyTargets, Signals,
+};
 
 fn dids(n: u8) -> Vec<Did> {
     (0..n)
@@ -70,7 +72,9 @@ fn momentum_smooths_the_trajectory() {
     assert_eq!(drifts[0], -350);
     assert_eq!(drifts[1], -455);
     assert!(drifts[0].abs() < drifts[1].abs() && drifts[1].abs() < drifts[2].abs());
-    assert!(drifts.iter().all(|d| d.abs() <= ModelConfig::default().max_drift_bp));
+    assert!(drifts
+        .iter()
+        .all(|d| d.abs() <= ModelConfig::default().max_drift_bp));
     assert_eq!(model.generation(), 8);
     // 无动量时就是原样一步
     let mut raw = LearningModel::with_config(
@@ -80,7 +84,12 @@ fn momentum_smooths_the_trajectory() {
             ..ModelConfig::default()
         },
     );
-    assert_eq!(raw.apply(&adjustment(-500, &[], &[])).unwrap().price_drift_bp, -500);
+    assert_eq!(
+        raw.apply(&adjustment(-500, &[], &[]))
+            .unwrap()
+            .price_drift_bp,
+        -500
+    );
 }
 
 #[test]
@@ -159,14 +168,21 @@ fn drift_is_clamped_every_generation() {
     assert!(rec.price_drift_bp.abs() <= config.max_drift_bp);
     assert!(rec.price_after_bp >= PolicyBounds::default().price_min_bp);
     let bias = model.params().bias_of_task("translate.en-zh");
-    assert!(bias.abs() <= config.max_drift_bp, "偏好单代位移也被钳制：{bias}");
+    assert!(
+        bias.abs() <= config.max_drift_bp,
+        "偏好单代位移也被钳制：{bias}"
+    );
 }
 
 #[test]
 fn rollback_restores_the_previous_generation_exactly() {
     let mut model = LearningModel::new(PolicyBounds::default());
     let baseline = model.params().clone();
-    assert_eq!(model.rollback(), Err(CoreError::InvalidVersion), "第 0 代无可回滚");
+    assert_eq!(
+        model.rollback(),
+        Err(CoreError::InvalidVersion),
+        "第 0 代无可回滚"
+    );
 
     model.apply(&adjustment(-500, &[], &[])).unwrap();
     let after_one = model.params().clone();
@@ -210,9 +226,18 @@ fn reputation_is_bounded_clamped_and_non_transferable() {
     assert_eq!(ledger.score_of(&peers[0]), 0, "未知协作者的信誉是 0");
 
     // 精确增量
-    assert_eq!(ledger.apply_outcome(&peers[0], Outcome::Success), REPUTATION_SUCCESS);
-    assert_eq!(ledger.apply_outcome(&peers[0], Outcome::Partial), REPUTATION_PARTIAL);
-    assert_eq!(ledger.apply_outcome(&peers[0], Outcome::Failure), REPUTATION_FAILURE);
+    assert_eq!(
+        ledger.apply_outcome(&peers[0], Outcome::Success),
+        REPUTATION_SUCCESS
+    );
+    assert_eq!(
+        ledger.apply_outcome(&peers[0], Outcome::Partial),
+        REPUTATION_PARTIAL
+    );
+    assert_eq!(
+        ledger.apply_outcome(&peers[0], Outcome::Failure),
+        REPUTATION_FAILURE
+    );
     assert_eq!(
         ledger.score_of(&peers[0]),
         REPUTATION_SUCCESS + REPUTATION_PARTIAL + REPUTATION_FAILURE
@@ -242,8 +267,15 @@ fn reputation_is_bounded_clamped_and_non_transferable() {
         before,
         "一个协作者的更新绝不影响另一个协作者（没有转让路径）"
     );
-    assert_eq!(ledger.public_json().unwrap()["transferable"], serde_json::json!(false));
-    assert!(!ledger.public_json().unwrap().to_string().contains("did:au4a:"));
+    assert_eq!(
+        ledger.public_json().unwrap()["transferable"],
+        serde_json::json!(false)
+    );
+    assert!(!ledger
+        .public_json()
+        .unwrap()
+        .to_string()
+        .contains("did:au4a:"));
 }
 
 #[test]
@@ -359,7 +391,10 @@ fn market_learning_goes_through_the_model() {
     assert!(learning.params_changed() && !control.params_changed());
     // 单轮位移不超过漂移上限
     let max_drift = ModelConfig::default().max_drift_bp;
-    assert!(learning.rounds.iter().all(|r| r.price_drift_bp.abs() <= max_drift));
+    assert!(learning
+        .rounds
+        .iter()
+        .all(|r| r.price_drift_bp.abs() <= max_drift));
     // 信誉台账在两组都记录了观测结果，但公开投影不含 DID
     assert!(learning.final_reputation["peers"].as_i64().unwrap() > 0);
     assert!(!learning.final_reputation.to_string().contains("did:au4a:"));

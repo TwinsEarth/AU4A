@@ -4,10 +4,10 @@
 //! 另外验证两件事：伪造报价会被内核记为恶意证据；`Unverified` 证据永远结算不了。
 
 use au4a_core::{kinds, AgentKeys, Credits, Envelope, EvidenceGrade, RefusalCode};
-use au4a_kernel::{Kernel, KernelConfig};
 use au4a_economy::settlement::{
     route as settlement_route, SettlementPolicy, SettlementRequest, SettlementRoute,
 };
+use au4a_kernel::{Kernel, KernelConfig};
 use serde_json::{json, Value};
 
 fn fresh_kernel() -> Kernel {
@@ -53,19 +53,31 @@ fn the_scenario_contract_has_every_section_and_the_pinned_numbers() {
     assert_eq!(value["stake"]["released"], json!(40));
     assert_eq!(value["stake"]["consistent"], json!(true));
     // 仲裁：罚没被锁定余额截断为 100，申诉后重裁驳回，累计仍 100。
-    assert_eq!(value["dispute"]["first_ruling"]["cap"], json!("locked_balance"));
+    assert_eq!(
+        value["dispute"]["first_ruling"]["cap"],
+        json!("locked_balance")
+    );
     assert_eq!(value["dispute"]["first_ruling"]["slashed"], json!(100));
     assert_eq!(value["dispute"]["second_ruling"]["slashed"], json!(0));
-    assert_eq!(value["dispute"]["second_ruling"]["slashed_total"], json!(100));
+    assert_eq!(
+        value["dispute"]["second_ruling"]["slashed_total"],
+        json!(100)
+    );
     // 结算：拒付 50、托管 100 后退回、分成 140 + 60。
     assert_eq!(value["settlement"]["withheld"]["route"], json!("withheld"));
     assert_eq!(value["settlement"]["escrow"]["refunded"], json!(100));
     assert_eq!(value["settlement"]["receipts"][0]["amount"], json!(140));
     assert_eq!(value["settlement"]["receipts"][1]["amount"], json!(60));
-    assert_eq!(value["settlement"]["human_operator"]["may_decide"], json!(false));
+    assert_eq!(
+        value["settlement"]["human_operator"]["may_decide"],
+        json!(false)
+    );
     // 只读收益面板：与节点 /api/revenue 字段对齐（minted/slashed/total/accounts.*.available|locked）。
     assert_eq!(value["revenue_panel"]["read_only"], json!(true));
-    assert_eq!(value["revenue_panel"]["ledger"]["conservation_ok"], json!(true));
+    assert_eq!(
+        value["revenue_panel"]["ledger"]["conservation_ok"],
+        json!(true)
+    );
     assert_eq!(value["revenue_panel"]["ledger"]["account_count"], json!(5));
     assert_eq!(value["revenue_panel"]["total_earned"], json!(200));
     let owner = AgentKeys::from_seed(&[45; 32]).did();
@@ -73,9 +85,15 @@ fn the_scenario_contract_has_every_section_and_the_pinned_numbers() {
     assert_eq!(owner_row["earned"], json!(60));
     assert_eq!(owner_row["locked"], json!(0));
     assert_eq!(owner_row["kind"], json!("human_operator"));
-    let total_available = value["revenue_panel"]["ledger"]["available"].as_i64().unwrap_or(0);
-    let total_locked = value["revenue_panel"]["ledger"]["locked"].as_i64().unwrap_or(0);
-    let total = value["revenue_panel"]["ledger"]["total"].as_i64().unwrap_or(-1);
+    let total_available = value["revenue_panel"]["ledger"]["available"]
+        .as_i64()
+        .unwrap_or(0);
+    let total_locked = value["revenue_panel"]["ledger"]["locked"]
+        .as_i64()
+        .unwrap_or(0);
+    let total = value["revenue_panel"]["ledger"]["total"]
+        .as_i64()
+        .unwrap_or(-1);
     assert_eq!(total_available + total_locked, total, "面板总量必须自洽");
     // 守恒。
     assert_eq!(value["conservation"]["ok"], json!(true));
@@ -96,10 +114,22 @@ fn the_scenario_is_reproducible_on_a_fresh_kernel_and_conserves() {
         let view = kernel.observe();
         // 4 个注册 Agent + 1 个「人类操作者」收益账户（它不是 Agent，只出现在账本账户里）。
         assert_eq!(view.agents.len(), 4, "注册 Agent 数量");
-        assert_eq!(view.ledger.accounts.len(), 5, "账本账户数（含人类操作者收益账户）");
+        assert_eq!(
+            view.ledger.accounts.len(),
+            5,
+            "账本账户数（含人类操作者收益账户）"
+        );
         let owner = AgentKeys::from_seed(&[45; 32]).did();
-        let owner_account = view.ledger.accounts.get(owner.as_str()).expect("人类操作者应有收益账户");
-        assert_eq!(owner_account.available, Credits(60), "人类操作者只收收益 60");
+        let owner_account = view
+            .ledger
+            .accounts
+            .get(owner.as_str())
+            .expect("人类操作者应有收益账户");
+        assert_eq!(
+            owner_account.available,
+            Credits(60),
+            "人类操作者只收收益 60"
+        );
         assert_eq!(owner_account.locked, Credits::ZERO, "人类操作者不质押");
         assert!(view.ledger.total <= view.ledger.minted);
     }
@@ -110,7 +140,12 @@ fn a_tampered_price_announcement_is_recorded_as_misconduct() {
     let mut kernel = fresh_kernel();
     let attacker = AgentKeys::from_seed(&[41; 32]);
     kernel
-        .register(&attacker, "economy.seller", &["translate.en-zh"], Credits(100))
+        .register(
+            &attacker,
+            "economy.seller",
+            &["translate.en-zh"],
+            Credits(100),
+        )
         .unwrap();
     let mut envelope = Envelope::new(
         attacker.did(),
@@ -124,7 +159,8 @@ fn a_tampered_price_announcement_is_recorded_as_misconduct() {
     .seal(&attacker)
     .unwrap();
     // 篡改报价（伪造低价）→ 验签失败 → 一次性恶意证据。
-    envelope.body = json!({ "provider": attacker.did(), "skill": "translate.en-zh", "unit_price": 0 });
+    envelope.body =
+        json!({ "provider": attacker.did(), "skill": "translate.en-zh", "unit_price": 0 });
     assert!(kernel.send(&envelope).is_err());
     let (_, refusal) = &kernel.refusals()[0];
     assert_eq!(refusal.code, RefusalCode::Unauthorized);
@@ -146,16 +182,29 @@ fn unverified_evidence_never_settles_through_the_kernel_gate() {
     let mut kernel = fresh_kernel();
     let payer = AgentKeys::from_seed(&[70; 32]);
     let payee = AgentKeys::from_seed(&[71; 32]);
-    kernel.register(&payer, "payer", &["buy"], Credits(10)).unwrap();
-    kernel.register(&payee, "skill", &["skill"], Credits(10)).unwrap();
+    kernel
+        .register(&payer, "payer", &["buy"], Credits(10))
+        .unwrap();
+    kernel
+        .register(&payee, "skill", &["skill"], Credits(10))
+        .unwrap();
     let before = kernel.ledger().balance(&payer.did());
     assert!(
         kernel
-            .settle(&payer.did(), &payee.did(), Credits(10), EvidenceGrade::Unverified)
+            .settle(
+                &payer.did(),
+                &payee.did(),
+                Credits(10),
+                EvidenceGrade::Unverified
+            )
             .is_err(),
         "Unverified 证据不得结算"
     );
-    assert_eq!(kernel.ledger().balance(&payer.did()), before, "被拒绝的结算不得动账");
+    assert_eq!(
+        kernel.ledger().balance(&payer.did()),
+        before,
+        "被拒绝的结算不得动账"
+    );
     let request = SettlementRequest {
         payer: payer.did(),
         payee: payee.did(),
@@ -173,7 +222,9 @@ fn unverified_evidence_never_settles_through_the_kernel_gate() {
         ..request.clone()
     };
     assert_eq!(
-        settlement_route(&over_cap, &SettlementPolicy::DEFAULT).unwrap().route,
+        settlement_route(&over_cap, &SettlementPolicy::DEFAULT)
+            .unwrap()
+            .route,
         SettlementRoute::Withheld
     );
     kernel.ledger().check_conservation().unwrap();

@@ -304,9 +304,7 @@ impl StateSnapshot {
     }
 
     pub fn block(&self, zone: StateZone, key: &str) -> Option<&StateBlock> {
-        self.blocks
-            .iter()
-            .find(|b| b.zone == zone && b.key == key)
+        self.blocks.iter().find(|b| b.zone == zone && b.key == key)
     }
 
     pub fn zone_blocks(&self, zone: StateZone) -> impl Iterator<Item = &StateBlock> {

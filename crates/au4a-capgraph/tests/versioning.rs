@@ -7,8 +7,8 @@
 //!    「同版本异内容」与「更旧版本」这两种情况。
 
 use au4a_capgraph::{
-    AgentCapabilityGraph, CapGraphConfig, Capability, Declaration, DeclareOutcome, SignedDeclaration,
-    SkillId, HISTORY_CAPACITY,
+    AgentCapabilityGraph, CapGraphConfig, Capability, Declaration, DeclareOutcome,
+    SignedDeclaration, SkillId, HISTORY_CAPACITY,
 };
 use au4a_core::{AgentKeys, CoreError, Credits, Did, RefusalCode};
 use au4a_kernel::{Kernel, KernelConfig};
@@ -40,7 +40,10 @@ fn declaring_the_same_content_twice_does_not_open_a_new_version() {
     assert!(first.is_applied());
     assert_eq!(graph.own_epoch(), 1);
     let again = graph.declare(&alice, vec![cap(3)], 1).expect("declare");
-    assert!(matches!(again, DeclareOutcome::Unchanged { .. }), "内容一致 → 版本不动");
+    assert!(
+        matches!(again, DeclareOutcome::Unchanged { .. }),
+        "内容一致 → 版本不动"
+    );
     assert_eq!(graph.own_epoch(), 1);
     assert_eq!(graph.history().len(), 1, "Unchanged 不写历史");
 }
@@ -51,7 +54,9 @@ fn every_content_change_bumps_the_version_and_is_content_addressed() {
     let owner = alice.did();
     let mut graph = AgentCapabilityGraph::new(owner.clone(), CapGraphConfig::default());
     for (index, price) in [3i64, 4, 5].iter().enumerate() {
-        let outcome = graph.declare(&alice, vec![cap(*price)], index as u64).expect("declare");
+        let outcome = graph
+            .declare(&alice, vec![cap(*price)], index as u64)
+            .expect("declare");
         assert!(outcome.is_applied());
     }
     assert_eq!(graph.own_epoch(), 3);
@@ -69,10 +74,7 @@ fn every_content_change_bumps_the_version_and_is_content_addressed() {
         assert_eq!(history.hash_of(&owner, version), Some(expected.as_str()));
     }
     // 版本号不同 → 内容不同 → 哈希不同。
-    assert_ne!(
-        history.hash_of(&owner, 1),
-        history.hash_of(&owner, 2)
-    );
+    assert_ne!(history.hash_of(&owner, 1), history.hash_of(&owner, 2));
 }
 
 #[test]
@@ -94,8 +96,14 @@ fn stale_announcements_are_refused_while_the_cache_is_alive() {
     let bob = keys(6);
     let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
     assert!(graph.apply(&signed(&bob, 3, 3), 0).is_applied());
-    assert_eq!(graph.apply(&signed(&bob, 2, 3), 1).refusal(), Some(RefusalCode::StaleEpoch));
-    assert_eq!(graph.apply(&signed(&bob, 3, 4), 2).refusal(), Some(RefusalCode::Conflict));
+    assert_eq!(
+        graph.apply(&signed(&bob, 2, 3), 1).refusal(),
+        Some(RefusalCode::StaleEpoch)
+    );
+    assert_eq!(
+        graph.apply(&signed(&bob, 3, 4), 2).refusal(),
+        Some(RefusalCode::Conflict)
+    );
     assert!(graph.apply(&signed(&bob, 4, 4), 3).is_applied());
     assert_eq!(graph.last_version_of(&bob.did()), Some(4));
     assert_eq!(graph.neighbor(&bob.did()).expect("record").epoch, 4);
@@ -146,7 +154,10 @@ fn history_is_bounded_but_versions_keep_climbing() {
     assert_eq!(graph.history().len(), HISTORY_CAPACITY, "有界记忆");
     assert_eq!(graph.own_epoch(), total as u64);
     assert_eq!(graph.history().bumps(), total as u64);
-    assert!(graph.history().hash_of(&alice.did(), 1).is_none(), "最旧的记录已被丢弃");
+    assert!(
+        graph.history().hash_of(&alice.did(), 1).is_none(),
+        "最旧的记录已被丢弃"
+    );
 }
 
 #[test]
@@ -163,8 +174,14 @@ fn the_version_summary_reports_own_and_neighbors() {
     assert_eq!(summary["history"].as_u64(), Some(3));
     assert_eq!(summary["bumps"].as_u64(), Some(3));
     let neighbors = summary["neighbors"].as_object().expect("map");
-    assert_eq!(neighbors.get(bob.did().as_str()).and_then(|v| v.as_u64()), Some(2));
-    assert_eq!(neighbors.get(carol.did().as_str()).and_then(|v| v.as_u64()), Some(7));
+    assert_eq!(
+        neighbors.get(bob.did().as_str()).and_then(|v| v.as_u64()),
+        Some(2)
+    );
+    assert_eq!(
+        neighbors.get(carol.did().as_str()).and_then(|v| v.as_u64()),
+        Some(7)
+    );
     assert!(summary["own_hash"].as_str().map(str::len) == Some(64));
 }
 
@@ -183,14 +200,15 @@ fn a_broadcast_carries_the_version_and_the_receiver_detects_staleness() {
 
     // bob 先广播 v1，再广播 v2，最后重放 v1（陈旧）。
     for epoch in [1u64, 2] {
-        let declaration =
-            Declaration::new(bob.keys.did(), epoch, epoch, bob.capabilities.clone()).expect("coherent");
+        let declaration = Declaration::new(bob.keys.did(), epoch, epoch, bob.capabilities.clone())
+            .expect("coherent");
         let env = au4a_capgraph::announce(&bob.keys, &declaration, epoch).expect("announce");
         kernel.send(&env).expect("accepted");
         assert!(au4a_capgraph::pump(&mut kernel, &mut graph, epoch).applied == 1);
     }
     assert_eq!(graph.neighbor(&bob.keys.did()).expect("record").epoch, 2);
-    let replay = Declaration::new(bob.keys.did(), 1, 1, bob.capabilities.clone()).expect("coherent");
+    let replay =
+        Declaration::new(bob.keys.did(), 1, 1, bob.capabilities.clone()).expect("coherent");
     let env = au4a_capgraph::announce(&bob.keys, &replay, 3).expect("announce");
     kernel.send(&env).expect("accepted");
     let report = au4a_capgraph::pump(&mut kernel, &mut graph, 3);
@@ -211,8 +229,16 @@ fn scenario_reports_version_bumps_and_a_refused_stale_announcement() {
     assert_eq!(value["version_bump_applied"].as_bool(), Some(true));
     assert_eq!(value["idempotent_ignored"].as_bool(), Some(true));
     assert_eq!(value["stale_rejected"].as_bool(), Some(true));
-    assert_eq!(value["versions"]["own"].as_u64(), Some(2), "v1 建立 + v2 改价");
-    assert_eq!(value["versions"]["bumps"].as_u64(), Some(6), "2 次自有 + 4 个邻居");
+    assert_eq!(
+        value["versions"]["own"].as_u64(),
+        Some(2),
+        "v1 建立 + v2 改价"
+    );
+    assert_eq!(
+        value["versions"]["bumps"].as_u64(),
+        Some(6),
+        "2 次自有 + 4 个邻居"
+    );
     assert_eq!(value["versions"]["history"].as_u64(), Some(6));
     // 版本化没有破坏 v1.1.6 的路径规划结论。
     assert_eq!(value["plan"]["outcome"].as_str(), Some("path"));
@@ -222,7 +248,10 @@ fn scenario_reports_version_bumps_and_a_refused_stale_announcement() {
         .iter()
         .filter(|(_, r)| r.code == RefusalCode::StaleEpoch)
         .count();
-    assert_eq!(stale_count, 0, "陈旧演示不经过共享内核，避免污染其他轨道看到的拒绝记录");
+    assert_eq!(
+        stale_count, 0,
+        "陈旧演示不经过共享内核，避免污染其他轨道看到的拒绝记录"
+    );
     let did: Did = agents_did(&value);
     assert!(did.as_str().starts_with("did:au4a:"));
 }

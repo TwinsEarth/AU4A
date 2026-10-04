@@ -212,7 +212,9 @@ impl NegotiationMsg {
             | Self::Counter { session, .. }
             | Self::Accept { session, .. }
             | Self::Reject { session, .. } => session,
-            Self::SignContract { contract_id, .. } | Self::Breach { contract_id, .. } => contract_id,
+            Self::SignContract { contract_id, .. } | Self::Breach { contract_id, .. } => {
+                contract_id
+            }
         }
     }
 
@@ -485,8 +487,14 @@ mod tests {
             .signed(&a, &b.did(), 3, None)
             .unwrap();
         let mut tampered = env.clone();
-        tampered.body = NegotiationMsg::counter("s1", 1, terms(1)).unwrap().body().unwrap();
-        assert_eq!(NegotiationMsg::from_env(&tampered), Err(CoreError::InvalidSignature));
+        tampered.body = NegotiationMsg::counter("s1", 1, terms(1))
+            .unwrap()
+            .body()
+            .unwrap();
+        assert_eq!(
+            NegotiationMsg::from_env(&tampered),
+            Err(CoreError::InvalidSignature)
+        );
 
         let unsealed = Envelope::new(
             a.did(),
@@ -494,10 +502,16 @@ mod tests {
             kinds::NEGOTIATE_REQUEST,
             1,
             None,
-            NegotiationMsg::request("s1", terms(10)).unwrap().body().unwrap(),
+            NegotiationMsg::request("s1", terms(10))
+                .unwrap()
+                .body()
+                .unwrap(),
         )
         .unwrap();
-        assert_eq!(NegotiationMsg::from_env(&unsealed), Err(CoreError::NotSealed));
+        assert_eq!(
+            NegotiationMsg::from_env(&unsealed),
+            Err(CoreError::NotSealed)
+        );
     }
 
     #[test]
@@ -571,6 +585,9 @@ mod tests {
         let body = m.body().unwrap();
         assert_eq!(body["type"], serde_json::json!("counter"));
         assert_eq!(body["round"], serde_json::json!(2));
-        assert_eq!(NegotiationMsg::from_body(kinds::NEGOTIATE_COUNTER, body).unwrap(), m);
+        assert_eq!(
+            NegotiationMsg::from_body(kinds::NEGOTIATE_COUNTER, body).unwrap(),
+            m
+        );
     }
 }

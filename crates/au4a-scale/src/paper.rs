@@ -11,9 +11,9 @@
 use au4a_core::CoreResult;
 use serde_json::{json, Value};
 
+use crate::analyze::{fit, FitSearch};
 use crate::cluster::{evaluation_budget, tier_report, TIERS};
 use crate::collect::{collect, ScenarioSpec};
-use crate::analyze::{fit, FitSearch};
 use crate::metrics::{analytic_vertex_floor, ScalingParams};
 use crate::verdict::adjudicate;
 
@@ -36,9 +36,9 @@ pub fn paper_json() -> CoreResult<Value> {
         "track": crate::TRACK,
         "version": crate::CURRENT,
         "abstract": "我们把「群体智能水平」参数化为群体吞吐 T(n) 与完成率 C(n)，\
-用解析式聚合模型把节点数 n、交互复杂度 E(n)=n(n-1)/2 与算力预算 p0 联系起来；\
-模型给出容量顶点存在的判据（α>1）、解析极值点 n*=N0/(α-1)^(1/α) 与「收益转负」的判定。\
-全部数值由本机确定性重算得出；10k 节点为模型评估，非真实分布式压测。",
+    用解析式聚合模型把节点数 n、交互复杂度 E(n)=n(n-1)/2 与算力预算 p0 联系起来；\
+    模型给出容量顶点存在的判据（α>1）、解析极值点 n*=N0/(α-1)^(1/α) 与「收益转负」的判定。\
+    全部数值由本机确定性重算得出；10k 节点为模型评估，非真实分布式压测。",
         "method": {
             "model": "aggregate-analytic（解析式聚合，非逐节点仿真）",
             "determinism": "整数定点（milli/bp/ppm）+ 规范 JSON；无浮点、无墙钟、无 I/O",
@@ -205,7 +205,10 @@ mod tests {
         let paper = paper_json().unwrap();
         let params = ScalingParams::new(1_000, 2, 1_000_000, 1);
         let verdict = adjudicate(&params, 100_000, 1, 4_000).unwrap();
-        assert_eq!(paper["results"]["vertex"]["nodes"], json!(verdict.vertex_nodes));
+        assert_eq!(
+            paper["results"]["vertex"]["nodes"],
+            json!(verdict.vertex_nodes)
+        );
         assert_eq!(
             paper["results"]["vertex"]["analytic"],
             json!(analytic_vertex_floor(params.n0, params.alpha))
@@ -234,8 +237,14 @@ mod tests {
     fn the_paper_is_canonical_json_and_reports_its_own_limits() {
         let paper = paper_json().unwrap();
         au4a_core::canonicalize(&paper).unwrap();
-        assert!(paper["abstract"].as_str().unwrap().contains("非真实分布式压测"));
+        assert!(paper["abstract"]
+            .as_str()
+            .unwrap()
+            .contains("非真实分布式压测"));
         assert!(paper["limitations"].as_array().unwrap().len() >= 4);
-        assert!(paper["method"]["determinism"].as_str().unwrap().contains("无浮点"));
+        assert!(paper["method"]["determinism"]
+            .as_str()
+            .unwrap()
+            .contains("无浮点"));
     }
 }

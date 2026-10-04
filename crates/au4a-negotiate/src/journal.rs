@@ -224,9 +224,13 @@ mod tests {
         journal.append(&counter_env).unwrap();
 
         let mut machine = StateMachine::open(&session).unwrap();
-        let request_record = machine.transact(Event::Request, &a, &b, 1, &parties).unwrap();
+        let request_record = machine
+            .transact(Event::Request, &a, &b, 1, &parties)
+            .unwrap();
         journal.append_transition(&request_record, None).unwrap();
-        let counter_record = machine.transact(Event::Counter, &b, &a, 2, &parties).unwrap();
+        let counter_record = machine
+            .transact(Event::Counter, &b, &a, 2, &parties)
+            .unwrap();
         journal.append_transition(&counter_record, None).unwrap();
 
         (journal, a, b)
@@ -239,7 +243,10 @@ mod tests {
         let restored = Journal::decode(&bytes).unwrap();
         assert_eq!(restored, journal);
         assert_eq!(restored.encode().unwrap(), bytes, "重放后必须逐字节一致");
-        assert_eq!(restored.replay_digest().unwrap(), journal.replay_digest().unwrap());
+        assert_eq!(
+            restored.replay_digest().unwrap(),
+            journal.replay_digest().unwrap()
+        );
         assert_eq!(restored.machine(), journal.machine());
     }
 
@@ -262,7 +269,10 @@ mod tests {
 
         assert_eq!(Journal::decode(""), Err(CoreError::Encoding));
         assert_eq!(Journal::decode("{"), Err(CoreError::Encoding));
-        assert_eq!(Journal::decode(&bytes[..bytes.len() / 2]), Err(CoreError::Encoding));
+        assert_eq!(
+            Journal::decode(&bytes[..bytes.len() / 2]),
+            Err(CoreError::Encoding)
+        );
 
         // 版本不符：明确拒绝，不猜。
         let bumped = bytes.replace("\"version\":1", "\"version\":2");
@@ -283,7 +293,10 @@ mod tests {
         let mut forged = journal.clone();
         forged.messages[0] = env;
         let forged_bytes = serde_json::to_string(&forged.snapshot()).unwrap();
-        assert_eq!(Journal::decode(&forged_bytes), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            Journal::decode(&forged_bytes),
+            Err(CoreError::InvalidSignature)
+        );
     }
 
     #[test]
@@ -342,7 +355,10 @@ mod tests {
             Journal::open("s", &[a.did(), a.did()]),
             Err(CoreError::InvalidKind)
         );
-        assert_eq!(Journal::open("", &[a.did(), b.did()]), Err(CoreError::InvalidKind));
+        assert_eq!(
+            Journal::open("", &[a.did(), b.did()]),
+            Err(CoreError::InvalidKind)
+        );
         assert!(Journal::open("s-ok", &[a.did(), b.did()]).is_ok());
     }
 

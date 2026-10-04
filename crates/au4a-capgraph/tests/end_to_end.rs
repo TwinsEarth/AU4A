@@ -120,8 +120,16 @@ fn a_receiver_can_verify_the_plan_without_trusting_the_proposer() {
 fn the_whole_chain_is_replayable_byte_for_byte() {
     let (first_graph, first_outcome, _, _) = run_pipeline_scenario();
     let (second_graph, second_outcome, _, _) = run_pipeline_scenario();
-    assert_eq!(first_outcome.to_value(), second_outcome.to_value(), "规划结论可重放");
-    assert_eq!(first_graph.to_value(), second_graph.to_value(), "图状态可重放");
+    assert_eq!(
+        first_outcome.to_value(),
+        second_outcome.to_value(),
+        "规划结论可重放"
+    );
+    assert_eq!(
+        first_graph.to_value(),
+        second_graph.to_value(),
+        "图状态可重放"
+    );
     assert_eq!(
         first_graph.version_summary().to_string(),
         second_graph.version_summary().to_string()
@@ -136,7 +144,12 @@ fn the_whole_chain_is_replayable_byte_for_byte() {
 #[test]
 fn the_index_backed_queries_agree_with_a_brute_force_scan() {
     let (mut graph, _, _, _) = run_pipeline_scenario();
-    for name in ["translate.en-zh", "sentiment.analyze", "summarize.zh", "nothing.here"] {
+    for name in [
+        "translate.en-zh",
+        "sentiment.analyze",
+        "summarize.zh",
+        "nothing.here",
+    ] {
         let query = CapabilityQuery::new(skill(name)).with_limit(0);
         let indexed = graph.query(&query, 1);
         let mut brute: Vec<String> = Vec::new();
@@ -185,7 +198,10 @@ fn a_stale_broadcast_never_reaches_the_planner() {
         .expect("coherent")
         .sign(&bob.keys)
         .expect("signed");
-    assert_eq!(graph.apply(&stale, 2).refusal(), Some(RefusalCode::StaleEpoch));
+    assert_eq!(
+        graph.apply(&stale, 2).refusal(),
+        Some(RefusalCode::StaleEpoch)
+    );
 
     // 图里仍然是 v2 的那份能力（价格 3，不是迟到的 1）。
     assert_eq!(
@@ -212,7 +228,11 @@ fn a_stale_broadcast_never_reaches_the_planner() {
         .pipeline()
         .cloned()
         .expect("path");
-    assert_eq!(pipeline.total_price, Credits(5), "用的是 v2 的价格，不是迟到 v1 的 1");
+    assert_eq!(
+        pipeline.total_price,
+        Credits(5),
+        "用的是 v2 的价格，不是迟到 v1 的 1"
+    );
 }
 
 #[test]
@@ -253,12 +273,32 @@ fn scenario_output_covers_every_version_of_the_track() {
     // 逐版检查 scenario 里必须出现的证据字段（少一个就说明某一版的增量掉了）。
     assert!(value["graph"]["owner"].is_string(), "v1.1.1/v1.1.2 图投影");
     assert_eq!(value["announcements_sent"].as_u64(), Some(4), "v1.1.3 广播");
-    assert_eq!(value["bounded_cache"]["evictions"].as_u64(), Some(2), "v1.1.4 缓存");
-    assert_eq!(value["index_consistent"].as_bool(), Some(true), "v1.1.5 索引");
-    assert_eq!(value["plan"]["outcome"].as_str(), Some("path"), "v1.1.6 规划");
+    assert_eq!(
+        value["bounded_cache"]["evictions"].as_u64(),
+        Some(2),
+        "v1.1.4 缓存"
+    );
+    assert_eq!(
+        value["index_consistent"].as_bool(),
+        Some(true),
+        "v1.1.5 索引"
+    );
+    assert_eq!(
+        value["plan"]["outcome"].as_str(),
+        Some("path"),
+        "v1.1.6 规划"
+    );
     assert_eq!(value["versions"]["own"].as_u64(), Some(2), "v1.1.7 版本化");
-    assert_eq!(value["perf"]["queries"]["index_rebuilds"].as_u64(), Some(0), "v1.1.8 性能");
-    assert_eq!(value["query_cache_hit"].as_bool(), Some(true), "v1.1.8 缓存命中");
+    assert_eq!(
+        value["perf"]["queries"]["index_rebuilds"].as_u64(),
+        Some(0),
+        "v1.1.8 性能"
+    );
+    assert_eq!(
+        value["query_cache_hit"].as_bool(),
+        Some(true),
+        "v1.1.8 缓存命中"
+    );
     // v1.1.9：整份输出必须能被序列化（可被节点聚合）。
     let text = serde_json::to_string(&value).expect("serialisable");
     assert!(text.len() > 500);
@@ -290,11 +330,23 @@ fn self_check_and_results_json_are_fully_exercised() {
     // 自检树必须整体可运行（任一条断言 panic 或递归都会在这里炸），
     // 且产物摘要必须覆盖 10 个版本与机器可读 schema。
     let checks = au4a_capgraph::self_check();
-    assert!(checks.len() >= 25, "自检项应覆盖 10 个版本，实测 {}", checks.len());
+    assert!(
+        checks.len() >= 25,
+        "自检项应覆盖 10 个版本，实测 {}",
+        checks.len()
+    );
     for check in &checks {
         assert_eq!(check.track, "1.1", "自检项轨道号错误：{}", check.name);
-        assert!(check.passed, "自检项失败：{} — {}", check.name, check.detail);
-        assert!(!check.detail.is_empty(), "自检项 {} 没有证据说明", check.name);
+        assert!(
+            check.passed,
+            "自检项失败：{} — {}",
+            check.name, check.detail
+        );
+        assert!(
+            !check.detail.is_empty(),
+            "自检项 {} 没有证据说明",
+            check.name
+        );
     }
     assert!(au4a_core::all_passed(&checks));
 
@@ -307,11 +359,18 @@ fn self_check_and_results_json_are_fully_exercised() {
         .iter()
         .filter_map(|item| item["version"].as_str())
         .collect();
-    assert_eq!(versions, au4a_capgraph::VERSIONS.to_vec(), "版本清单必须与常量一致");
+    assert_eq!(
+        versions,
+        au4a_capgraph::VERSIONS.to_vec(),
+        "版本清单必须与常量一致"
+    );
 
     let schema = au4a_capgraph::schema_json().expect("schema");
     assert_eq!(schema["capability"]["floats"].as_bool(), Some(false));
-    assert_eq!(schema["messages"]["kinds"].as_array().map(Vec::len), Some(3));
+    assert_eq!(
+        schema["messages"]["kinds"].as_array().map(Vec::len),
+        Some(3)
+    );
     let fields = schema["capability"]["fields"].as_array().expect("fields");
     let names: Vec<&str> = fields.iter().filter_map(|f| f["name"].as_str()).collect();
     for required in [
@@ -341,5 +400,8 @@ fn capabilities_are_stable_values_not_aliases_of_the_graph() {
         .neighbors()
         .flat_map(|record| record.capabilities.clone())
         .collect();
-    assert_eq!(snapshot, again, "同样的读操作得到同样的值（没有内部可变性泄漏）");
+    assert_eq!(
+        snapshot, again,
+        "同样的读操作得到同样的值（没有内部可变性泄漏）"
+    );
 }

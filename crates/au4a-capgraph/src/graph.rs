@@ -15,7 +15,9 @@ use serde_json::{json, Value};
 use crate::cache::{CacheStats, CapabilityCache};
 use crate::capability::{Capability, SkillId};
 use crate::declaration::{Declaration, SignedDeclaration};
-use crate::index::{CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats};
+use crate::index::{
+    CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats,
+};
 use crate::perf::{rank_top_k, QueryCache, QueryPerf};
 use crate::version::{VersionHistory, VersionRecord};
 
@@ -235,7 +237,8 @@ impl AgentCapabilityGraph {
             return Ok(DeclareOutcome::unchanged(&self.owner, self.own_epoch));
         }
         let next = self.own_epoch.saturating_add(1);
-        let signed = Declaration::new(self.owner.clone(), next, now, declaration.capabilities)?.sign(keys)?;
+        let signed = Declaration::new(self.owner.clone(), next, now, declaration.capabilities)?
+            .sign(keys)?;
         Ok(self.apply(&signed, now))
     }
 
@@ -268,7 +271,10 @@ impl AgentCapabilityGraph {
                 format!("declaration signature rejected: {err}"),
             );
         }
-        if let Err(err) = signed.declaration.validate_against(self.config.max_skills_per_agent) {
+        if let Err(err) = signed
+            .declaration
+            .validate_against(self.config.max_skills_per_agent)
+        {
             let code = match err {
                 CoreError::InvalidKind => RefusalCode::PolicyDenied,
                 _ => RefusalCode::Malformed,
@@ -677,13 +683,22 @@ impl AgentCapabilityGraph {
 
     /// 视图里的能力总条数（含自己）。
     pub fn capability_count(&self) -> usize {
-        self.own.len() + self.neighbors.iter().map(|r| r.capabilities.len()).sum::<usize>()
+        self.own.len()
+            + self
+                .neighbors
+                .iter()
+                .map(|r| r.capabilities.len())
+                .sum::<usize>()
     }
 
     /// 视图里出现过的全部技能（升序、去重）。
     pub fn skills(&self) -> Vec<&SkillId> {
         let mut skills: Vec<&SkillId> = Vec::new();
-        for cap in self.own.iter().chain(self.neighbors.iter().flat_map(|r| r.capabilities.iter())) {
+        for cap in self
+            .own
+            .iter()
+            .chain(self.neighbors.iter().flat_map(|r| r.capabilities.iter()))
+        {
             if !skills.contains(&&cap.skill) {
                 skills.push(&cap.skill);
             }
@@ -758,7 +773,9 @@ mod tests {
         let a = keys(1);
         let b = keys(2);
         let mut g = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
-        assert!(g.apply(&signed(&b, 1, &["sentiment.analyze"]), 5).is_applied());
+        assert!(g
+            .apply(&signed(&b, 1, &["sentiment.analyze"]), 5)
+            .is_applied());
         assert_eq!(g.neighbor_count(), 1);
         assert_eq!(g.known_agents(), 2);
         assert!(g.capabilities_of(&b.did()).is_some());
@@ -829,7 +846,12 @@ mod tests {
         assert!(g.capabilities_of(&b.did()).is_none());
         // 但版本历史记得 v5 的内容，因此「同版本异内容」仍然必须被拒（v1.1.7 起）。
         let conflict = g.apply(&signed(&b, 5, &["y"]), 1_001);
-        assert_eq!(conflict.refusal(), Some(RefusalCode::Conflict), "{:?}", conflict.to_value());
+        assert_eq!(
+            conflict.refusal(),
+            Some(RefusalCode::Conflict),
+            "{:?}",
+            conflict.to_value()
+        );
         // 递增版本才是合法路径。
         let after = g.apply(&signed(&b, 6, &["y"]), 1_002);
         assert!(after.is_applied(), "{:?}", after.to_value());

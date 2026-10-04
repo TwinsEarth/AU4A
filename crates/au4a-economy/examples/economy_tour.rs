@@ -116,7 +116,13 @@ fn main() -> au4a_core::CoreResult<()> {
     let mut case_ledger = Ledger::new();
     case_ledger.mint(&respondent, Credits(1_000))?;
     case_ledger.lock(&respondent, Credits(50))?;
-    let case = court.open(&bob, &respondent, Credits(1_000_000), EvidenceGrade::Verified, 1)?;
+    let case = court.open(
+        &bob,
+        &respondent,
+        Credits(1_000_000),
+        EvidenceGrade::Verified,
+        1,
+    )?;
     court.vote(&case.id, &did(4), true, 6_000)?;
     court.vote(&case.id, &did(5), true, 4_000)?;
     let arbi_terms = ArbitrationTerms::DEFAULT;
@@ -215,7 +221,10 @@ fn main() -> au4a_core::CoreResult<()> {
     }
 
     println!("\n场景摘要 JSON：");
-    println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary).unwrap_or_default()
+    );
 
     Ok(())
 }

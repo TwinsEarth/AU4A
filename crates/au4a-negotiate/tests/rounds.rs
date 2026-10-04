@@ -22,8 +22,10 @@ fn terms(price: i64) -> Terms {
 fn pair(k: &mut Kernel, s1: u8, s2: u8) -> (AgentKeys, AgentKeys) {
     let a = agent(s1);
     let b = agent(s2);
-    k.register(&a, "proposer", &["summarize.zh"], Credits(20)).unwrap();
-    k.register(&b, "responder", &["summarize.zh"], Credits(20)).unwrap();
+    k.register(&a, "proposer", &["summarize.zh"], Credits(20))
+        .unwrap();
+    k.register(&b, "responder", &["summarize.zh"], Credits(20))
+        .unwrap();
     (a, b)
 }
 
@@ -35,7 +37,8 @@ fn multi_round_negotiation_over_pmb_is_archivable_and_replayable() {
     n.counter(&mut k, &b, &a, terms(140)).unwrap();
     n.counter(&mut k, &a, &b, terms(130)).unwrap();
     // 拒绝 a 的 130 报价之后，由拒绝方 b 接手还价（还价必须来自上一次报价的对端）。
-    n.reject(&mut k, &b, &a, "round to 120 and we have a deal").unwrap();
+    n.reject(&mut k, &b, &a, "round to 120 and we have a deal")
+        .unwrap();
     n.counter(&mut k, &b, &a, terms(125)).unwrap();
     n.counter(&mut k, &a, &b, terms(120)).unwrap();
     n.accept(&mut k, &b, &a).unwrap();
@@ -55,7 +58,10 @@ fn multi_round_negotiation_over_pmb_is_archivable_and_replayable() {
         if i == 0 {
             assert!(env.in_reply_to.is_none());
         } else {
-            assert_eq!(env.in_reply_to.as_deref(), Some(delivered[i - 1].id.as_str()));
+            assert_eq!(
+                env.in_reply_to.as_deref(),
+                Some(delivered[i - 1].id.as_str())
+            );
         }
     }
     assert_eq!(
@@ -80,7 +86,10 @@ fn multi_round_negotiation_over_pmb_is_archivable_and_replayable() {
     let bytes = n.archive().unwrap();
     let restored = Journal::decode(&bytes).unwrap();
     assert_eq!(restored.encode().unwrap(), bytes);
-    assert_eq!(restored.replay_digest().unwrap(), n.journal().replay_digest().unwrap());
+    assert_eq!(
+        restored.replay_digest().unwrap(),
+        n.journal().replay_digest().unwrap()
+    );
     assert_eq!(restored.phase(), Phase::Accepted);
     assert_eq!(restored.machine().round(), 4);
     assert!(k.ledger().check_conservation().is_ok());
@@ -95,14 +104,23 @@ fn the_quota_refusal_is_typed_and_not_misconduct() {
     assert_eq!(n.rounds_used(), 1);
 
     let before = n.archive().unwrap();
-    assert_eq!(n.counter(&mut k, &a, &b, terms(80)), Err(CoreError::Overflow));
+    assert_eq!(
+        n.counter(&mut k, &a, &b, terms(80)),
+        Err(CoreError::Overflow)
+    );
     assert_eq!(n.archive().unwrap(), before, "被拒的还价不得改变任何状态");
 
     let (who, refusal) = k.refusals().last().unwrap();
     assert_eq!(who, &a.did());
     assert_eq!(refusal.code, RefusalCode::PolicyDenied);
-    assert!(!refusal.code.is_misconduct(), "超额是竞争/容量语义，不是恶意");
-    assert_eq!(k.escalation_for(&a.did(), RefusalCode::PolicyDenied), au4a_core::Escalation::None);
+    assert!(
+        !refusal.code.is_misconduct(),
+        "超额是竞争/容量语义，不是恶意"
+    );
+    assert_eq!(
+        k.escalation_for(&a.did(), RefusalCode::PolicyDenied),
+        au4a_core::Escalation::None
+    );
 }
 
 #[test]
@@ -110,7 +128,10 @@ fn a_turn_violation_is_refused_as_a_state_conflict() {
     let mut k = kernel();
     let (a, b) = pair(&mut k, 5, 6);
     let mut n = Negotiation::open(&mut k, &a, &b, terms(100), 4).unwrap();
-    assert_eq!(n.counter(&mut k, &a, &b, terms(90)), Err(CoreError::InvalidKind));
+    assert_eq!(
+        n.counter(&mut k, &a, &b, terms(90)),
+        Err(CoreError::InvalidKind)
+    );
     assert_eq!(k.refusals().last().unwrap().1.code, RefusalCode::Conflict);
     assert_eq!(n.rounds_used(), 0);
     assert_eq!(n.offers().len(), 1);
@@ -133,7 +154,12 @@ fn rejections_are_free_but_still_dual_signed_records() {
     }
     assert_eq!(n.rounds_used(), 0);
     assert_eq!(n.machine().seq(), 7, "1 次开局 + 6 次拒绝");
-    for record in n.machine().history().iter().filter(|r| r.event.as_str() == "reject") {
+    for record in n
+        .machine()
+        .history()
+        .iter()
+        .filter(|r| r.event.as_str() == "reject")
+    {
         assert_eq!(record.sigs.len(), 2);
         assert_eq!(record.to, record.from, "拒绝是自环");
     }

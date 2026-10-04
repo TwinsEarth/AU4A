@@ -3,18 +3,19 @@
 //! 框架要能证明两件事：**同样的脚本 → 同样的世界**，以及**日志可以重放出同一个世界**。
 
 use au4a_core::{all_passed, Credits, EvidenceGrade, RefusalCode};
-use au4a_kernel::{
-    invariant_suite, AutonomyPolicy, Harness, KernelConfig, LifecycleEvent,
-};
+use au4a_kernel::{invariant_suite, AutonomyPolicy, Harness, KernelConfig, LifecycleEvent};
 
 fn script(base_tag: u8) -> Harness {
     let mut h = Harness::new(KernelConfig::default(), base_tag);
-    h.add_agents(3, &["skill.a", "skill.b"], Credits(20)).unwrap();
+    h.add_agents(3, &["skill.a", "skill.b"], Credits(20))
+        .unwrap();
     h.announce(0).unwrap();
     h.announce(1).unwrap();
     h.offer(0, 1, "skill.a", Credits(5)).unwrap();
     assert!(h.settle(0, 1, Credits(7), EvidenceGrade::Verified).unwrap());
-    assert!(!h.settle(0, 1, Credits(7), EvidenceGrade::Unverified).unwrap());
+    assert!(!h
+        .settle(0, 1, Credits(7), EvidenceGrade::Unverified)
+        .unwrap());
     h.autonomy_turn(0, AutonomyPolicy::default()).unwrap();
     h.lifecycle(1, LifecycleEvent::WorkStarted).unwrap();
     h.lifecycle(1, LifecycleEvent::Refused(RefusalCode::RateLimited))
@@ -28,10 +29,16 @@ fn script(base_tag: u8) -> Harness {
 fn the_same_script_produces_the_same_journal_and_world() {
     let a = script(21);
     let b = script(21);
-    assert_eq!(a.journal_fingerprint().unwrap(), b.journal_fingerprint().unwrap());
+    assert_eq!(
+        a.journal_fingerprint().unwrap(),
+        b.journal_fingerprint().unwrap()
+    );
     assert_eq!(a.outcome().unwrap(), b.outcome().unwrap());
     assert_eq!(a.journal().len(), b.journal().len());
-    assert!(a.journal().iter().any(|entry| !entry.ok), "日志必须如实记录失败");
+    assert!(
+        a.journal().iter().any(|entry| !entry.ok),
+        "日志必须如实记录失败"
+    );
 }
 
 #[test]
@@ -48,7 +55,11 @@ fn replaying_the_journal_rebuilds_an_identical_world() {
     // 重放出来的世界同样满足全部不变式。
     let replayed = h.replay().unwrap();
     let checks = invariant_suite(&replayed);
-    assert!(all_passed(&checks), "{:?}", checks.iter().filter(|c| !c.passed).collect::<Vec<_>>());
+    assert!(
+        all_passed(&checks),
+        "{:?}",
+        checks.iter().filter(|c| !c.passed).collect::<Vec<_>>()
+    );
     assert_eq!(replayed.agent_count(), h.kernel().agent_count());
     assert_eq!(
         replayed.ledger().minted(),
@@ -78,7 +89,11 @@ fn the_invariant_suite_covers_host_and_harness_level_properties() {
         assert!(names.contains(&expected), "缺少不变式 {expected}");
     }
     for check in &checks {
-        assert!(!check.detail.is_empty(), "{} 必须说明断言了什么", check.name);
+        assert!(
+            !check.detail.is_empty(),
+            "{} 必须说明断言了什么",
+            check.name
+        );
     }
 }
 
@@ -93,7 +108,10 @@ fn the_harness_drives_real_kernel_effects() {
         assert!(env.verify().is_ok());
     }
     assert!(kernel.ledger().minted() > Credits::ZERO);
-    assert!(kernel.refusals().iter().any(|(_, r)| r.code.is_misconduct()));
+    assert!(kernel
+        .refusals()
+        .iter()
+        .any(|(_, r)| r.code.is_misconduct()));
     assert!(kernel
         .progress_events()
         .iter()

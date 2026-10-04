@@ -23,8 +23,10 @@ fn terms(price: i64) -> Terms {
 fn pair(k: &mut Kernel, s1: u8, s2: u8) -> (AgentKeys, AgentKeys) {
     let a = agent(s1);
     let b = agent(s2);
-    k.register(&a, "proposer", &["summarize.zh"], Credits(20)).unwrap();
-    k.register(&b, "responder", &["summarize.zh"], Credits(20)).unwrap();
+    k.register(&a, "proposer", &["summarize.zh"], Credits(20))
+        .unwrap();
+    k.register(&b, "responder", &["summarize.zh"], Credits(20))
+        .unwrap();
     (a, b)
 }
 

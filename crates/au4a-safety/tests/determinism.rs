@@ -83,17 +83,10 @@ fn two_offices_built_from_the_same_seeds_agree_on_the_chain_head() {
             (&reporter, "reporter-agent"),
             (&subject, "subject-agent"),
         ] {
-            au4a_safety::ensure_agent(
-                &mut kernel,
-                keys,
-                display,
-                &["x"],
-                au4a_core::Credits(20),
-            )
-            .unwrap();
+            au4a_safety::ensure_agent(&mut kernel, keys, display, &["x"], au4a_core::Credits(20))
+                .unwrap();
         }
-        let config =
-            au4a_safety::SafetyConfig::single_arbiter(service.did(), arbiter.did());
+        let config = au4a_safety::SafetyConfig::single_arbiter(service.did(), arbiter.did());
         let mut office = SafetyOffice::new(config, service).unwrap();
         let payload = serde_json::json!({"deterministic": true, "delivered": false});
         let reference =

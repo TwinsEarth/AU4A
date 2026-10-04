@@ -558,10 +558,17 @@ mod tests {
         let c = Council::sortition(&small, 1, CouncilConfig::default()).unwrap();
         assert_eq!(c.members().len(), 2);
         // 空网络：没有委员，计票会具名报 EmptyCouncil。
-        let empty = Council::sortition(&Kernel::new(KernelConfig::default()), 1, CouncilConfig::default())
-            .unwrap();
+        let empty = Council::sortition(
+            &Kernel::new(KernelConfig::default()),
+            1,
+            CouncilConfig::default(),
+        )
+        .unwrap();
         assert!(empty.members().is_empty());
-        assert_eq!(empty.tally("whatever").failure, Some(CouncilFailure::EmptyCouncil));
+        assert_eq!(
+            empty.tally("whatever").failure,
+            Some(CouncilFailure::EmptyCouncil)
+        );
     }
 
     #[test]
@@ -585,7 +592,9 @@ mod tests {
             CouncilFailure::NonMemberVote.to_refusal_code(),
             RefusalCode::Unauthorized
         );
-        assert!(CouncilFailure::NonMemberVote.to_refusal_code().is_misconduct());
+        assert!(CouncilFailure::NonMemberVote
+            .to_refusal_code()
+            .is_misconduct());
 
         // 重复投票：一人多票即欺诈。
         let voter = council.members()[0].clone();
@@ -603,15 +612,22 @@ mod tests {
             at: 4,
         };
         assert_eq!(council.vote(again), Err(CouncilFailure::DuplicateVote));
-        assert!(CouncilFailure::DuplicateVote.to_refusal_code().is_misconduct());
+        assert!(CouncilFailure::DuplicateVote
+            .to_refusal_code()
+            .is_misconduct());
 
         // 重复动议按竞争处理（冲突），未知动议按 unsupported。
-        assert_eq!(council.submit(m.clone()), Err(CouncilFailure::DuplicateMotion));
+        assert_eq!(
+            council.submit(m.clone()),
+            Err(CouncilFailure::DuplicateMotion)
+        );
         assert_eq!(
             CouncilFailure::DuplicateMotion.to_refusal_code(),
             RefusalCode::Conflict
         );
-        assert!(!CouncilFailure::DuplicateMotion.to_refusal_code().is_misconduct());
+        assert!(!CouncilFailure::DuplicateMotion
+            .to_refusal_code()
+            .is_misconduct());
         let ghost = Vote {
             voter: council.members()[1].clone(),
             motion: "deadbeef".to_string(),
@@ -771,13 +787,21 @@ mod tests {
                     .vote(Vote {
                         voter: council.members()[i].clone(),
                         motion: m.id.clone(),
-                        ballot: if i == 3 { Ballot::Reject } else { Ballot::Uphold },
+                        ballot: if i == 3 {
+                            Ballot::Reject
+                        } else {
+                            Ballot::Uphold
+                        },
                         at: i as u64,
                     })
                     .unwrap();
             }
             let tally = council.decide(&m.id, 99);
-            (tally, council.decisions().to_vec(), council.decisions_json().unwrap())
+            (
+                tally,
+                council.decisions().to_vec(),
+                council.decisions_json().unwrap(),
+            )
         };
         let a = run();
         let b = run();

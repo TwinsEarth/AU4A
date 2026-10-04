@@ -39,10 +39,15 @@ fn the_success_path_is_a_complete_auditable_deal() {
     assert_eq!(kinds.len(), 7);
     assert_eq!(kinds[0], au4a_negotiate::kinds::NEGOTIATE_REQUEST);
     assert_eq!(kinds[6], au4a_negotiate::kinds::CONTRACT_SIGN);
-    assert!(!kinds.iter().any(|k| k == au4a_negotiate::kinds::CONTRACT_BREACH));
+    assert!(!kinds
+        .iter()
+        .any(|k| k == au4a_negotiate::kinds::CONTRACT_BREACH));
 
     // 钱真的动了：客户 1000−20−95，服务方 1000−20+95。
-    assert_eq!(k.ledger().balance(&agent(0x12).did()).available, Credits(885));
+    assert_eq!(
+        k.ledger().balance(&agent(0x12).did()).available,
+        Credits(885)
+    );
     assert_eq!(
         k.ledger().balance(&agent(0x34).did()).available,
         Credits(1_075)
@@ -72,15 +77,27 @@ fn the_breach_path_produces_a_dual_signed_ruling_and_enforces_it() {
 
     // 罚没是销毁：发行量不变、slashed += 15。
     assert_eq!(k.ledger().slashed(), Credits(15));
-    assert_eq!(k.ledger().minted(), Credits(4_000), "四个 Agent 各 1000 创世");
+    assert_eq!(
+        k.ledger().minted(),
+        Credits(4_000),
+        "四个 Agent 各 1000 创世"
+    );
     // 被诉方：锁定 20−15，可用 980−37。
     assert_eq!(k.ledger().balance(&agent(0x78).did()).locked, Credits(5));
-    assert_eq!(k.ledger().balance(&agent(0x78).did()).available, Credits(943));
-    assert_eq!(k.ledger().balance(&agent(0x56).did()).available, Credits(1_017));
+    assert_eq!(
+        k.ledger().balance(&agent(0x78).did()).available,
+        Credits(943)
+    );
+    assert_eq!(
+        k.ledger().balance(&agent(0x56).did()).available,
+        Credits(1_017)
+    );
 
     // 仲裁路径的消息包含 CONTRACT_BREACH。
     let kinds = au4a_negotiate::transcript_kinds(&summary);
-    assert!(kinds.iter().any(|k| k == au4a_negotiate::kinds::CONTRACT_BREACH));
+    assert!(kinds
+        .iter()
+        .any(|k| k == au4a_negotiate::kinds::CONTRACT_BREACH));
     k.ledger().check_conservation().unwrap();
 }
 
@@ -148,7 +165,10 @@ fn the_example_does_not_swallow_errors() {
         ),
         Err(CoreError::Overflow)
     );
-    assert_eq!(k.refusals().last().unwrap().1.code, RefusalCode::PolicyDenied);
+    assert_eq!(
+        k.refusals().last().unwrap().1.code,
+        RefusalCode::PolicyDenied
+    );
     assert_eq!(n.phase(), Phase::Negotiating);
 }
 
@@ -183,15 +203,25 @@ fn the_example_agents_are_self_sovereign() {
     // 观察层是只读投影：能看到 Agent、进度与账本，但没有写路径。
     let view = k.observe();
     assert_eq!(view.agents.len(), 6);
-    assert!(view.progress.iter().any(|p| p.kind == "1.2.example.success"));
+    assert!(view
+        .progress
+        .iter()
+        .any(|p| p.kind == "1.2.example.success"));
     assert!(view.progress.iter().any(|p| p.kind == "1.2.example.breach"));
     assert_eq!(view.ledger.minted, Credits(6_000));
     assert!(both["conservation_ok"].as_bool().unwrap());
 
     // 归档可被任意一方带走并离线解码（不含私钥，只含签名与消息）。
-    let archived = Journal::decode(&both["success"]["transcript"][0]["id"].as_str().unwrap_or_default());
+    let archived = Journal::decode(
+        &both["success"]["transcript"][0]["id"]
+            .as_str()
+            .unwrap_or_default(),
+    );
     assert!(archived.is_err(), "id 不是归档文本");
     let env_id = both["success"]["transcript"][0]["id"].as_str().unwrap();
     assert_eq!(env_id.len(), 64, "消息 id 是内容寻址");
-    let _ = NegotiationMsg::request("s", Terms::new("t", Credits(1), 1, EvidenceGrade::Verified).unwrap());
+    let _ = NegotiationMsg::request(
+        "s",
+        Terms::new("t", Credits(1), 1, EvidenceGrade::Verified).unwrap(),
+    );
 }

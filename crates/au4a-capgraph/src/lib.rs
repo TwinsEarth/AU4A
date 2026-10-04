@@ -131,9 +131,14 @@ fn checks_v111() -> Vec<SelfCheck> {
         let latency = idle.effective_latency_ms();
         let reliability = idle.effective_reliability_bp();
         if latency != 200 || reliability != 4_500 {
-            return Err(format!("期望 200ms/4500bp，实测 {latency}ms/{reliability}bp"));
+            return Err(format!(
+                "期望 200ms/4500bp，实测 {latency}ms/{reliability}bp"
+            ));
         }
-        Ok("断言 p50=100,p99=300,负载=5000bp 时加权延迟=200ms、加权可靠度=4500bp（整数运算）".into())
+        Ok(
+            "断言 p50=100,p99=300,负载=5000bp 时加权延迟=200ms、加权可靠度=4500bp（整数运算）"
+                .into(),
+        )
     }));
     checks.push(verdict("1.1.1.content_addressed", || {
         let a = Capability::new(SkillId::new("x").map_err(show)?, Credits(5));
@@ -157,8 +162,11 @@ fn checks_v111() -> Vec<SelfCheck> {
         let audio = Capability::new(SkillId::new("audio").map_err(show)?, Credits(1))
             .with_formats(&["audio/wav"], &["audio/wav"])
             .map_err(show)?;
-        let join = producer.handoff_format(&consumer).map(|f| f.as_str().to_string());
-        if join.as_deref() != Some("application/json") || producer.handoff_format(&audio).is_some() {
+        let join = producer
+            .handoff_format(&consumer)
+            .map(|f| f.as_str().to_string());
+        if join.as_deref() != Some("application/json") || producer.handoff_format(&audio).is_some()
+        {
             return Err(format!("格式接续判断错误：join={join:?}"));
         }
         Ok("断言产出∩接受={application/json} 可接续；产出∩接受=∅ 不可接续".into())
@@ -172,7 +180,8 @@ fn checks_v112() -> Vec<SelfCheck> {
     checks.push(verdict("1.1.2.self_signed_only", || {
         let a = AgentKeys::from_seed(&[21; 32]);
         let b = AgentKeys::from_seed(&[22; 32]);
-        let declaration = Declaration::new(a.did(), 1, 1, vec![sample_capability()?]).map_err(show)?;
+        let declaration =
+            Declaration::new(a.did(), 1, 1, vec![sample_capability()?]).map_err(show)?;
         let forged = declaration.clone().sign(&b);
         if forged != Err(au4a_core::CoreError::InvalidSignature) {
             return Err("用 B 的私钥替 A 声明竟然成功了".into());
@@ -193,7 +202,8 @@ fn checks_v112() -> Vec<SelfCheck> {
         value["declaration"]["capabilities"][0]["throughput_per_min"] = json!(1);
         let tampered = SignedDeclaration::from_value(&value).map_err(show)?;
         let outcome = graph.apply(&tampered, 1);
-        if outcome.refusal() != Some(au4a_core::RefusalCode::Unauthorized) || graph.neighbor_count() != 0
+        if outcome.refusal() != Some(au4a_core::RefusalCode::Unauthorized)
+            || graph.neighbor_count() != 0
         {
             return Err(format!("篡改未被判 unauthorized：{:?}", outcome.to_value()));
         }
@@ -230,7 +240,8 @@ fn checks_v113() -> Vec<SelfCheck> {
     let mut checks = Vec::new();
     checks.push(verdict("1.1.3.announce_seals_and_verifies", || {
         let a = AgentKeys::from_seed(&[31; 32]);
-        let declaration = Declaration::new(a.did(), 1, 1, vec![sample_capability()?]).map_err(show)?;
+        let declaration =
+            Declaration::new(a.did(), 1, 1, vec![sample_capability()?]).map_err(show)?;
         let env = announce(&a, &declaration, 7).map_err(show)?;
         env.verify().map_err(show)?;
         let frame = au4a_core::encode_frame(&env).map_err(show)?;
@@ -254,9 +265,9 @@ fn checks_v113() -> Vec<SelfCheck> {
         .map_err(show)?;
         env.body["declaration"]["declaration"]["capabilities"][0]["price_per_unit"] = json!(0);
         match parse_announcement(&env) {
-            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => {
-                Ok("断言：改动 body 后信封验签失败，判 unauthorized（一次即恶意，不可重试）".into())
-            }
+            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => Ok(
+                "断言：改动 body 后信封验签失败，判 unauthorized（一次即恶意，不可重试）".into(),
+            ),
             other => Err(format!("篡改未被判 unauthorized：{other:?}")),
         }
     }));
@@ -273,9 +284,9 @@ fn checks_v113() -> Vec<SelfCheck> {
             .seal(&b)
             .map_err(show)?;
         match parse_announcement(&env) {
-            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => {
-                Ok("断言：B 的信封携带 A 的合法声明 → 两层签名都对但身份错配，判 unauthorized".into())
-            }
+            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => Ok(
+                "断言：B 的信封携带 A 的合法声明 → 两层签名都对但身份错配，判 unauthorized".into(),
+            ),
             other => Err(format!("身份错配未被拒：{other:?}")),
         }
     }));
@@ -311,7 +322,10 @@ fn checks_v113() -> Vec<SelfCheck> {
 
         let mut graph = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
         let report = pump(&mut kernel, &mut graph, 1);
-        if report.routed != 1 || report.applied != 1 || report.forwarded != 1 || kernel.queue_len() != 1
+        if report.routed != 1
+            || report.applied != 1
+            || report.forwarded != 1
+            || kernel.queue_len() != 1
         {
             return Err(format!("pump 统计不符：{}", report.to_value()));
         }
@@ -484,10 +498,7 @@ fn checks_v115() -> Vec<SelfCheck> {
         graph.apply(&signed, 1);
         let skill = SkillId::new("translate.en-zh").map_err(show)?;
         let unfiltered = graph.query(&CapabilityQuery::new(skill.clone()), 1);
-        let filtered = graph.query(
-            &CapabilityQuery::new(skill).with_max_price(Credits(10)),
-            1,
-        );
+        let filtered = graph.query(&CapabilityQuery::new(skill).with_max_price(Credits(10)), 1);
         if unfiltered.matches.len() != 1 || !filtered.is_empty() {
             return Err("价格上限没有生效".into());
         }
@@ -523,24 +534,36 @@ fn checks_v115() -> Vec<SelfCheck> {
         let build = || -> Result<QueryResult, String> {
             let owner = AgentKeys::from_seed(&[107; 32]);
             let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
-            for (seed, price, reliability) in [(108u8, 5i64, 9_000u16), (109, 5, 9_000), (110, 4, 8_000)] {
+            for (seed, price, reliability) in
+                [(108u8, 5i64, 9_000u16), (109, 5, 9_000), (110, 4, 8_000)]
+            {
                 let peer = AgentKeys::from_seed(&[seed; 32]);
-                let cap = Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(price))
-                    .with_reliability_bp(reliability);
+                let cap = Capability::new(
+                    SkillId::new("translate.en-zh").map_err(show)?,
+                    Credits(price),
+                )
+                .with_reliability_bp(reliability);
                 let signed = Declaration::new(peer.did(), 1, 1, vec![cap])
                     .map_err(show)?
                     .sign(&peer)
                     .map_err(show)?;
                 graph.apply(&signed, 1);
             }
-            Ok(graph.query(&CapabilityQuery::new(SkillId::new("translate.en-zh").map_err(show)?), 1))
+            Ok(graph.query(
+                &CapabilityQuery::new(SkillId::new("translate.en-zh").map_err(show)?),
+                1,
+            ))
         };
         let first = build()?;
         let second = build()?;
         if first.matches != second.matches || first.matches.len() != 3 {
             return Err("两次相同查询得到不同顺序".into());
         }
-        let prices: Vec<i64> = first.matches.iter().map(|m| m.capability.price_per_unit.get()).collect();
+        let prices: Vec<i64> = first
+            .matches
+            .iter()
+            .map(|m| m.capability.price_per_unit.get())
+            .collect();
         if prices != vec![5, 5, 4] {
             return Err(format!("排序不符（可靠度优先）：{prices:?}"));
         }
@@ -679,18 +702,10 @@ fn checks_v117() -> Vec<SelfCheck> {
             .declare(&alice, vec![sample_capability()?], 0)
             .map_err(show)?;
         let second = graph
-            .declare(
-                &alice,
-                vec![sample_capability()?.with_price(Credits(9))],
-                1,
-            )
+            .declare(&alice, vec![sample_capability()?.with_price(Credits(9))], 1)
             .map_err(show)?;
         let same_again = graph
-            .declare(
-                &alice,
-                vec![sample_capability()?.with_price(Credits(9))],
-                2,
-            )
+            .declare(&alice, vec![sample_capability()?.with_price(Credits(9))], 2)
             .map_err(show)?;
         if !first.is_applied() || !second.is_applied() {
             return Err("内容变化必须被接受".into());
@@ -759,25 +774,43 @@ fn checks_v117() -> Vec<SelfCheck> {
             .map_err(show)?;
         let stale = graph.apply(&version_two, 1_002);
         if conflict.refusal() != Some(au4a_core::RefusalCode::Conflict) {
-            return Err(format!("缓存过期后未判 conflict：{:?}", conflict.to_value()));
+            return Err(format!(
+                "缓存过期后未判 conflict：{:?}",
+                conflict.to_value()
+            ));
         }
         if stale.refusal() != Some(au4a_core::RefusalCode::StaleEpoch) {
-            return Err(format!("缓存过期后未判 stale_epoch：{:?}", stale.to_value()));
+            return Err(format!(
+                "缓存过期后未判 stale_epoch：{:?}",
+                stale.to_value()
+            ));
         }
-        Ok("断言：缓存过期后，同版本异内容仍判 conflict、更旧版本仍判 stale_epoch（历史兜底）".into())
+        Ok(
+            "断言：缓存过期后，同版本异内容仍判 conflict、更旧版本仍判 stale_epoch（历史兜底）"
+                .into(),
+        )
     }));
     checks.push(verdict("1.1.7.history_is_bounded", || {
         let alice = AgentKeys::from_seed(&[55; 32]);
         let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
         for price in 0..(HISTORY_CAPACITY as i64 + 5) {
             let capability = sample_capability()?.with_price(Credits(price));
-            graph.declare(&alice, vec![capability], price as u64).map_err(show)?;
+            graph
+                .declare(&alice, vec![capability], price as u64)
+                .map_err(show)?;
         }
         if graph.history().len() != HISTORY_CAPACITY {
-            return Err(format!("历史长度应为 {HISTORY_CAPACITY}，实测 {}", graph.history().len()));
+            return Err(format!(
+                "历史长度应为 {HISTORY_CAPACITY}，实测 {}",
+                graph.history().len()
+            ));
         }
         if graph.own_epoch() != HISTORY_CAPACITY as u64 + 5 {
-            return Err(format!("版本号应为 {}，实测 {}", HISTORY_CAPACITY + 5, graph.own_epoch()));
+            return Err(format!(
+                "版本号应为 {}，实测 {}",
+                HISTORY_CAPACITY + 5,
+                graph.own_epoch()
+            ));
         }
         Ok(format!(
             "断言：{} 次内容变更后历史长度为 {HISTORY_CAPACITY}（有界），版本号为 {}",
@@ -815,8 +848,10 @@ fn checks_v118() -> Vec<SelfCheck> {
         if index["entries"].as_u64() != Some(200) || !graph.index_consistent() {
             return Err(format!("索引与图不一致：{index}"));
         }
-        Ok("断言：100 个邻居 × 2 条能力增量入图，index_rebuilds=0、indexed_entries=200、索引自洽"
-            .to_string())
+        Ok(
+            "断言：100 个邻居 × 2 条能力增量入图，index_rebuilds=0、indexed_entries=200、索引自洽"
+                .to_string(),
+        )
     }));
     checks.push(verdict("1.1.8.bounded_top_k_equals_full_sort", || {
         let owner = AgentKeys::from_seed(&[62; 32]);
@@ -836,7 +871,12 @@ fn checks_v118() -> Vec<SelfCheck> {
         let bounded = graph.query(&CapabilityQuery::new(skill.clone()).with_limit(3), 1);
         let before = graph.query_perf();
         let full = graph.query(&CapabilityQuery::new(skill.clone()).with_limit(0), 1);
-        let top3: Vec<&str> = full.matches.iter().take(3).map(|m| m.did.as_str()).collect();
+        let top3: Vec<&str> = full
+            .matches
+            .iter()
+            .take(3)
+            .map(|m| m.did.as_str())
+            .collect();
         let bounded_ids: Vec<&str> = bounded.matches.iter().map(|m| m.did.as_str()).collect();
         if !bounded.stats.bounded_selection || bounded_ids != top3 {
             return Err(format!(
@@ -909,7 +949,9 @@ fn checks_v118() -> Vec<SelfCheck> {
         if first != second {
             return Err("同样的负载得到不同的性能计数（说明证据依赖了非确定性来源）".into());
         }
-        Ok(format!("断言：同一负载两次运行得到逐字节相同的计数（无墙钟参与）：{first}"))
+        Ok(format!(
+            "断言：同一负载两次运行得到逐字节相同的计数（无墙钟参与）：{first}"
+        ))
     }));
     checks
 }
@@ -1015,7 +1057,11 @@ fn checks_v110() -> Vec<SelfCheck> {
     checks.push(verdict("1.1.10.all_ten_versions_are_present", || {
         // 注意：这里**不能**调 `results_json()`——它内部会调 `self_check()`，
         // 而本函数就在 `self_check()` 里，会无限递归。用探针自检项构建同一份结构。
-        let probe = [SelfCheck::pass(TRACK, "probe", "探针：只用于验证 results_json 的形状")];
+        let probe = [SelfCheck::pass(
+            TRACK,
+            "probe",
+            "探针：只用于验证 results_json 的形状",
+        )];
         let value = build_results(&probe).map_err(show)?;
         let versions: Vec<String> = value
             .pointer("/versions")
@@ -1040,18 +1086,38 @@ fn checks_v110() -> Vec<SelfCheck> {
     checks.push(verdict("1.1.10.public_surface_is_complete", || {
         // 引用的每一个公开入口都必须真实存在（编译期即证明，这里是可读的证据）。
         let surface = [
-            "Capability", "Constraints", "FormatId", "SkillId",
-            "Declaration", "SignedDeclaration",
-            "AgentCapabilityGraph", "CapGraphConfig", "DeclareOutcome",
-            "CapabilityCache", "CapabilityIndex", "CapabilityQuery",
-            "PipelineRequest", "PlanOutcome", "verify_pipeline",
-            "VersionHistory", "QueryPerf", "scenario", "self_check", "results_json",
+            "Capability",
+            "Constraints",
+            "FormatId",
+            "SkillId",
+            "Declaration",
+            "SignedDeclaration",
+            "AgentCapabilityGraph",
+            "CapGraphConfig",
+            "DeclareOutcome",
+            "CapabilityCache",
+            "CapabilityIndex",
+            "CapabilityQuery",
+            "PipelineRequest",
+            "PlanOutcome",
+            "verify_pipeline",
+            "VersionHistory",
+            "QueryPerf",
+            "scenario",
+            "self_check",
+            "results_json",
         ];
         let schema = schema_json().map_err(show)?;
         let listed: Vec<String> = schema
             .pointer("/exports")
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
             .unwrap_or_default();
         for name in surface {
             if !listed.contains(&name.to_string()) {
@@ -1068,7 +1134,10 @@ fn checks_v110() -> Vec<SelfCheck> {
 
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
-    Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
+    Ok(Capability::new(
+        SkillId::new("translate.en-zh").map_err(show)?,
+        Credits(4),
+    ))
 }
 
 /// 演示用 Agent：确定性种子 → 确定性 DID → 确定性场景。

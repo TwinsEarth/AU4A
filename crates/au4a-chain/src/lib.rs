@@ -72,11 +72,13 @@ pub use erc8004::{
     ReputationSummary, Validation, ERC8004_REFUSALS, ERC8004_SUPPORTED,
 };
 pub use reputation::{
-    credibility_credits, refusal_code_for, ChainReputationEvent, LocalReputation,
-    ReputationBridge, ReputationDim, ReputationEventKind, MAX_STEP_BP, NEUTRAL_BP,
-    REPUTATION_REFUSALS, REPUTATION_SUPPORTED,
+    credibility_credits, refusal_code_for, ChainReputationEvent, LocalReputation, ReputationBridge,
+    ReputationDim, ReputationEventKind, MAX_STEP_BP, NEUTRAL_BP, REPUTATION_REFUSALS,
+    REPUTATION_SUPPORTED,
 };
-pub use rgb::{RgbAdapter, RgbContract, RgbOutcome, Seal, TransferBundle, RGB_REFUSALS, RGB_SUPPORTED};
+pub use rgb::{
+    RgbAdapter, RgbContract, RgbOutcome, Seal, TransferBundle, RGB_REFUSALS, RGB_SUPPORTED,
+};
 pub use routing::{
     route as route_settlement, settle as settle_via_rails, DecisionReason as RouteReason, Rail,
     RailTerms, RouteAction, RouteDecision, RoutingTable, SettlementOutcome, SettlementRequest,
@@ -86,12 +88,8 @@ pub use taproot::{
     leaf_hash, merkle_proof, merkle_root, verify_merkle, ProofStep, TaprootAdapter, TaprootAnchor,
     TaprootOutcome, TAPROOT_REFUSALS, TAPROOT_SUPPORTED,
 };
-pub use testnet::{
-    ChainId, ChainRefusal, ChainTx, Receipt, RefusalSpec, Testnet, ONCHAIN_GRADE,
-};
-pub use x402::{
-    Invoice, Payment, X402Adapter, X402Outcome, X402_REFUSALS, X402_SUPPORTED,
-};
+pub use testnet::{ChainId, ChainRefusal, ChainTx, Receipt, RefusalSpec, Testnet, ONCHAIN_GRADE};
+pub use x402::{Invoice, Payment, X402Adapter, X402Outcome, X402_REFUSALS, X402_SUPPORTED};
 
 /// 轨道号。
 pub const TRACK: &str = "1.8";
@@ -154,9 +152,17 @@ pub fn self_check() -> Vec<SelfCheck> {
             json!({ "ticker": "T", "supply": 10 }),
         )
         .map_err(|e| e.to_string())?;
-        adapter.execute(&mut net, &issue).map_err(|r| r.detail.clone())?;
-        let bad = ChainTx::new(ChainId::BtcRegtest, "rgb.atomic_swap", &did_of(1), 2, json!({}))
-            .map_err(|e| e.to_string())?;
+        adapter
+            .execute(&mut net, &issue)
+            .map_err(|r| r.detail.clone())?;
+        let bad = ChainTx::new(
+            ChainId::BtcRegtest,
+            "rgb.atomic_swap",
+            &did_of(1),
+            2,
+            json!({}),
+        )
+        .map_err(|e| e.to_string())?;
         let refusal = adapter.execute(&mut net, &bad).unwrap_err();
         if refusal.op != "rgb.atomic_swap" || refusal.code != RefusalCode::Unsupported {
             return Err(format!("拒绝不正确：{refusal:?}"));
@@ -205,10 +211,20 @@ pub fn self_check() -> Vec<SelfCheck> {
         let mut reg = Erc8004Adapter::new();
         let mut ids = Vec::new();
         for (seed, nonce) in [(21u8, 1u64), (22, 1), (23, 1)] {
-            let tx = ChainTx::new(ChainId::EthLocal, "erc8004.register", &did_of(seed), nonce, json!({}))
-                .map_err(|e| e.to_string())?;
+            let tx = ChainTx::new(
+                ChainId::EthLocal,
+                "erc8004.register",
+                &did_of(seed),
+                nonce,
+                json!({}),
+            )
+            .map_err(|e| e.to_string())?;
             reg.execute(&mut net, &tx).map_err(|r| r.detail.clone())?;
-            ids.push(reg.identity_of_did(&did_of(seed)).map(|i| i.agent_id.clone()).unwrap_or_default());
+            ids.push(
+                reg.identity_of_did(&did_of(seed))
+                    .map(|i| i.agent_id.clone())
+                    .unwrap_or_default(),
+            );
         }
         for (seed, score) in [(22u8, 9_000i64), (23, 7_000)] {
             let tx = ChainTx::new(
@@ -257,16 +273,23 @@ pub fn self_check() -> Vec<SelfCheck> {
             return Err(format!("最便宜轨应为 x402，实际 {normal:?}"));
         }
         if normal.fee != Credits(6) || normal.net != Credits(994) {
-            return Err(format!("费用/到账不符：fee={} net={}", normal.fee, normal.net));
+            return Err(format!(
+                "费用/到账不符：fee={} net={}",
+                normal.fee, normal.net
+            ));
         }
         // 双轨不一致 → 一律缓办（即使请求本身完全合格）。
         let blocked = routing::route(&request, &table, false).map_err(|e| e.to_string())?;
-        if blocked.action != RouteAction::Defer || blocked.reason != RouteReason::ReconciliationFailed {
+        if blocked.action != RouteAction::Defer
+            || blocked.reason != RouteReason::ReconciliationFailed
+        {
             return Err(format!("fail-closed 闸门失效：{blocked:?}"));
         }
         // 真正动账也走同一条闸门。
         let mut ledger = Ledger::new();
-        ledger.mint(&payer, Credits(5_000)).map_err(|e| e.to_string())?;
+        ledger
+            .mint(&payer, Credits(5_000))
+            .map_err(|e| e.to_string())?;
         let mut book = BridgeBook::new();
         let outcome = routing::settle(&mut ledger, &mut book, &request, &table)
             .map_err(|e| format!("结算失败：{e}"))?;
@@ -274,7 +297,8 @@ pub fn self_check() -> Vec<SelfCheck> {
             return Err(format!("结算结果不符：{outcome:?}"));
         }
         ledger.check_conservation().map_err(|e| e.to_string())?;
-        book.require_consistent(&ledger).map_err(|e| e.to_string())?;
+        book.require_consistent(&ledger)
+            .map_err(|e| e.to_string())?;
         Ok(format!(
             "1000 → 最便宜轨 {} 费用 {} 到账 {}；不一致时 {}；实付 1000 后托管 {} == 链上表示 {}",
             normal.rail.as_str(),
@@ -292,9 +316,8 @@ pub fn self_check() -> Vec<SelfCheck> {
         net.mine_to(10);
         let mut bridge = ReputationBridge::new();
         // 反馈 9000bp（权重 6000）→ 质量维度 +2000（单步上限），可靠性不动。
-        let feedback =
-            ChainReputationEvent::new(&who, ReputationEventKind::Feedback, 9_000, 2)
-                .map_err(|e| e.to_string())?;
+        let feedback = ChainReputationEvent::new(&who, ReputationEventKind::Feedback, 9_000, 2)
+            .map_err(|e| e.to_string())?;
         let after = bridge
             .apply_event(&net, &feedback)
             .map_err(|r| r.detail.clone())?;
@@ -353,7 +376,9 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check("chain.dual_track_conservation", || {
         let who = did_of(2);
         let mut ledger = Ledger::new();
-        ledger.mint(&who, Credits(1_000)).map_err(|e| e.to_string())?;
+        ledger
+            .mint(&who, Credits(1_000))
+            .map_err(|e| e.to_string())?;
         let mut book = BridgeBook::new();
         book.bridge_out(&mut ledger, &who, Credits(300), "rgb:USDT", "rgb")
             .map_err(|e| e.to_string())?;
@@ -450,11 +475,7 @@ fn ensure_registered(
 ///
 /// 拒绝会带着真实的 `op` 与 `RefusalCode` 记进内核（观察层可见），场景本身返回
 /// [`CoreError::InvalidKind`]（`CoreError` 冻结、没有链上专用变体；映射写在文档里）。
-fn adapter_ok<T>(
-    kernel: &mut Kernel,
-    who: &Did,
-    result: Result<T, ChainRefusal>,
-) -> CoreResult<T> {
+fn adapter_ok<T>(kernel: &mut Kernel, who: &Did, result: Result<T, ChainRefusal>) -> CoreResult<T> {
     match result {
         Ok(value) => Ok(value),
         Err(refusal) => {
@@ -479,23 +500,32 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
 
     let alice_keys = agent(81);
     let bob_keys = agent(82);
-    let alice = ensure_registered(kernel, &alice_keys, "chain.alice", &["settle.btc"], Credits(100))?;
-    let bob = ensure_registered(kernel, &bob_keys, "chain.bob", &["settle.eth"], Credits(100))?;
+    let alice = ensure_registered(
+        kernel,
+        &alice_keys,
+        "chain.alice",
+        &["settle.btc"],
+        Credits(100),
+    )?;
+    let bob = ensure_registered(
+        kernel,
+        &bob_keys,
+        "chain.bob",
+        &["settle.eth"],
+        Credits(100),
+    )?;
     kernel.emit("chain.registered", "2 个 Agent 完成注册（质押自带）");
 
     // 双轨桥出：本地积分锁定 → 链上表示发行。
     let mut book = BridgeBook::new();
     let bridged = Credits(400);
-    let event = book.bridge_out(
-        kernel.ledger_mut(),
-        &alice,
-        bridged,
-        "rgb:USDT-RGB",
-        "rgb",
-    )?;
+    let event = book.bridge_out(kernel.ledger_mut(), &alice, bridged, "rgb:USDT-RGB", "rgb")?;
     kernel.emit(
         "chain.bridge_out",
-        format!("桥出 {bridged}（本地锁定 == 链上表示），事件 {}", au4a_core::short_id(&event.id)),
+        format!(
+            "桥出 {bridged}（本地锁定 == 链上表示），事件 {}",
+            au4a_core::short_id(&event.id)
+        ),
     );
 
     // RGB 契约：创世发行与密封转移。
@@ -617,7 +647,11 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         2,
         json!({ "asset_id": "tap:USDT-RGB", "leaf": tap_leaf, "proof": tap_proof }),
     )?;
-    let tap_verified = adapter_ok(&mut *kernel, &bob, taproot.execute(&mut tapnet, &tap_verify_tx))?;
+    let tap_verified = adapter_ok(
+        &mut *kernel,
+        &bob,
+        taproot.execute(&mut tapnet, &tap_verify_tx),
+    )?;
     if taproot.anchored_total()? != bridged {
         return Err(CoreError::InvalidKind);
     }
@@ -636,7 +670,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let mut erc = Erc8004Adapter::new();
     let mut x402 = X402Adapter::new();
     for (keys, nonce) in [(&alice_keys, 1u64), (&bob_keys, 1)] {
-        let tx = ChainTx::new(ChainId::EthLocal, "erc8004.register", &keys.did(), nonce, json!({}))?;
+        let tx = ChainTx::new(
+            ChainId::EthLocal,
+            "erc8004.register",
+            &keys.did(),
+            nonce,
+            json!({}),
+        )?;
         adapter_ok(&mut *kernel, &keys.did(), erc.execute(&mut ethnet, &tx))?;
     }
     let alice_id = erc
@@ -706,13 +746,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         json!({ "invoice_id": invoice.id, "amount": 100, "now": kernel.now() }),
     )?;
     let paid = adapter_ok(&mut *kernel, &bob, x402.execute(&mut ethnet, &pay_tx))?;
-    let escrow_before = book.bridge_out(
-        kernel.ledger_mut(),
-        &bob,
-        Credits(100),
-        "usdc-eth",
-        "x402",
-    )?;
+    let escrow_before =
+        book.bridge_out(kernel.ledger_mut(), &bob, Credits(100), "usdc-eth", "x402")?;
     let pay_height = paid
         .receipt
         .as_ref()
@@ -742,7 +777,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let routing_table = RoutingTable::default_table();
     let route_req = SettlementRequest::new(&bob, &alice, 400)?;
     let live_reconciliation = bridge::reconcile(kernel.ledger(), &book)?;
-    let route_decision = routing::route(&route_req, &routing_table, live_reconciliation.consistent)?;
+    let route_decision =
+        routing::route(&route_req, &routing_table, live_reconciliation.consistent)?;
     // 把「双轨不一致」这个输入显式喂给决策表，验证它第一优先级就缓办（纯函数，不动账）。
     let blocked_decision = routing::route(&route_req, &routing_table, false)?;
     if blocked_decision.action != RouteAction::Defer {
@@ -785,7 +821,9 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &alice,
         reputation_bridge.apply_event(&ethnet, &feedback_event),
     )?;
-    let transfer_refusal = reputation_bridge.execute("reputation.transfer").unwrap_err();
+    let transfer_refusal = reputation_bridge
+        .execute("reputation.transfer")
+        .unwrap_err();
     kernel.refuse(
         &alice,
         transfer_refusal.code,
@@ -984,7 +1022,10 @@ mod tests {
         assert_eq!(a["reputation"]["alice"]["honesty_bp"], json!(5_000));
         assert_eq!(a["reputation"]["alice"]["availability_bp"], json!(6_600));
         assert_eq!(a["reputation"]["alice"]["overall_bp"], json!(6_300));
-        assert_eq!(a["reputation"]["transfer_refusal_code"], json!("policy_denied"));
+        assert_eq!(
+            a["reputation"]["transfer_refusal_code"],
+            json!("policy_denied")
+        );
         assert_eq!(a["reputation"]["bridge"]["transferable"], json!(false));
         // 锁定 = 注册质押 100 + 桥出托管 400 = 500。
         assert_eq!(a["conservation"]["locked"], json!(500));

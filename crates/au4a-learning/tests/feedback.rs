@@ -21,7 +21,14 @@ fn push(
 ) {
     let context = format!("ctx-{id}");
     let exp = Experience::new(
-        id, task_type, &context, "deliver", outcome, Credits(reward), 1, peers,
+        id,
+        task_type,
+        &context,
+        "deliver",
+        outcome,
+        Credits(reward),
+        1,
+        peers,
     )
     .unwrap();
     store.record(exp).unwrap();
@@ -31,10 +38,38 @@ fn push(
 fn statistics_are_exact_integers_and_complementary() {
     let peers = dids(1);
     let mut store = ExperienceStore::new(16).unwrap();
-    push(&mut store, "a", "translate.en-zh", Outcome::Success, 40, &peers);
-    push(&mut store, "b", "translate.en-zh", Outcome::Success, 40, &peers);
-    push(&mut store, "c", "translate.en-zh", Outcome::Partial, 20, &peers);
-    push(&mut store, "d", "translate.en-zh", Outcome::Failure, 0, &peers);
+    push(
+        &mut store,
+        "a",
+        "translate.en-zh",
+        Outcome::Success,
+        40,
+        &peers,
+    );
+    push(
+        &mut store,
+        "b",
+        "translate.en-zh",
+        Outcome::Success,
+        40,
+        &peers,
+    );
+    push(
+        &mut store,
+        "c",
+        "translate.en-zh",
+        Outcome::Partial,
+        20,
+        &peers,
+    );
+    push(
+        &mut store,
+        "d",
+        "translate.en-zh",
+        Outcome::Failure,
+        0,
+        &peers,
+    );
 
     let report = FeedbackAnalyser::analyse(&store).unwrap();
     let o = &report.overall;
@@ -189,8 +224,19 @@ fn per_type_scopes_cover_every_task_type_and_analysis_is_pure() {
     let peers = dids(1);
     let mut store = ExperienceStore::new(16).unwrap();
     for i in 0..6 {
-        let kind = if i % 2 == 0 { "translate.en-zh" } else { "classify.zh" };
-        push(&mut store, &format!("t-{i}"), kind, Outcome::Success, 5, &peers);
+        let kind = if i % 2 == 0 {
+            "translate.en-zh"
+        } else {
+            "classify.zh"
+        };
+        push(
+            &mut store,
+            &format!("t-{i}"),
+            kind,
+            Outcome::Success,
+            5,
+            &peers,
+        );
     }
     let before = store.digest().unwrap();
     let report = FeedbackAnalyser::analyse(&store).unwrap();

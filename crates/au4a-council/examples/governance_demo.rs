@@ -25,7 +25,10 @@ fn main() -> Result<(), CoreError> {
 
     let scenario = au4a_council::scenario(&mut kernel)?;
     println!("== scenario ==");
-    println!("{}", serde_json::to_string_pretty(&scenario).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&scenario).unwrap_or_default()
+    );
 
     let checks = au4a_council::self_check();
     println!("== self_check ==");
@@ -41,7 +44,10 @@ fn main() -> Result<(), CoreError> {
 
     let results = au4a_council::results_json()?;
     println!("== results ==");
-    println!("{}", serde_json::to_string_pretty(&results).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&results).unwrap_or_default()
+    );
 
     println!("== claims ==");
     println!("{}", au4a_council::claims::summary());

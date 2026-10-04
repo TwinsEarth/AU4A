@@ -729,8 +729,8 @@ mod tests {
 
     fn node(st: &Fixture, seed: u8) -> NodeStore<MemoryStore> {
         let k = keys(seed);
-        let mut n = NodeStore::open(NodeId::new("node-b").unwrap(), k.did(), MemoryStore::new())
-            .unwrap();
+        let mut n =
+            NodeStore::open(NodeId::new("node-b").unwrap(), k.did(), MemoryStore::new()).unwrap();
         n.install(&st.base, true).unwrap();
         n
     }
@@ -739,10 +739,19 @@ mod tests {
     fn a_happy_path_migration_confirms_and_cleans_up() {
         let f = fixture(1);
         let mut n = node(&f, 1);
-        let outcome = migrate(&mut n, f.plan.clone(), &f.delta, &f.signed, &mut FaultInjector::none())
-            .unwrap();
+        let outcome = migrate(
+            &mut n,
+            f.plan.clone(),
+            &f.delta,
+            &f.signed,
+            &mut FaultInjector::none(),
+        )
+        .unwrap();
         assert!(outcome.is_confirmed());
-        assert_eq!(n.live_content_root().unwrap(), f.target.content_root().unwrap());
+        assert_eq!(
+            n.live_content_root().unwrap(),
+            f.target.content_root().unwrap()
+        );
         assert!(n.orphan_generations(n.head().unwrap()).unwrap().is_empty());
         assert!(n.intent().unwrap().is_none());
     }
@@ -773,7 +782,10 @@ mod tests {
                 }
                 MigrationOutcome::Confirmed { .. } => panic!("{point:?}: 注入的故障没有生效"),
             }
-            assert_eq!(n.live_content_root().unwrap(), f.base.content_root().unwrap());
+            assert_eq!(
+                n.live_content_root().unwrap(),
+                f.base.content_root().unwrap()
+            );
             assert!(n.intent().unwrap().is_none());
             assert!(n.orphan_generations(n.head().unwrap()).unwrap().is_empty());
         }
@@ -805,8 +817,14 @@ mod tests {
             let snap = n2.live_snapshot().unwrap();
             assert_eq!(snap.blocks().len(), 3, "{point:?}: 块数不完整");
         }
-        let ok = migrate(&mut n, f.plan.clone(), &f.delta, &f.signed, &mut FaultInjector::none())
-            .unwrap();
+        let ok = migrate(
+            &mut n,
+            f.plan.clone(),
+            &f.delta,
+            &f.signed,
+            &mut FaultInjector::none(),
+        )
+        .unwrap();
         assert!(ok.is_confirmed());
     }
 
@@ -850,7 +868,10 @@ mod tests {
         m.rollback(&mut n).unwrap();
         m.rollback(&mut n).unwrap();
         assert_eq!(m.phase(), Phase::RolledBack);
-        assert_eq!(n.live_content_root().unwrap(), f.base.content_root().unwrap());
+        assert_eq!(
+            n.live_content_root().unwrap(),
+            f.base.content_root().unwrap()
+        );
     }
 
     #[test]
@@ -899,7 +920,10 @@ mod tests {
             n.write_generation(head, &f.target),
             Err(CoreError::DuplicateAgent)
         );
-        assert_eq!(n.live_content_root().unwrap(), f.base.content_root().unwrap());
+        assert_eq!(
+            n.live_content_root().unwrap(),
+            f.base.content_root().unwrap()
+        );
     }
 
     #[test]

@@ -49,7 +49,10 @@ impl SharedView {
     }
 
     pub fn snapshot(&self) -> String {
-        self.inner.lock().map(|g| g.clone()).unwrap_or_else(|_| "{}".to_string())
+        self.inner
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "{}".to_string())
     }
 }
 
@@ -152,7 +155,12 @@ fn handle(mut stream: TcpStream, view: &SharedView) -> std::io::Result<()> {
     let value: Value = serde_json::from_str(&snapshot).unwrap_or(Value::Null);
 
     match route.as_str() {
-        "/" => respond(&mut stream, 200, "text/html; charset=utf-8", &render_html(&value)),
+        "/" => respond(
+            &mut stream,
+            200,
+            "text/html; charset=utf-8",
+            &render_html(&value),
+        ),
         "/api/progress" => respond(&mut stream, 200, JSON_CT, &panel(&value, "progress")),
         "/api/results" => respond(&mut stream, 200, JSON_CT, &panel(&value, "results")),
         "/api/revenue" => respond(&mut stream, 200, JSON_CT, &panel(&value, "revenue")),
@@ -180,7 +188,12 @@ fn panel(value: &Value, key: &str) -> String {
     au4a_core::canonicalize(&payload).unwrap_or_else(|_| "{}".to_string())
 }
 
-fn respond(stream: &mut TcpStream, status: u16, content_type: &str, body: &str) -> std::io::Result<()> {
+fn respond(
+    stream: &mut TcpStream,
+    status: u16,
+    content_type: &str,
+    body: &str,
+) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         404 => "Not Found",
@@ -198,24 +211,49 @@ fn respond(stream: &mut TcpStream, status: u16, content_type: &str, body: &str) 
 
 /// 人类真正看到的界面：三块只读面板 + 自检结果。没有表单、没有按钮。
 fn render_html(value: &Value) -> String {
-    let version = value.get("version").and_then(|v| v.as_str()).unwrap_or("unknown");
+    let version = value
+        .get("version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
     let progress = value.get("progress").cloned().unwrap_or(Value::Null);
     let results = value.get("results").cloned().unwrap_or(Value::Null);
     let revenue = value.get("revenue").cloned().unwrap_or(Value::Null);
     let selfcheck = value.get("selfcheck").cloned().unwrap_or(Value::Null);
 
-    let agents = progress.get("agents").and_then(|a| a.as_array()).map(|a| a.len()).unwrap_or(0);
-    let delivered = progress.get("messages_delivered").and_then(|v| v.as_u64()).unwrap_or(0);
-    let refusals = progress.get("refusal_count").and_then(|v| v.as_u64()).unwrap_or(0);
+    let agents = progress
+        .get("agents")
+        .and_then(|a| a.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let delivered = progress
+        .get("messages_delivered")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let refusals = progress
+        .get("refusal_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let now = progress.get("now").and_then(|v| v.as_u64()).unwrap_or(0);
-    let total = revenue.get("total").and_then(|v| v.get("0")).and_then(|v| v.as_i64());
+    let total = revenue
+        .get("total")
+        .and_then(|v| v.get("0"))
+        .and_then(|v| v.as_i64());
     let total_txt = total
         .map(|t| t.to_string())
         .or_else(|| revenue.get("total").map(|t| t.to_string()))
         .unwrap_or_else(|| "—".to_string());
-    let minted = revenue.get("minted").map(|v| v.to_string()).unwrap_or_else(|| "—".into());
-    let slashed = revenue.get("slashed").map(|v| v.to_string()).unwrap_or_else(|| "—".into());
-    let checks_passed = selfcheck.get("passed").and_then(|v| v.as_u64()).unwrap_or(0);
+    let minted = revenue
+        .get("minted")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "—".into());
+    let slashed = revenue
+        .get("slashed")
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| "—".into());
+    let checks_passed = selfcheck
+        .get("passed")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let checks_total = selfcheck.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
 
     let escalation = json!({
@@ -275,7 +313,9 @@ fn pretty(v: &Value) -> String {
 }
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// 用一次真实 HTTP 请求读一个端点（测试与部署验证共用）。
@@ -329,7 +369,9 @@ mod tests {
         }
         // 路由表里不存在任何以写方法命名的入口
         let joined = ROUTES.join(" ");
-        for forbidden in ["POST", "PUT", "PATCH", "DELETE", "set", "update", "write", "admin"] {
+        for forbidden in [
+            "POST", "PUT", "PATCH", "DELETE", "set", "update", "write", "admin",
+        ] {
             assert!(!joined.contains(forbidden), "路由表包含写语义：{forbidden}");
         }
     }
@@ -383,7 +425,9 @@ mod tests {
         // 结构性证据：路由表本身就是全部入口；没有任何一条带写语义的名字。
         assert_eq!(ROUTES.len(), 6);
         let joined = ROUTES.join(" ");
-        for forbidden in ["write", "update", "set", "delete", "create", "admin", "approve"] {
+        for forbidden in [
+            "write", "update", "set", "delete", "create", "admin", "approve",
+        ] {
             assert!(!joined.to_lowercase().contains(forbidden), "{forbidden}");
         }
         assert_eq!(ALLOWED_METHOD, "GET");

@@ -122,8 +122,8 @@ fn claims_json_matches_the_table() {
 #[test]
 fn the_track_metadata_is_machine_readable_and_graded() {
     let path = repo_root().join("docs").join("tracks").join("1.7.json");
-    let text = fs::read_to_string(&path)
-        .unwrap_or_else(|err| panic!("读不到 {}: {err}", path.display()));
+    let text =
+        fs::read_to_string(&path).unwrap_or_else(|err| panic!("读不到 {}: {err}", path.display()));
     let value: serde_json::Value = serde_json::from_str(&text).expect("1.7.json 必须是合法 JSON");
     assert_eq!(value["track"], "1.7");
     assert_eq!(value["crate"], "au4a-council");
@@ -145,14 +145,18 @@ fn the_track_metadata_is_machine_readable_and_graded() {
         let passed = row["evidence"]["tests_passed"].as_u64().unwrap_or(0);
         let total = row["evidence"]["tests_total"].as_u64().unwrap_or(0);
         assert!(total > 0 && passed == total, "{version} 的测试数不自洽");
-        assert!(!row["acceptance"].as_array().map(|a| a.is_empty()).unwrap_or(true));
+        assert!(!row["acceptance"]
+            .as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(true));
     }
 }
 
 #[test]
 fn the_markdown_doc_covers_every_version_section() {
     let path = repo_root().join("docs").join("tracks").join("1.7.md");
-    let text = fs::read_to_string(&path).unwrap_or_else(|err| panic!("读不到 {}: {err}", path.display()));
+    let text =
+        fs::read_to_string(&path).unwrap_or_else(|err| panic!("读不到 {}: {err}", path.display()));
     for i in 1..=10 {
         let heading = format!("## v1.7.{i} ");
         assert!(text.contains(&heading), "缺少小节 {heading}");

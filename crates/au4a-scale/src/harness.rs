@@ -37,7 +37,11 @@ impl ExperimentConfig {
 
     /// 本轨道的标准档位：10 / 100 / 1k / 10k。
     pub fn default_tiers() -> Self {
-        Self::new(vec![10, 100, 1_000, 10_000], ScalingParams::default(), 20_000)
+        Self::new(
+            vec![10, 100, 1_000, 10_000],
+            ScalingParams::default(),
+            20_000,
+        )
     }
 
     pub fn validate(&self) -> CoreResult<()> {
@@ -167,16 +171,34 @@ mod tests {
         let report = run(&config()).unwrap();
         let params = &report.config.params;
         for row in &report.rows {
-            assert_eq!(row.per_node_milli, effective_per_node_milli(row.nodes, params).unwrap());
-            assert_eq!(row.aggregate_milli, aggregate_throughput_milli(row.nodes, params).unwrap());
-            assert_eq!(row.overhead_milli, orchestration_overhead_milli(row.nodes, params).unwrap());
-            assert_eq!(row.net_milli, net_throughput_milli(row.nodes, params).unwrap());
+            assert_eq!(
+                row.per_node_milli,
+                effective_per_node_milli(row.nodes, params).unwrap()
+            );
+            assert_eq!(
+                row.aggregate_milli,
+                aggregate_throughput_milli(row.nodes, params).unwrap()
+            );
+            assert_eq!(
+                row.overhead_milli,
+                orchestration_overhead_milli(row.nodes, params).unwrap()
+            );
+            assert_eq!(
+                row.net_milli,
+                net_throughput_milli(row.nodes, params).unwrap()
+            );
             assert_eq!(
                 row.completion_bp,
                 completion_bp(row.nodes, params, report.config.demand_milli).unwrap()
             );
-            assert_eq!(row.overhead_ratio_bp, overhead_ratio_bp(row.nodes, params).unwrap());
-            assert_eq!(row.marginal_gain_milli, marginal_gain_milli(row.nodes, params).unwrap());
+            assert_eq!(
+                row.overhead_ratio_bp,
+                overhead_ratio_bp(row.nodes, params).unwrap()
+            );
+            assert_eq!(
+                row.marginal_gain_milli,
+                marginal_gain_milli(row.nodes, params).unwrap()
+            );
         }
     }
 
@@ -202,8 +224,15 @@ mod tests {
         let report = run(&config).unwrap();
         let first_step = report.row(10).unwrap().step_gain_milli;
         assert!(first_step > 0);
-        assert!(report.row(1_000).unwrap().step_gain_milli < 0, "峰后档位收益必须转负");
-        assert_eq!(report.row(10_000).unwrap().step_gain_milli, 0, "最后一档没有下一步");
+        assert!(
+            report.row(1_000).unwrap().step_gain_milli < 0,
+            "峰后档位收益必须转负"
+        );
+        assert_eq!(
+            report.row(10_000).unwrap().step_gain_milli,
+            0,
+            "最后一档没有下一步"
+        );
     }
 
     #[test]
@@ -248,7 +277,12 @@ mod tests {
             Some(CoreError::ZeroAmount)
         );
         assert_eq!(
-            run(&ExperimentConfig::new(vec![10], ScalingParams::new(0, 2, 1, 1), 1_000)).err(),
+            run(&ExperimentConfig::new(
+                vec![10],
+                ScalingParams::new(0, 2, 1, 1),
+                1_000
+            ))
+            .err(),
             Some(CoreError::InvalidKind)
         );
     }

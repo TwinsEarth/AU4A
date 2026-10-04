@@ -34,14 +34,14 @@ pub use cluster::{
 };
 pub use collect::{collect, sweep, DataBundle, Record, ScenarioSpec};
 pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
-pub use paper::{paper_json, paper_summary};
-pub use schema::{schema_json, schema_summary};
-pub use verdict::{adjudicate, CapacityVerdict, VerdictKind, VerdictReason};
 pub use metrics::{
     aggregate_throughput_milli, analytic_vertex_floor, completion_bp, coordination_base,
     effective_per_node_milli, interaction_complexity, marginal_gain_milli, net_throughput_milli,
     orchestration_overhead_milli, overhead_ratio_bp, ScalingParams,
 };
+pub use paper::{paper_json, paper_summary};
+pub use schema::{schema_json, schema_summary};
+pub use verdict::{adjudicate, CapacityVerdict, VerdictKind, VerdictReason};
 
 /// 轨道号。
 pub const TRACK: &str = "1.9";
@@ -226,31 +226,31 @@ pub fn self_check() -> Vec<SelfCheck> {
     });
 
     // v1.9.5：数据收集必须确定性且内容寻址。
-    checks.push(match collect(&[
-        ScenarioSpec::new(
+    checks.push(
+        match collect(&[ScenarioSpec::new(
             "baseline",
             TIERS.to_vec(),
             ScalingParams::default(),
             20_000,
-        ),
-    ]) {
-        Ok(bundle) => match bundle.recompute_digest() {
-            Ok(recomputed) if recomputed == bundle.digest && bundle.len() == TIERS.len() => {
-                SelfCheck::pass(
-                    TRACK,
-                    "collect.content_addressed",
-                    format!(
-                        "{} 条记录，digest={} 可独立复算",
-                        bundle.len(),
-                        au4a_core::short_id(&bundle.digest)
-                    ),
-                )
-            }
-            Ok(_) => SelfCheck::fail(TRACK, "collect.content_addressed", "digest 复算不一致"),
+        )]) {
+            Ok(bundle) => match bundle.recompute_digest() {
+                Ok(recomputed) if recomputed == bundle.digest && bundle.len() == TIERS.len() => {
+                    SelfCheck::pass(
+                        TRACK,
+                        "collect.content_addressed",
+                        format!(
+                            "{} 条记录，digest={} 可独立复算",
+                            bundle.len(),
+                            au4a_core::short_id(&bundle.digest)
+                        ),
+                    )
+                }
+                Ok(_) => SelfCheck::fail(TRACK, "collect.content_addressed", "digest 复算不一致"),
+                Err(err) => SelfCheck::fail(TRACK, "collect.content_addressed", err.to_string()),
+            },
             Err(err) => SelfCheck::fail(TRACK, "collect.content_addressed", err.to_string()),
         },
-        Err(err) => SelfCheck::fail(TRACK, "collect.content_addressed", err.to_string()),
-    });
+    );
 
     // v1.9.4：容量顶点裁决必须复现，且原因码与数值一致。
     checks.push({
@@ -310,36 +310,42 @@ pub fn self_check() -> Vec<SelfCheck> {
                 SelfCheck::fail(
                     TRACK,
                     "cluster.bounded_evaluation",
-                    format!("求值 {} 次，超出预算 {}", report.evaluations, evaluation_budget()),
+                    format!(
+                        "求值 {} 次，超出预算 {}",
+                        report.evaluations,
+                        evaluation_budget()
+                    ),
                 )
             }
         }
         Err(err) => SelfCheck::fail(TRACK, "cluster.bounded_evaluation", err.to_string()),
     });
     // v1.9.2：实验框架必须确定性且内容寻址。
-    checks.push(match (
-        harness::run(&ExperimentConfig::default_tiers()),
-        harness::run(&ExperimentConfig::default_tiers()),
-    ) {
-        (Ok(first), Ok(second)) => {
-            if first == second && first.digest == second.digest && first.digest.len() == 64 {
-                SelfCheck::pass(
-                    TRACK,
-                    "harness.deterministic",
-                    format!(
-                        "同一配置两次 run 完全相同，digest={} 覆盖 {} 个档位",
-                        au4a_core::short_id(&first.digest),
-                        first.rows.len()
-                    ),
-                )
-            } else {
-                SelfCheck::fail(TRACK, "harness.deterministic", "两次 run 结果不一致")
+    checks.push(
+        match (
+            harness::run(&ExperimentConfig::default_tiers()),
+            harness::run(&ExperimentConfig::default_tiers()),
+        ) {
+            (Ok(first), Ok(second)) => {
+                if first == second && first.digest == second.digest && first.digest.len() == 64 {
+                    SelfCheck::pass(
+                        TRACK,
+                        "harness.deterministic",
+                        format!(
+                            "同一配置两次 run 完全相同，digest={} 覆盖 {} 个档位",
+                            au4a_core::short_id(&first.digest),
+                            first.rows.len()
+                        ),
+                    )
+                } else {
+                    SelfCheck::fail(TRACK, "harness.deterministic", "两次 run 结果不一致")
+                }
             }
-        }
-        (Err(err), _) | (_, Err(err)) => {
-            SelfCheck::fail(TRACK, "harness.deterministic", err.to_string())
-        }
-    });
+            (Err(err), _) | (_, Err(err)) => {
+                SelfCheck::fail(TRACK, "harness.deterministic", err.to_string())
+            }
+        },
+    );
 
     checks
 }
@@ -378,7 +384,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         config.params,
         config.demand_milli,
     )])?;
-    let fit_report = fit(&bundle, &FitSearch::around(config.params.n0, 500, 10, vec![1, 2, 3]))?;
+    let fit_report = fit(
+        &bundle,
+        &FitSearch::around(config.params.n0, 500, 10, vec![1, 2, 3]),
+    )?;
 
     kernel.emit(
         &format!("{TRACK}.scenario"),

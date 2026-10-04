@@ -89,8 +89,14 @@ mod tests {
         let schema = schema_json().unwrap();
         assert_eq!(schema["track"], json!("1.9"));
         assert_eq!(schema["tiers"], json!(TIERS));
-        assert_eq!(schema["budgets"]["max_scan_samples"], json!(MAX_SCAN_SAMPLES));
-        assert_eq!(schema["budgets"]["evaluation_budget"], json!(evaluation_budget()));
+        assert_eq!(
+            schema["budgets"]["max_scan_samples"],
+            json!(MAX_SCAN_SAMPLES)
+        );
+        assert_eq!(
+            schema["budgets"]["evaluation_budget"],
+            json!(evaluation_budget())
+        );
         assert_eq!(
             schema["verdict"]["kinds"].as_array().unwrap().len(),
             VerdictKind::ALL.len()

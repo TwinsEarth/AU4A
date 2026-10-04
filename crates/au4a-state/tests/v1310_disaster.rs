@@ -26,7 +26,12 @@ fn state(seed: u8, v: i64) -> StateSnapshot {
         StateBlock::new(StateZone::Fs, "/work/b", json!({"v": v * 2})).unwrap(),
         StateBlock::new(StateZone::Memory, "counter", json!(v)).unwrap(),
         StateBlock::new(StateZone::Memory, "last_task", json!(format!("t{v}"))).unwrap(),
-        StateBlock::new(StateZone::Context, "goal", json!({"text": "灾后继续", "v": v})).unwrap(),
+        StateBlock::new(
+            StateZone::Context,
+            "goal",
+            json!({"text": "灾后继续", "v": v}),
+        )
+        .unwrap(),
     ];
     StateSnapshot::capture(&agent(seed).did(), "node-a", v as u64, blocks).unwrap()
 }
@@ -85,7 +90,9 @@ fn a_corrupted_backup_is_refused_instead_of_restored() {
     // 介质损坏（一块的值被改）：拒绝，而不是「尽力恢复」。
     let mut corrupted = MemoryStore::new();
     write_snapshot(&mut corrupted, "backup:", &source).unwrap();
-    corrupted.put("backup:memory:counter", json!({"v": 999})).unwrap();
+    corrupted
+        .put("backup:memory:counter", json!({"v": 999}))
+        .unwrap();
     assert_eq!(
         au4a_state::verify_media(&corrupted, "backup:", &signed, &policy),
         Err(CoreError::InvalidSignature)
@@ -168,7 +175,10 @@ fn every_fault_point_can_be_survived_by_backup_plus_retry() {
             .expecting_content_root(source.content_root().unwrap())
             .with_min_epoch(1);
         let restored = backup.verify(&policy).unwrap();
-        assert_eq!(restored.content_root().unwrap(), source.content_root().unwrap());
+        assert_eq!(
+            restored.content_root().unwrap(),
+            source.content_root().unwrap()
+        );
 
         // 用 2PC 在恢复出的 base 上做一次迁移，并在指定阶段注入故障。
         let delta = StateDelta::between(&source, &evolved).unwrap();
@@ -199,7 +209,11 @@ fn every_fault_point_can_be_survived_by_backup_plus_retry() {
         )
         .unwrap();
         assert!(!first.is_confirmed(), "{point:?}");
-        assert_eq!(node.live_content_root().unwrap(), source.content_root().unwrap(), "{point:?}");
+        assert_eq!(
+            node.live_content_root().unwrap(),
+            source.content_root().unwrap(),
+            "{point:?}"
+        );
         // 重试。
         let second = au4a_state::migrate(
             &mut node,
@@ -247,7 +261,9 @@ fn capability_coverage_is_still_complete_after_the_last_version() {
 fn scenario_carries_the_drill_evidence() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(8);
-    kernel.register(&keys, "carrier", &["state.disaster"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.disaster"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["disaster"]["backup_verified"], json!(true));
     assert_eq!(out["disaster"]["source_lost"], json!(true));

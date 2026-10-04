@@ -28,7 +28,15 @@ fn the_human_entry_surface_can_be_enumerated_and_contains_no_write_path() {
         assert_eq!(route["writable"], false);
         assert_eq!(route["effects"].as_array().map(|a| a.len()), Some(0));
         let name = route["route"].as_str().unwrap_or("");
-        for verb in ["write", "approve", "grant", "schedule", "price", "adjudicate", "propose"] {
+        for verb in [
+            "write",
+            "approve",
+            "grant",
+            "schedule",
+            "price",
+            "adjudicate",
+            "propose",
+        ] {
             assert!(!name.contains(verb), "人类入口里出现了写动词：{name}");
         }
     }
@@ -90,7 +98,11 @@ fn three_projections_show_progress_results_and_yield() {
 fn the_kernel_self_check_includes_real_observer_checks() {
     let k = rich_kernel();
     let checks = k.self_check();
-    assert!(all_passed(&checks), "{:?}", checks.iter().filter(|c| !c.passed).collect::<Vec<_>>());
+    assert!(
+        all_passed(&checks),
+        "{:?}",
+        checks.iter().filter(|c| !c.passed).collect::<Vec<_>>()
+    );
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     for expected in [
         "observer.routes",
@@ -114,11 +126,22 @@ fn the_report_contains_no_command_channel() {
     let report = Observer::report(&k).json();
     let text = serde_json::to_string(&report).unwrap_or_default();
     // 报告是给人看的投影：里面不能有「待批准」「操作指令」这类东西。
-    for forbidden in ["pending_approval", "commands", "mutations", "actions_to_apply"] {
-        assert!(!text.contains(forbidden), "报告里出现了指令通道：{forbidden}");
+    for forbidden in [
+        "pending_approval",
+        "commands",
+        "mutations",
+        "actions_to_apply",
+    ] {
+        assert!(
+            !text.contains(forbidden),
+            "报告里出现了指令通道：{forbidden}"
+        );
     }
     // 但报告必须真的包含三个面板。
-    let projections = report["projections"].as_array().cloned().unwrap_or_default();
+    let projections = report["projections"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let names: Vec<String> = projections
         .iter()
         .filter_map(|p| p["route"].as_str().map(|s| s.to_string()))

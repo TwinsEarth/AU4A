@@ -248,7 +248,9 @@ impl LearningSignal {
         // 违规必须严格降低综合信号；一条违规 = 2500bp × 1000/10000 = 250bp
         let with_violation = LearningSignal::compute(5_000, Credits(50), 50, 1, &weights);
         let violation_ok = match (&base, &with_violation) {
-            (Ok(b), Ok(v)) => v.composite_bp == b.composite_bp - 250 && v.violation_norm_bp == 2_500,
+            (Ok(b), Ok(v)) => {
+                v.composite_bp == b.composite_bp - 250 && v.violation_norm_bp == 2_500
+            }
             _ => false,
         };
         checks.push(crate::check(
@@ -268,7 +270,9 @@ impl LearningSignal {
         checks.push(crate::check(
             "signal.clamped",
             capped && neg,
-            format!("结算归一封顶 10000bp：{capped}；负信誉钳制到 -10000bp 且综合为 -1500bp：{neg}"),
+            format!(
+                "结算归一封顶 10000bp：{capped}；负信誉钳制到 -10000bp 且综合为 -1500bp：{neg}"
+            ),
         ));
 
         // 非法权重：负数 / 和超过 10000 / 分母为 0

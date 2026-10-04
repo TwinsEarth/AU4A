@@ -7,7 +7,7 @@
 use au4a_core::{AgentKeys, CoreError, Credits, EvidenceGrade};
 use au4a_kernel::{Kernel, KernelConfig};
 use au4a_state::{
-    bundle_fingerprint, contract_descriptor, context_to_transfer_bundle, delta_to_object,
+    bundle_fingerprint, context_to_transfer_bundle, contract_descriptor, delta_to_object,
     object_to_delta, object_to_snapshot, self_check, snapshot_to_object, transfer_bundle_to_blocks,
     udos, StateBlock, StateDelta, StateSnapshot, StateZone, UdosObject, UDOS_SCHEMA,
 };
@@ -36,7 +36,10 @@ fn a_snapshot_exports_as_a_self_verifying_udos_object() {
     assert_eq!(object["kind"], json!("state.snapshot"));
     assert_eq!(object["collection"], json!("au4a/state/snapshots"));
     assert_eq!(object["grade"], json!("verified"));
-    assert_eq!(object["provenance"]["agent"], json!(agent(1).did().as_str()));
+    assert_eq!(
+        object["provenance"]["agent"],
+        json!(agent(1).did().as_str())
+    );
     assert_eq!(object["provenance"]["node"], json!("node-a"));
     assert_eq!(object["provenance"]["epoch"], json!(5));
     // 摘要格式对齐 UDOS file_digest：`sha256:<hex>`。
@@ -58,7 +61,10 @@ fn the_object_roundtrips_back_to_the_identical_snapshot() {
     let object = snapshot_to_object(&snapshot).unwrap();
     let back = object_to_snapshot(&object).unwrap();
     assert_eq!(back.root(), snapshot.root());
-    assert_eq!(back.content_root().unwrap(), snapshot.content_root().unwrap());
+    assert_eq!(
+        back.content_root().unwrap(),
+        snapshot.content_root().unwrap()
+    );
     assert_eq!(back.blocks(), snapshot.blocks());
 }
 
@@ -76,7 +82,10 @@ fn tampering_is_caught_by_the_object_id_alone() {
 
     let mut id_changed = object.clone();
     id_changed["object_id"] = json!(format!("sha256:{}", "00".repeat(32)));
-    assert_eq!(UdosObject::validate(&id_changed), Err(CoreError::InvalidSignature));
+    assert_eq!(
+        UdosObject::validate(&id_changed),
+        Err(CoreError::InvalidSignature)
+    );
 }
 
 #[test]
@@ -85,11 +94,17 @@ fn schema_kind_and_grade_are_closed_sets() {
 
     let mut wrong_schema = object.clone();
     wrong_schema["schema"] = json!("udos.object/2");
-    assert_eq!(UdosObject::validate(&wrong_schema), Err(CoreError::InvalidVersion));
+    assert_eq!(
+        UdosObject::validate(&wrong_schema),
+        Err(CoreError::InvalidVersion)
+    );
 
     let mut wrong_kind = object.clone();
     wrong_kind["kind"] = json!("state.whatever");
-    assert_eq!(UdosObject::validate(&wrong_kind), Err(CoreError::InvalidKind));
+    assert_eq!(
+        UdosObject::validate(&wrong_kind),
+        Err(CoreError::InvalidKind)
+    );
 
     let mut wrong_grade = object.clone();
     wrong_grade["grade"] = json!("高可信");
@@ -97,7 +112,10 @@ fn schema_kind_and_grade_are_closed_sets() {
 
     let mut no_provenance = object;
     no_provenance["provenance"] = json!("node-a");
-    assert_eq!(UdosObject::validate(&no_provenance), Err(CoreError::Encoding));
+    assert_eq!(
+        UdosObject::validate(&no_provenance),
+        Err(CoreError::Encoding)
+    );
 }
 
 #[test]
@@ -127,7 +145,10 @@ fn deltas_export_and_import_with_identical_ids() {
     let object = delta_to_object(&delta).unwrap();
     assert_eq!(object["kind"], json!("state.delta"));
     assert_eq!(object["collection"], json!("au4a/state/deltas"));
-    assert_eq!(object["provenance"]["from"], json!(delta.from_content_root()));
+    assert_eq!(
+        object["provenance"]["from"],
+        json!(delta.from_content_root())
+    );
     assert_eq!(object["provenance"]["to"], json!(delta.to_content_root()));
 
     let back = object_to_delta(&object).unwrap();
@@ -157,10 +178,16 @@ fn the_context_zone_is_exchangeable_as_a_udos_transfer_bundle() {
     }
     // 指纹是规范 JSON 哈希：对键序不敏感。
     let a = bundle_fingerprint(&bundle).unwrap();
-    let reordered: serde_json::Value =
-        serde_json::from_str(&format!("{{\"trace\":{},\"owner\":{},\"done\":{},\"context\":{},\"todo\":{},\"goal\":{}}}",
-            bundle["trace"], bundle["owner"], bundle["done"], bundle["context"], bundle["todo"], bundle["goal"]))
-        .unwrap();
+    let reordered: serde_json::Value = serde_json::from_str(&format!(
+        "{{\"trace\":{},\"owner\":{},\"done\":{},\"context\":{},\"todo\":{},\"goal\":{}}}",
+        bundle["trace"],
+        bundle["owner"],
+        bundle["done"],
+        bundle["context"],
+        bundle["todo"],
+        bundle["goal"]
+    ))
+    .unwrap();
     assert_eq!(bundle_fingerprint(&reordered).unwrap(), a);
     // 逆映射回到上下文区（本样例中 goal 是字符串，往返无损）。
     let rebuilt = StateSnapshot::capture(
@@ -197,7 +224,10 @@ fn claims_reference_an_algorithm_prefixed_artifact_digest() {
     .unwrap();
     assert_eq!(claim["kind"], json!("state.claim"));
     assert_eq!(claim["payload"]["artifact_digest"], json!(digest));
-    assert_eq!(claim["payload"]["method"], json!("cargo test -p au4a-state"));
+    assert_eq!(
+        claim["payload"]["method"],
+        json!("cargo test -p au4a-state")
+    );
     // 只接受 `sha256:` 前缀的摘要。
     assert_eq!(
         udos::claim("k", "s", EvidenceGrade::Verified, "md5:abcd"),
@@ -235,7 +265,10 @@ fn evidence_grades_match_the_udos_names_exactly() {
     ] {
         assert_eq!(EvidenceGrade::parse(grade.as_str()), Some(grade));
     }
-    assert_eq!(EvidenceGrade::parse("cpu-proto"), Some(EvidenceGrade::CpuProto));
+    assert_eq!(
+        EvidenceGrade::parse("cpu-proto"),
+        Some(EvidenceGrade::CpuProto)
+    );
     assert_eq!(EvidenceGrade::parse("cpu_proto"), None);
 }
 
@@ -253,7 +286,9 @@ fn self_check_covers_the_udos_contract() {
 fn scenario_exports_the_migrated_state_as_udos_objects() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(10);
-    kernel.register(&keys, "carrier", &["state.export"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.export"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["udos"]["schema"], json!(UDOS_SCHEMA));
     assert_eq!(out["udos"]["roundtrip_identical"], json!(true));

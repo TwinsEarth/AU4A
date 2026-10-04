@@ -85,10 +85,7 @@ impl MessageClass {
 
     /// 这一类是否允许广播（`to = None`）。
     pub fn broadcastable(self) -> bool {
-        matches!(
-            self,
-            MessageClass::Announce | MessageClass::Telemetry
-        )
+        matches!(self, MessageClass::Announce | MessageClass::Telemetry)
     }
 }
 
@@ -185,7 +182,11 @@ impl PmbRouter {
 
         // 1. 先验签：签名（或身份）不成立是恶意，单次即成立。
         if let Err(err) = env.verify() {
-            return self.refuse(decision, RefusalCode::Unauthorized, format!("信封不可信：{err}"));
+            return self.refuse(
+                decision,
+                RefusalCode::Unauthorized,
+                format!("信封不可信：{err}"),
+            );
         }
 
         // 2. 发送者必须在册。
@@ -221,7 +222,11 @@ impl PmbRouter {
             return self.refuse(
                 decision,
                 RefusalCode::StaleEpoch,
-                format!("信封时刻 {} 落后当前 {} 超过 {MAX_LAG}", env.ts, kernel.now()),
+                format!(
+                    "信封时刻 {} 落后当前 {} 超过 {MAX_LAG}",
+                    env.ts,
+                    kernel.now()
+                ),
             );
         }
 
@@ -409,8 +414,13 @@ mod tests {
     fn kernel_with(n: u8) -> Kernel {
         let mut k = Kernel::new(KernelConfig::default());
         for i in 0..n {
-            k.register(&keys(120 + i), format!("agent-{i}"), &["skill.a"], Credits(20))
-                .unwrap();
+            k.register(
+                &keys(120 + i),
+                format!("agent-{i}"),
+                &["skill.a"],
+                Credits(20),
+            )
+            .unwrap();
         }
         k
     }
@@ -418,12 +428,30 @@ mod tests {
     #[test]
     fn kinds_classify_into_five_semantic_classes() {
         assert_eq!(classify_kind(kinds_ext::AGENT_CARD), MessageClass::Announce);
-        assert_eq!(classify_kind(kinds_ext::NEGOTIATE_OFFER), MessageClass::Negotiation);
-        assert_eq!(classify_kind(kinds_ext::NEGOTIATE_DECLINE), MessageClass::Negotiation);
-        assert_eq!(classify_kind(kinds_ext::SETTLE_REQUEST), MessageClass::Settlement);
-        assert_eq!(classify_kind(kinds_ext::COUNCIL_MOTION), MessageClass::Governance);
-        assert_eq!(classify_kind(kinds_ext::COUNCIL_VOTE), MessageClass::Governance);
-        assert_eq!(classify_kind(kinds_ext::PROGRESS_EVENT), MessageClass::Telemetry);
+        assert_eq!(
+            classify_kind(kinds_ext::NEGOTIATE_OFFER),
+            MessageClass::Negotiation
+        );
+        assert_eq!(
+            classify_kind(kinds_ext::NEGOTIATE_DECLINE),
+            MessageClass::Negotiation
+        );
+        assert_eq!(
+            classify_kind(kinds_ext::SETTLE_REQUEST),
+            MessageClass::Settlement
+        );
+        assert_eq!(
+            classify_kind(kinds_ext::COUNCIL_MOTION),
+            MessageClass::Governance
+        );
+        assert_eq!(
+            classify_kind(kinds_ext::COUNCIL_VOTE),
+            MessageClass::Governance
+        );
+        assert_eq!(
+            classify_kind(kinds_ext::PROGRESS_EVENT),
+            MessageClass::Telemetry
+        );
         assert_eq!(classify_kind("totally.made.up"), MessageClass::Unknown);
         assert!(MessageClass::Announce.broadcastable());
         assert!(!MessageClass::Governance.broadcastable());
@@ -484,10 +512,17 @@ mod tests {
         let mut router = PmbRouter::new();
 
         // 未知类型 → unsupported。
-        let unknown = Envelope::new(keys(120).did(), Some(keys(121).did()), "made.up.kind", 0, None, json!({}))
-            .unwrap()
-            .seal(&keys(120))
-            .unwrap();
+        let unknown = Envelope::new(
+            keys(120).did(),
+            Some(keys(121).did()),
+            "made.up.kind",
+            0,
+            None,
+            json!({}),
+        )
+        .unwrap()
+        .seal(&keys(120))
+        .unwrap();
         let decision = router.admit(&k, &unknown);
         assert_eq!(decision.code, Some(RefusalCode::Unsupported));
         assert!(!decision.code.map(|c| c.is_misconduct()).unwrap_or(true));
@@ -530,7 +565,9 @@ mod tests {
         let decision = router.admit(&k, &env);
         assert!(decision.accepted);
         assert_eq!(decision.recipients.len(), 3);
-        assert!(!decision.recipients.contains(&keys(120).did().as_str().to_string()));
+        assert!(!decision
+            .recipients
+            .contains(&keys(120).did().as_str().to_string()));
         assert_eq!(router.stats().broadcasts, 1);
         assert_eq!(router.stats().by_class.get("telemetry").copied(), Some(1));
     }
@@ -552,7 +589,10 @@ mod tests {
         assert_eq!(back.id, env.id);
 
         // 截断帧与超限帧被基元层拒绝。
-        assert_eq!(decode_and_verify(&frame[..2]), Err(CoreError::FrameTruncated));
+        assert_eq!(
+            decode_and_verify(&frame[..2]),
+            Err(CoreError::FrameTruncated)
+        );
         let mut oversized = Vec::from((MAX_FRAME as u32 + 1).to_be_bytes());
         oversized.extend_from_slice(b"{}");
         assert_eq!(decode_and_verify(&oversized), Err(CoreError::FrameTooLarge));
@@ -564,11 +604,21 @@ mod tests {
             let mut k = kernel_with(3);
             let mut router = PmbRouter::new();
             let mut decisions = Vec::new();
-            decisions.push(router.admit(&k, &progress(&keys(120), None, 0, "a", json!({})).unwrap()));
-            decisions.push(router.admit(
-                &k,
-                &settle_request(&keys(121), keys(120).did(), 0, Credits(3), EvidenceGrade::Verified).unwrap(),
-            ));
+            decisions
+                .push(router.admit(&k, &progress(&keys(120), None, 0, "a", json!({})).unwrap()));
+            decisions.push(
+                router.admit(
+                    &k,
+                    &settle_request(
+                        &keys(121),
+                        keys(120).did(),
+                        0,
+                        Credits(3),
+                        EvidenceGrade::Verified,
+                    )
+                    .unwrap(),
+                ),
+            );
             decisions.push(router.admit(
                 &k,
                 &council_vote(&keys(122), keys(121).did(), 0, "m1", "uphold").unwrap(),

@@ -34,9 +34,7 @@ use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
 pub use appeal::Appeal;
-pub use arbitration::{
-    ArbitrationRequest, ArbitrationVerdict, CaseOutcome, VerdictOutcome,
-};
+pub use arbitration::{ArbitrationRequest, ArbitrationVerdict, CaseOutcome, VerdictOutcome};
 pub use audit::{verify_journal, AuditCode, AuditFinding, AuditReport, ReplayState};
 pub use case::{Case, CaseStatus, ViolationKind, ViolationReport};
 pub use chain::{
@@ -51,11 +49,11 @@ pub use permission::{
     query_permissions, stake_requirement, DenialReason, DeniedPermission, Permission,
     PermissionBoundary, PermissionQuery, StakeGate,
 };
+pub use pmb::kinds as safety_kinds;
 pub use pmb::{
     appeal_envelope, classify as classify_safety_message, query_envelope, receipt_envelope,
     report_envelope, SafetyMessage,
 };
-pub use pmb::kinds as safety_kinds;
 pub use schema::{schema_json, schema_summary};
 pub use setup::{ensure_agent, keys as role_keys, seed as role_seed};
 
@@ -139,7 +137,9 @@ pub fn self_check() -> Vec<SelfCheck> {
         Ok((subscriber, bystander)) => SelfCheck::pass(
             TRACK,
             "notify.subscription_scoped",
-            format!("订阅者收到 {subscriber} 条通知、旁观者收到 {bystander} 条（未订阅状态不投递）"),
+            format!(
+                "订阅者收到 {subscriber} 条通知、旁观者收到 {bystander} 条（未订阅状态不投递）"
+            ),
         ),
         Err(err) => SelfCheck::fail(TRACK, "notify.subscription_scoped", err.to_string()),
     });
@@ -149,7 +149,9 @@ pub fn self_check() -> Vec<SelfCheck> {
         Ok((receipts, refused)) => SelfCheck::pass(
             TRACK,
             "pmb.round_trip",
-            format!("{receipts} 个回执由服务身份签名并验签通过；经 PMB 的伪造证据被拒 {refused} 次"),
+            format!(
+                "{receipts} 个回执由服务身份签名并验签通过；经 PMB 的伪造证据被拒 {refused} 次"
+            ),
         ),
         Err(err) => SelfCheck::fail(TRACK, "pmb.round_trip", err.to_string()),
     });
@@ -216,8 +218,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(
         if !probe_boundary.registered
             && probe_boundary.allowed == vec![Permission::Register]
-            && probe_boundary.denial(Permission::SendMessage)
-                == Some(&DenialReason::NotRegistered)
+            && probe_boundary.denial(Permission::SendMessage) == Some(&DenialReason::NotRegistered)
         {
             SelfCheck::pass(
                 TRACK,
@@ -225,7 +226,11 @@ pub fn self_check() -> Vec<SelfCheck> {
                 "未注册 DID 只能自助注册，其余权限带 not_registered 码被拒",
             )
         } else {
-            SelfCheck::fail(TRACK, "permission.unregistered_is_structured", "未注册者的边界不结构化")
+            SelfCheck::fail(
+                TRACK,
+                "permission.unregistered_is_structured",
+                "未注册者的边界不结构化",
+            )
         },
     );
 
@@ -527,11 +532,21 @@ fn notification_isolation_probe() -> CoreResult<(usize, usize)> {
         vec![CaseStatus::Arbitrated],
     )?;
     let appeal_payloads = vec![json!({"probe": "notify-appeal", "ok": true})];
-    let appeal_refs = vec![EvidenceRef::commit(EvidenceKind::Witness, &appeal_payloads[0])?];
-    office.appeal(&mut kernel, &subject, &report.id, appeal_refs, &appeal_payloads)?;
+    let appeal_refs = vec![EvidenceRef::commit(
+        EvidenceKind::Witness,
+        &appeal_payloads[0],
+    )?];
+    office.appeal(
+        &mut kernel,
+        &subject,
+        &report.id,
+        appeal_refs,
+        &appeal_payloads,
+    )?;
 
     // 第三方不能替订阅者退订。
-    if office.unsubscribe(&mut kernel, &bystander, &watched.id) != Err(CoreError::InvalidSignature) {
+    if office.unsubscribe(&mut kernel, &bystander, &watched.id) != Err(CoreError::InvalidSignature)
+    {
         return Err(CoreError::InvalidSignature);
     }
     let subscriber_inbox = office.inbox(&reporter.did()).len();
@@ -784,10 +799,34 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let arbiter = role_keys(setup::ROLE_ARBITER);
     let service = role_keys(setup::ROLE_SERVICE);
 
-    ensure_agent(kernel, &reporter, "reporter-agent", &["audit.report"], Credits(20))?;
-    ensure_agent(kernel, &subject, "subject-agent", &["deliver.task"], Credits(20))?;
-    ensure_agent(kernel, &arbiter, "arbiter-agent", &["arbitrate.case"], Credits(20))?;
-    ensure_agent(kernel, &service, "safety-service", &["safety.api"], Credits(20))?;
+    ensure_agent(
+        kernel,
+        &reporter,
+        "reporter-agent",
+        &["audit.report"],
+        Credits(20),
+    )?;
+    ensure_agent(
+        kernel,
+        &subject,
+        "subject-agent",
+        &["deliver.task"],
+        Credits(20),
+    )?;
+    ensure_agent(
+        kernel,
+        &arbiter,
+        "arbiter-agent",
+        &["arbitrate.case"],
+        Credits(20),
+    )?;
+    ensure_agent(
+        kernel,
+        &service,
+        "safety-service",
+        &["safety.api"],
+        Credits(20),
+    )?;
 
     let config = SafetyConfig::single_arbiter(service.did(), arbiter.did());
     let mut office = SafetyOffice::new(config.clone(), service)?;
@@ -877,7 +916,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         && (expected_slash == Credits::ZERO || after_penalty != before);
 
     // 6) 被处罚方申诉：提交证据、推状态、写链——**不再动账本**。
-    let appeal_payloads = vec![json!({"task": "deliver-1", "receipt": "signed-by-receiver", "ok": true})];
+    let appeal_payloads =
+        vec![json!({"task": "deliver-1", "receipt": "signed-by-receiver", "ok": true})];
     let appeal_references = vec![EvidenceRef::commit(
         EvidenceKind::Witness,
         &appeal_payloads[0],
@@ -890,8 +930,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &appeal_payloads,
     )?;
     let after_appeal = ledger_snapshot(kernel, &participants);
-    let appeal_untouched = after_appeal == after_penalty
-        && office.status_of(&report.id) == Some(CaseStatus::Appealed);
+    let appeal_untouched =
+        after_appeal == after_penalty && office.status_of(&report.id) == Some(CaseStatus::Appealed);
     if !penalty_moved_ledger || !appeal_untouched {
         return Err(CoreError::Overflow);
     }

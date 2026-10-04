@@ -8,7 +8,7 @@
 
 use au4a_capgraph::{
     demo_agents, AgentCapabilityGraph, CapGraphConfig, Capability, CapabilityQuery, Declaration,
-    FormatId, PipelineRequest, PipelineStep, PlanCost, PlanOutcome, NoPathReason, SkillId,
+    FormatId, NoPathReason, PipelineRequest, PipelineStep, PlanCost, PlanOutcome, SkillId,
 };
 use au4a_core::{AgentKeys, Credits, Did, RefusalCode};
 use au4a_kernel::{Kernel, KernelConfig};
@@ -21,7 +21,13 @@ fn format(name: &str) -> FormatId {
     FormatId::new(name).expect("valid format")
 }
 
-fn capability(name: &str, price: i64, inputs: &[&str], outputs: &[&str], latency: (u32, u32)) -> Capability {
+fn capability(
+    name: &str,
+    price: i64,
+    inputs: &[&str],
+    outputs: &[&str],
+    latency: (u32, u32),
+) -> Capability {
     Capability::new(skill(name), Credits(price))
         .with_formats(inputs, outputs)
         .expect("valid formats")
@@ -59,8 +65,14 @@ fn a_two_step_pipeline_is_built_out_of_two_different_agents() {
     let outcome = graph.plan(&translation_then_sentiment(), &PlanCost::default(), 0);
     let pipeline = outcome.pipeline().expect("path exists");
     assert_eq!(pipeline.nodes.len(), 2);
-    assert_eq!(pipeline.nodes[0].did, dids[0], "bob 提供 application/json 的翻译");
-    assert_eq!(pipeline.nodes[1].did, dids[1], "carol 接受 application/json 的情感分析");
+    assert_eq!(
+        pipeline.nodes[0].did, dids[0],
+        "bob 提供 application/json 的翻译"
+    );
+    assert_eq!(
+        pipeline.nodes[1].did, dids[1],
+        "carol 接受 application/json 的情感分析"
+    );
     assert_eq!(pipeline.handoffs(), 1, "两个不同 Agent → 一次换手");
     assert_eq!(pipeline.total_price, Credits(5));
     assert_eq!(pipeline.total_latency_ms, 200, "90 + 110（空载时等于 p50）");
@@ -74,7 +86,10 @@ fn the_search_is_not_greedy_the_cheapest_first_hop_is_a_dead_end() {
     let dave = dids[2].clone();
     // 贪心第一步：最便宜的翻译提供者。
     let cheapest = graph
-        .query(&CapabilityQuery::new(skill("translate.en-zh")).with_limit(0), 0)
+        .query(
+            &CapabilityQuery::new(skill("translate.en-zh")).with_limit(0),
+            0,
+        )
         .matches
         .into_iter()
         .min_by_key(|m| m.capability.price_per_unit.get())
@@ -85,7 +100,10 @@ fn the_search_is_not_greedy_the_cheapest_first_hop_is_a_dead_end() {
     // 从它出发没有任何可接续的下一步。
     let dave_capability = cheapest.capability.clone();
     let successors = graph
-        .query(&CapabilityQuery::new(skill("sentiment.analyze")).with_limit(0), 0)
+        .query(
+            &CapabilityQuery::new(skill("sentiment.analyze")).with_limit(0),
+            0,
+        )
         .matches
         .iter()
         .filter(|m| dave_capability.handoff_format(&m.capability).is_some())
@@ -99,7 +117,11 @@ fn the_search_is_not_greedy_the_cheapest_first_hop_is_a_dead_end() {
         .expect("search beats greedy")
         .clone();
     assert_ne!(pipeline.nodes[0].did, dave);
-    assert_eq!(pipeline.nodes[0].price_per_unit, Credits(3), "为此多付 2 微积分是值得的");
+    assert_eq!(
+        pipeline.nodes[0].price_per_unit,
+        Credits(3),
+        "为此多付 2 微积分是值得的"
+    );
 }
 
 #[test]
@@ -113,7 +135,10 @@ fn format_compatibility_is_checked_on_every_handoff() {
             PipelineStep::new(skill("sentiment.analyze")),
         ],
     );
-    let pipeline = graph.plan(&request, &PlanCost::default(), 0).pipeline().cloned();
+    let pipeline = graph
+        .plan(&request, &PlanCost::default(), 0)
+        .pipeline()
+        .cloned();
     assert!(pipeline.is_some());
     let pipeline = pipeline.expect("path");
     assert_eq!(pipeline.nodes[0].output_format.as_str(), "application/json");
@@ -145,7 +170,11 @@ fn budget_and_deadline_are_independent_constraints() {
     let (mut graph, _) = demo_graph();
     let base = translation_then_sentiment();
     assert!(graph.plan(&base, &PlanCost::default(), 0).is_path());
-    match graph.plan(&base.clone().with_budget(Credits(4)), &PlanCost::default(), 0) {
+    match graph.plan(
+        &base.clone().with_budget(Credits(4)),
+        &PlanCost::default(),
+        0,
+    ) {
         PlanOutcome::NoPath(no_path) => {
             assert_eq!(no_path.reason, NoPathReason::BudgetExceeded { allowed: 4 });
             assert_eq!(no_path.refusal_code(), RefusalCode::PolicyDenied);
@@ -154,14 +183,20 @@ fn budget_and_deadline_are_independent_constraints() {
     }
     match graph.plan(&base.clone().with_deadline_ms(199), &PlanCost::default(), 0) {
         PlanOutcome::NoPath(no_path) => {
-            assert_eq!(no_path.reason, NoPathReason::DeadlineExceeded { allowed_ms: 199 });
+            assert_eq!(
+                no_path.reason,
+                NoPathReason::DeadlineExceeded { allowed_ms: 199 }
+            );
             assert_eq!(no_path.refusal_code(), RefusalCode::Timeout);
         }
         PlanOutcome::Path(p) => panic!("{:?}", p.to_value()),
     }
     // 恰好够：5 微积分 / 200ms。
     let exact = base.clone().with_budget(Credits(5)).with_deadline_ms(200);
-    let pipeline = graph.plan(&exact, &PlanCost::default(), 0).pipeline().cloned();
+    let pipeline = graph
+        .plan(&exact, &PlanCost::default(), 0)
+        .pipeline()
+        .cloned();
     assert!(pipeline.is_some());
     assert_eq!(pipeline.expect("pipeline").total_price, Credits(5));
 }
@@ -171,7 +206,11 @@ fn hard_constraints_remove_candidates_and_are_named() {
     let (mut graph, _) = demo_graph();
     let base = translation_then_sentiment();
     // 可靠度下限 9999：没有任何演示能力满足。
-    match graph.plan(&base.clone().with_min_reliability_bp(9_999), &PlanCost::default(), 0) {
+    match graph.plan(
+        &base.clone().with_min_reliability_bp(9_999),
+        &PlanCost::default(),
+        0,
+    ) {
         PlanOutcome::NoPath(no_path) => {
             assert!(matches!(
                 no_path.reason,
@@ -183,14 +222,26 @@ fn hard_constraints_remove_candidates_and_are_named() {
     }
     // 载荷超过 1 MiB 的硬上限。
     assert!(!graph
-        .plan(&base.clone().with_payload_bytes(u64::MAX), &PlanCost::default(), 0)
+        .plan(
+            &base.clone().with_payload_bytes(u64::MAX),
+            &PlanCost::default(),
+            0
+        )
         .is_path());
     assert!(graph
-        .plan(&base.clone().with_payload_bytes(1_024), &PlanCost::default(), 0)
+        .plan(
+            &base.clone().with_payload_bytes(1_024),
+            &PlanCost::default(),
+            0
+        )
         .is_path());
     // 区域：白名单为空的能让任何区域通过；显式限定不匹配的区域则被剔除。
     assert!(graph
-        .plan(&base.clone().with_region("eu-west"), &PlanCost::default(), 0)
+        .plan(
+            &base.clone().with_region("eu-west"),
+            &PlanCost::default(),
+            0
+        )
         .is_path());
 }
 
@@ -221,11 +272,47 @@ fn a_three_step_pipeline_walks_through_three_agents() {
     let owner = AgentKeys::from_seed(&[80; 32]);
     let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
     let chain = [
-        (81u8, capability("speech.transcribe", 9, &["audio/wav"], &["text/plain"], (400, 900))),
-        (82, capability("translate.en-zh", 3, &["text/plain"], &["application/json"], (90, 240))),
-        (83, capability("sentiment.analyze", 2, &["application/json"], &["application/json"], (110, 300))),
+        (
+            81u8,
+            capability(
+                "speech.transcribe",
+                9,
+                &["audio/wav"],
+                &["text/plain"],
+                (400, 900),
+            ),
+        ),
+        (
+            82,
+            capability(
+                "translate.en-zh",
+                3,
+                &["text/plain"],
+                &["application/json"],
+                (90, 240),
+            ),
+        ),
+        (
+            83,
+            capability(
+                "sentiment.analyze",
+                2,
+                &["application/json"],
+                &["application/json"],
+                (110, 300),
+            ),
+        ),
         // 诱饵：更便宜的语音转写，但产出 mp3，接不上翻译。
-        (84, capability("speech.transcribe", 1, &["audio/wav"], &["audio/mpeg"], (50, 120))),
+        (
+            84,
+            capability(
+                "speech.transcribe",
+                1,
+                &["audio/wav"],
+                &["audio/mpeg"],
+                (50, 120),
+            ),
+        ),
     ];
     for (seed, cap) in chain {
         let keys = AgentKeys::from_seed(&[seed; 32]);
@@ -244,10 +331,17 @@ fn a_three_step_pipeline_walks_through_three_agents() {
         ],
     )
     .with_final_output(format("application/json"));
-    let pipeline = graph.plan(&request, &PlanCost::default(), 0).pipeline().cloned();
+    let pipeline = graph
+        .plan(&request, &PlanCost::default(), 0)
+        .pipeline()
+        .cloned();
     let pipeline = pipeline.expect("three hops are possible");
     assert_eq!(pipeline.nodes.len(), 3);
-    assert_eq!(pipeline.nodes[0].price_per_unit, Credits(9), "绕开 1 微积分的死路");
+    assert_eq!(
+        pipeline.nodes[0].price_per_unit,
+        Credits(9),
+        "绕开 1 微积分的死路"
+    );
     assert_eq!(pipeline.total_price, Credits(14));
     assert_eq!(pipeline.handoffs(), 2);
     let formats: Vec<String> = pipeline
@@ -255,7 +349,10 @@ fn a_three_step_pipeline_walks_through_three_agents() {
         .iter()
         .map(|n| n.output_format.as_str().to_string())
         .collect();
-    assert_eq!(formats, vec!["text/plain", "application/json", "application/json"]);
+    assert_eq!(
+        formats,
+        vec!["text/plain", "application/json", "application/json"]
+    );
 }
 
 #[test]
@@ -276,12 +373,20 @@ fn scenario_returns_a_pipeline_and_a_no_path_demo() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let value = au4a_capgraph::scenario(&mut kernel).expect("scenario runs");
     assert_eq!(value["plan"]["outcome"].as_str(), Some("path"));
-    let nodes = value["plan"]["pipeline"]["nodes"].as_array().expect("nodes");
+    let nodes = value["plan"]["pipeline"]["nodes"]
+        .as_array()
+        .expect("nodes");
     assert_eq!(nodes.len(), 2);
     assert_eq!(value["plan"]["pipeline"]["total_price"].as_u64(), Some(5));
     let agents = demo_agents().expect("demo agents");
-    assert_eq!(nodes[0]["agent"].as_str(), Some(agents[1].keys.did().as_str()));
-    assert_eq!(nodes[1]["agent"].as_str(), Some(agents[2].keys.did().as_str()));
+    assert_eq!(
+        nodes[0]["agent"].as_str(),
+        Some(agents[1].keys.did().as_str())
+    );
+    assert_eq!(
+        nodes[1]["agent"].as_str(),
+        Some(agents[2].keys.did().as_str())
+    );
     assert_eq!(value["no_path_demo"]["outcome"].as_str(), Some("no_path"));
     assert_eq!(
         value["no_path_demo"]["no_path"]["refusal_code"].as_str(),

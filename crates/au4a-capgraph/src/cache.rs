@@ -175,7 +175,11 @@ impl CapabilityCache {
 
     /// LRU 顺序（最久未用在前），用于证据与调试。确定性：`(last_used, did)` 排序。
     pub fn lru_order(&self) -> Vec<Did> {
-        let mut pairs: Vec<(u64, &Did)> = self.slots.values().map(|s| (s.last_used, &s.record.did)).collect();
+        let mut pairs: Vec<(u64, &Did)> = self
+            .slots
+            .values()
+            .map(|s| (s.last_used, &s.record.did))
+            .collect();
         pairs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(b.1)));
         pairs.into_iter().map(|(_, did)| did.clone()).collect()
     }
@@ -345,7 +349,10 @@ mod tests {
 
         let mut one = CapabilityCache::new(1, 0);
         for seed in 1..5u8 {
-            assert!(one.insert(record(seed, 1, 0, "a"), 0).accepted, "no capacity => evict, not refuse");
+            assert!(
+                one.insert(record(seed, 1, 0, "a"), 0).accepted,
+                "no capacity => evict, not refuse"
+            );
         }
         assert_eq!(one.len(), 1);
         // 第 1 条不淘汰，之后 3 条各淘汰 1 条。
@@ -388,6 +395,13 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.peek(&did(1)).expect("present").epoch, 2);
         assert_eq!(cache.stats().updates, 1);
-        assert_eq!(cache.skills().iter().map(|s| s.as_str()).collect::<Vec<_>>(), vec!["b"]);
+        assert_eq!(
+            cache
+                .skills()
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
     }
 }

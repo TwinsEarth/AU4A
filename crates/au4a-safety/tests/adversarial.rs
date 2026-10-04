@@ -226,7 +226,14 @@ fn subscriptions_do_not_leak_between_agents_or_statuses() {
     let mut w = world();
     let case_id = open_case(&mut w, "adv-notify");
     let watcher = AgentKeys::from_seed(&[0xA3; 32]);
-    ensure_agent(&mut w.kernel, &watcher, "watcher", &["observe"], Credits(20)).unwrap();
+    ensure_agent(
+        &mut w.kernel,
+        &watcher,
+        "watcher",
+        &["observe"],
+        Credits(20),
+    )
+    .unwrap();
     w.office
         .subscribe(
             &mut w.kernel,
@@ -255,9 +262,7 @@ fn subscriptions_do_not_leak_between_agents_or_statuses() {
     )
     .sign(&w.arbiter)
     .unwrap();
-    w.office
-        .apply_penalty_order(&mut w.kernel, order)
-        .unwrap();
+    w.office.apply_penalty_order(&mut w.kernel, order).unwrap();
     assert_eq!(w.office.inbox(&w.reporter.did()).len(), 1);
     assert_eq!(w.office.inbox(&watcher.did()).len(), 0);
     assert_eq!(w.office.inbox(&w.subject.did()).len(), 0);

@@ -222,7 +222,11 @@ mod tests {
 
     #[test]
     fn concrete_numbers_are_pinned() {
-        let q = quote(&inputs(1_000_000, 8_000, 2_000, 4_000), &PriceKnobs::DEFAULT).unwrap();
+        let q = quote(
+            &inputs(1_000_000, 8_000, 2_000, 4_000),
+            &PriceKnobs::DEFAULT,
+        )
+        .unwrap();
         // 折扣 = 8000×2000/10000 = 1600；稀缺 = 2000×3000/10000 = 600；负载 = 4000×5000/10000 = 2000
         assert_eq!(q.components.reputation_discount_bp, 1_600);
         assert_eq!(q.components.scarcity_premium_bp, 600);
@@ -254,16 +258,24 @@ mod tests {
     #[test]
     fn load_up_price_up_never_down() {
         let knobs = PriceKnobs::DEFAULT;
-        let mut prev = quote(&inputs(1_000_000, 0, 0, 0), &knobs).unwrap().unit_price;
+        let mut prev = quote(&inputs(1_000_000, 0, 0, 0), &knobs)
+            .unwrap()
+            .unit_price;
         for load in 1..=10_000i64 {
-            let price = quote(&inputs(1_000_000, 0, 0, load), &knobs).unwrap().unit_price;
+            let price = quote(&inputs(1_000_000, 0, 0, load), &knobs)
+                .unwrap()
+                .unit_price;
             assert!(price >= prev, "load={load} 时价格下降：{prev} → {price}");
             prev = price;
         }
         // 网格上严格递增（每 500bp 负载至少让价格上升一次）
         let mut grid = Vec::new();
         for load in (0..=10_000i64).step_by(500) {
-            grid.push(quote(&inputs(1_000_000, 0, 0, load), &knobs).unwrap().unit_price);
+            grid.push(
+                quote(&inputs(1_000_000, 0, 0, load), &knobs)
+                    .unwrap()
+                    .unit_price,
+            );
         }
         for w in grid.windows(2) {
             assert!(w[0] < w[1], "负载网格上未严格递增：{:?}", w);
@@ -273,15 +285,26 @@ mod tests {
     #[test]
     fn reputation_up_price_down_never_up() {
         let knobs = PriceKnobs::DEFAULT;
-        let mut prev = quote(&inputs(1_000_000, 0, 0, 0), &knobs).unwrap().unit_price;
+        let mut prev = quote(&inputs(1_000_000, 0, 0, 0), &knobs)
+            .unwrap()
+            .unit_price;
         for rep in 1..=10_000i64 {
-            let price = quote(&inputs(1_000_000, rep, 0, 0), &knobs).unwrap().unit_price;
-            assert!(price <= prev, "reputation={rep} 时价格上升：{prev} → {price}");
+            let price = quote(&inputs(1_000_000, rep, 0, 0), &knobs)
+                .unwrap()
+                .unit_price;
+            assert!(
+                price <= prev,
+                "reputation={rep} 时价格上升：{prev} → {price}"
+            );
             prev = price;
         }
         let mut grid = Vec::new();
         for rep in (0..=10_000i64).step_by(500) {
-            grid.push(quote(&inputs(1_000_000, rep, 0, 0), &knobs).unwrap().unit_price);
+            grid.push(
+                quote(&inputs(1_000_000, rep, 0, 0), &knobs)
+                    .unwrap()
+                    .unit_price,
+            );
         }
         for w in grid.windows(2) {
             assert!(w[0] > w[1], "信誉网格上未严格递减：{:?}", w);
@@ -291,9 +314,13 @@ mod tests {
     #[test]
     fn scarcity_up_price_up() {
         let knobs = PriceKnobs::DEFAULT;
-        let mut prev = quote(&inputs(1_000_000, 0, 0, 0), &knobs).unwrap().unit_price;
+        let mut prev = quote(&inputs(1_000_000, 0, 0, 0), &knobs)
+            .unwrap()
+            .unit_price;
         for scarce in (500..=10_000i64).step_by(500) {
-            let price = quote(&inputs(1_000_000, 0, scarce, 0), &knobs).unwrap().unit_price;
+            let price = quote(&inputs(1_000_000, 0, scarce, 0), &knobs)
+                .unwrap()
+                .unit_price;
             assert!(price > prev, "稀缺度 {scarce} 未抬价：{prev} → {price}");
             prev = price;
         }
@@ -339,12 +366,19 @@ mod tests {
             max_multiplier_bp: 8_000,
             ..PriceKnobs::DEFAULT
         };
-        assert_eq!(quote(&inputs(100, 0, 0, 0), &bad), Err(CoreError::InvalidKind));
+        assert_eq!(
+            quote(&inputs(100, 0, 0, 0), &bad),
+            Err(CoreError::InvalidKind)
+        );
     }
 
     #[test]
     fn multi_unit_total_is_integer_multiplication() {
-        let q = quote(&inputs(1_000_000, 8_000, 2_000, 4_000), &PriceKnobs::DEFAULT).unwrap();
+        let q = quote(
+            &inputs(1_000_000, 8_000, 2_000, 4_000),
+            &PriceKnobs::DEFAULT,
+        )
+        .unwrap();
         assert_eq!(q.total_for(3).unwrap(), Credits(3_300_000));
         assert_eq!(q.total_for(0), Err(CoreError::ZeroAmount));
     }

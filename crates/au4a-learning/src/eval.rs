@@ -133,9 +133,7 @@ impl EvalReport {
 
     /// 是否跨种子稳定：整体改善 + 中位数为正 + 明显变差的种子不超过三分之一。
     pub fn stable(&self) -> bool {
-        self.improved()
-            && self.median_success_lift_bp > 0
-            && self.negative_seeds * 3 <= self.seeds
+        self.improved() && self.median_success_lift_bp > 0 && self.negative_seeds * 3 <= self.seeds
     }
 
     pub fn to_value(&self) -> CoreResult<Value> {
@@ -226,10 +224,7 @@ pub fn evaluate(config: &EvalConfig) -> CoreResult<EvalReport> {
     } else {
         lifts[(seeds - 1) / 2]
     };
-    let revenue_lift_credits = learn
-        .revenue
-        .get()
-        .saturating_sub(ctrl.revenue.get());
+    let revenue_lift_credits = learn.revenue.get().saturating_sub(ctrl.revenue.get());
     let revenue_lift_bp = if ctrl.revenue > Credits::ZERO {
         revenue_lift_credits.saturating_mul(10_000) / ctrl.revenue.get()
     } else {

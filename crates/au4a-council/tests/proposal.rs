@@ -20,7 +20,9 @@ fn seated(kernel: &mut Kernel) -> (Council, Vec<AgentKeys>) {
     let mut council = Council::new(CouncilConfig::default());
     let agents: Vec<AgentKeys> = (0..5u8).map(keys).collect();
     for k in &agents {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
         council.note_reputation(&k.did(), 5_000);
         council.note_uptime(&k.did(), 200);
     }
@@ -29,7 +31,9 @@ fn seated(kernel: &mut Kernel) -> (Council, Vec<AgentKeys>) {
         .iter()
         .map(|k| ElectionBallot::cast(k, CommitteeKind::Task, &picks).expect("cast"))
         .collect();
-    council.elect(kernel, CommitteeKind::Task, &ballots).expect("elect");
+    council
+        .elect(kernel, CommitteeKind::Task, &ballots)
+        .expect("elect");
     (council, agents)
 }
 
@@ -42,11 +46,16 @@ fn a_seated_agent_can_propose_and_the_motion_is_content_addressed() {
         &agents[0],
         CommitteeKind::Task,
         "提高任务准入门槛",
-        Action::SetPolicy { key: String::from("task_entry_bar"), value: 400 },
+        Action::SetPolicy {
+            key: String::from("task_entry_bar"),
+            value: 400,
+        },
     )
     .expect("draft");
 
-    let proposal = council.propose(&mut kernel, &author, draft).expect("propose");
+    let proposal = council
+        .propose(&mut kernel, &author, draft)
+        .expect("propose");
     assert_eq!(proposal.state, ProposalState::Open);
     assert_eq!(proposal.round, 0);
     assert_eq!(proposal.author, agents[0].did());
@@ -81,7 +90,10 @@ fn a_non_member_agent_cannot_propose() {
         &outsider,
         CommitteeKind::Task,
         "我要改规则",
-        Action::SetPolicy { key: String::from("x"), value: 1 },
+        Action::SetPolicy {
+            key: String::from("x"),
+            value: 1,
+        },
     )
     .expect("draft");
     assert_eq!(
@@ -105,7 +117,10 @@ fn an_unregistered_identity_cannot_propose() {
         &ghost,
         CommitteeKind::Task,
         "幽灵动议",
-        Action::SetPolicy { key: String::from("x"), value: 1 },
+        Action::SetPolicy {
+            key: String::from("x"),
+            value: 1,
+        },
     )
     .expect("draft");
     assert_eq!(
@@ -124,14 +139,20 @@ fn a_proposal_for_an_unseated_committee_is_refused() {
         &agents[0],
         CommitteeKind::Security,
         "紧急接管",
-        Action::SetPolicy { key: String::from("x"), value: 1 },
+        Action::SetPolicy {
+            key: String::from("x"),
+            value: 1,
+        },
     )
     .expect("draft");
     assert_eq!(
         council.propose(&mut kernel, &identity, draft),
         Err(CoreError::UnknownAgent)
     );
-    assert_eq!(kernel.refusals()[0].1.code, au4a_core::RefusalCode::StaleEpoch);
+    assert_eq!(
+        kernel.refusals()[0].1.code,
+        au4a_core::RefusalCode::StaleEpoch
+    );
 }
 
 #[test]
@@ -144,17 +165,25 @@ fn identical_motions_are_deduplicated_by_content_address() {
             &agents[1],
             CommitteeKind::Task,
             "同一动议",
-            Action::SetPolicy { key: String::from("dup"), value: 7 },
+            Action::SetPolicy {
+                key: String::from("dup"),
+                value: 7,
+            },
         )
         .expect("draft")
     };
-    council.propose(&mut kernel, &identity, make()).expect("first");
+    council
+        .propose(&mut kernel, &identity, make())
+        .expect("first");
     assert_eq!(
         council.propose(&mut kernel, &identity, make()),
         Err(CoreError::DuplicateAgent)
     );
     assert_eq!(council.proposals().len(), 1);
-    assert_eq!(kernel.refusals()[0].1.code, au4a_core::RefusalCode::Conflict);
+    assert_eq!(
+        kernel.refusals()[0].1.code,
+        au4a_core::RefusalCode::Conflict
+    );
 }
 
 #[test]
@@ -183,7 +212,10 @@ fn tampered_content_never_reaches_the_council() {
         council.propose(&mut kernel, &identity, draft),
         Err(CoreError::InvalidSignature)
     );
-    assert_eq!(kernel.refusals()[0].1.code, au4a_core::RefusalCode::Unauthorized);
+    assert_eq!(
+        kernel.refusals()[0].1.code,
+        au4a_core::RefusalCode::Unauthorized
+    );
     assert!(council.proposals().is_empty());
 }
 
@@ -197,7 +229,11 @@ fn illegal_actions_and_titles_are_refused_before_any_state_change() {
         &agents[0],
         CommitteeKind::Task,
         "零额转账",
-        Action::Transfer { from: agents[0].did(), to: agents[1].did(), amount: Credits(0) },
+        Action::Transfer {
+            from: agents[0].did(),
+            to: agents[1].did(),
+            amount: Credits(0),
+        },
     )
     .expect("draft");
     assert_eq!(
@@ -209,7 +245,10 @@ fn illegal_actions_and_titles_are_refused_before_any_state_change() {
         &agents[0],
         CommitteeKind::Task,
         "超范围信誉",
-        Action::SetReputation { did: agents[1].did(), reputation_bp: 20_000 },
+        Action::SetReputation {
+            did: agents[1].did(),
+            reputation_bp: 20_000,
+        },
     )
     .expect("draft");
     assert_eq!(
@@ -221,7 +260,10 @@ fn illegal_actions_and_titles_are_refused_before_any_state_change() {
         &agents[0],
         CommitteeKind::Task,
         "   ",
-        Action::SetPolicy { key: String::from("x"), value: 1 },
+        Action::SetPolicy {
+            key: String::from("x"),
+            value: 1,
+        },
     )
     .expect("draft");
     assert_eq!(
@@ -246,10 +288,15 @@ fn the_state_machine_refuses_illegal_transitions() {
         &agents[0],
         CommitteeKind::Task,
         "状态机动议",
-        Action::SetPolicy { key: String::from("sm"), value: 1 },
+        Action::SetPolicy {
+            key: String::from("sm"),
+            value: 1,
+        },
     )
     .expect("draft");
-    let proposal = council.propose(&mut kernel, &identity, draft).expect("propose");
+    let proposal = council
+        .propose(&mut kernel, &identity, draft)
+        .expect("propose");
 
     // open → executed 非法（未表决不得执行）。
     assert_eq!(
@@ -296,10 +343,15 @@ fn the_human_observer_is_read_only() {
         &agents[0],
         CommitteeKind::Task,
         "只读投影",
-        Action::SetPolicy { key: String::from("view"), value: 3 },
+        Action::SetPolicy {
+            key: String::from("view"),
+            value: 3,
+        },
     )
     .expect("draft");
-    let proposal = council.propose(&mut kernel, &identity, draft).expect("propose");
+    let proposal = council
+        .propose(&mut kernel, &identity, draft)
+        .expect("propose");
 
     let human = HumanObserver::new("operator");
     let view = human.observe(&council);
@@ -317,7 +369,9 @@ fn the_human_observer_is_read_only() {
     let again = human.observe(&council);
     assert_eq!(view, again);
     // 观察投影里只有 DID 文本，没有密钥。
-    assert!(observed_dids(&view).iter().all(|d| d.starts_with("did:au4a:")));
+    assert!(observed_dids(&view)
+        .iter()
+        .all(|d| d.starts_with("did:au4a:")));
     let json = observe_json(&human, &council).expect("json");
     assert_eq!(json["proposals"][0]["id"], serde_json::json!(proposal.id));
 
@@ -328,9 +382,16 @@ fn the_human_observer_is_read_only() {
 #[test]
 fn self_check_results_and_scenario_cover_the_proposal_flow() {
     let checks = au4a_council::self_check();
-    assert!(au4a_core::all_passed(&checks), "self_check 未全绿: {checks:?}");
-    assert!(checks.iter().any(|c| c.name == "council.proposal.agent_only"));
-    assert!(checks.iter().any(|c| c.name == "council.proposals.content_addressed"));
+    assert!(
+        au4a_core::all_passed(&checks),
+        "self_check 未全绿: {checks:?}"
+    );
+    assert!(checks
+        .iter()
+        .any(|c| c.name == "council.proposal.agent_only"));
+    assert!(checks
+        .iter()
+        .any(|c| c.name == "council.proposals.content_addressed"));
 
     let results = au4a_council::results_json().expect("results");
     assert_eq!(results["proposal"]["state"], "executed");

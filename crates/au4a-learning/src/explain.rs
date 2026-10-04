@@ -10,10 +10,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use au4a_core::{canonical_hash, content_hash, short_id, CoreError, CoreResult, Credits, Did, SelfCheck};
+use au4a_core::{
+    canonical_hash, content_hash, short_id, CoreError, CoreResult, Credits, Did, SelfCheck,
+};
 
 use crate::feedback::FeedbackReport;
-use crate::policy::{bias_delta_bp, price_decision, task_score_bp, PolicyBounds, PolicyParams, PolicyTargets, Signals};
+use crate::policy::{
+    bias_delta_bp, price_decision, task_score_bp, PolicyBounds, PolicyParams, PolicyTargets,
+    Signals,
+};
 use crate::violation::ViolationLog;
 
 /// 定价解释（含「解释所蕴含的动作」）。
@@ -70,12 +75,21 @@ impl PolicyExplanation {
 
     /// 人类可读摘要（观察层「结果」面板可以直接显示；不含 DID）。
     pub fn summary(&self) -> String {
-        let mut lines = vec![format!("定价 {}bp：{}", self.price.current_price_bp, self.price.reason)];
+        let mut lines = vec![format!(
+            "定价 {}bp：{}",
+            self.price.current_price_bp, self.price.reason
+        )];
         for b in &self.task_biases {
-            lines.push(format!("任务偏好 {}={}bp：{}", b.target, b.current_bias_bp, b.reason));
+            lines.push(format!(
+                "任务偏好 {}={}bp：{}",
+                b.target, b.current_bias_bp, b.reason
+            ));
         }
         for b in &self.peer_biases {
-            lines.push(format!("协作偏好 {}={}bp：{}", b.target, b.current_bias_bp, b.reason));
+            lines.push(format!(
+                "协作偏好 {}={}bp：{}",
+                b.target, b.current_bias_bp, b.reason
+            ));
         }
         lines.push(self.evidence.clone());
         lines.join("\n")
@@ -146,7 +160,8 @@ pub fn explain(
         } else {
             format!(
                 "样本 {} 条（不足 {} 条）→ 不改变偏好（宁可不学，也不拿噪声当信号）",
-                f.sample, crate::feedback::MIN_SAMPLES
+                f.sample,
+                crate::feedback::MIN_SAMPLES
             )
         };
         task_biases.push(BiasExplanation {
@@ -170,10 +185,7 @@ pub fn explain(
     }
     let mut peer_biases = Vec::new();
     for peer in peers {
-        let quality = report
-            .peer_stats(&peer)
-            .map(|s| s.quality_bp)
-            .unwrap_or(0);
+        let quality = report.peer_stats(&peer).map(|s| s.quality_bp).unwrap_or(0);
         let sample = report.peer_stats(&peer).map(|s| s.sample).unwrap_or(0);
         let mut delta = if sample > 0 {
             bias_delta_bp(quality, report.overall.quality_bp, bounds)
@@ -189,7 +201,12 @@ pub fn explain(
         } else if count > 0 {
             format!(
                 "合作 {} 次、质量 {}bp（整体 {}bp）；另有 {} 条违规 → 质量增量 {}bp 再扣 {}bp",
-                sample, quality, report.overall.quality_bp, count, delta, targets.violation_penalty_bp
+                sample,
+                quality,
+                report.overall.quality_bp,
+                count,
+                delta,
+                targets.violation_penalty_bp
             )
         } else {
             format!(
@@ -296,12 +313,34 @@ pub fn self_check() -> Vec<SelfCheck> {
 
     // 1) 解释蕴含的定价动作 == adjust 的实际动作（四种输入各测一遍）
     let cases = [
-        ("accept=3000 应降价", Signals { accept_rate_bp: Some(3_000), ..base.clone() }),
-        ("accept=9800 应提价", Signals { accept_rate_bp: Some(9_800), ..base.clone() }),
-        ("死区停手", Signals { accept_rate_bp: Some(8_600), ..base.clone() }),
+        (
+            "accept=3000 应降价",
+            Signals {
+                accept_rate_bp: Some(3_000),
+                ..base.clone()
+            },
+        ),
+        (
+            "accept=9800 应提价",
+            Signals {
+                accept_rate_bp: Some(9_800),
+                ..base.clone()
+            },
+        ),
+        (
+            "死区停手",
+            Signals {
+                accept_rate_bp: Some(8_600),
+                ..base.clone()
+            },
+        ),
         (
             "信誉下降冻结涨价",
-            Signals { accept_rate_bp: Some(9_800), reputation_delta: -40, ..base.clone() },
+            Signals {
+                accept_rate_bp: Some(9_800),
+                reputation_delta: -40,
+                ..base.clone()
+            },
         ),
         (
             "收益下滑反向",
@@ -316,7 +355,14 @@ pub fn self_check() -> Vec<SelfCheck> {
     let mut consistent = true;
     let mut detail = Vec::new();
     for (label, signals) in cases {
-        let explained = explain(&params, &report, &ViolationLog::new(), &signals, &bounds, &targets);
+        let explained = explain(
+            &params,
+            &report,
+            &ViolationLog::new(),
+            &signals,
+            &bounds,
+            &targets,
+        );
         let applied = adjust(
             &params,
             &report,
@@ -337,8 +383,8 @@ pub fn self_check() -> Vec<SelfCheck> {
                 for b in &e.task_biases {
                     let moved = a.task_bias_moved_bp.get(&b.target).copied().unwrap_or(0);
                     let before = params.bias_of_task(&b.target);
-                    let after = (before + b.implied_delta_bp)
-                        .clamp(bounds.bias_min_bp, bounds.bias_max_bp);
+                    let after =
+                        (before + b.implied_delta_bp).clamp(bounds.bias_min_bp, bounds.bias_max_bp);
                     consistent &= (after - before) == moved;
                 }
             }
@@ -356,7 +402,14 @@ pub fn self_check() -> Vec<SelfCheck> {
         accept_rate_bp: Some(3_000),
         ..base.clone()
     };
-    let explanation = explain(&params, &report, &ViolationLog::new(), &signals, &bounds, &targets);
+    let explanation = explain(
+        &params,
+        &report,
+        &ViolationLog::new(),
+        &signals,
+        &bounds,
+        &targets,
+    );
     let (publishable, text_ok) = match &explanation {
         Ok(e) => {
             let text = e.summary() + &e.to_value().map(|v| v.to_string()).unwrap_or_default();

@@ -7,8 +7,8 @@ use au4a_core::{AgentKeys, Credits, Did};
 use au4a_council::audit::{AuditEntry, AuditLog};
 use au4a_council::{
     Action, AgentIdentity, ChainBinding, Choice, CommitteeKind, Council, CouncilConfig,
-    ElectionBallot, ElectionConfig, EmergencyApproval, EmergencyStatus, GovernorToken, HumanObserver,
-    ProposalDraft, Vote,
+    ElectionBallot, ElectionConfig, EmergencyApproval, EmergencyStatus, GovernorToken,
+    HumanObserver, ProposalDraft, Vote,
 };
 use au4a_kernel::{Kernel, KernelConfig};
 
@@ -24,12 +24,17 @@ struct Scene {
 fn scene() -> Scene {
     let mut kernel = Kernel::new(KernelConfig::default());
     let mut council = Council::new(CouncilConfig {
-        election: ElectionConfig { seats: 4, ..ElectionConfig::default() },
+        election: ElectionConfig {
+            seats: 4,
+            ..ElectionConfig::default()
+        },
         ..CouncilConfig::default()
     });
     let agents: Vec<AgentKeys> = (0..4).map(keys).collect();
     for k in &agents {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
         council.note_reputation(&k.did(), 5_000);
         council.note_uptime(&k.did(), 300);
     }
@@ -48,38 +53,58 @@ fn scene() -> Scene {
         &agents[0],
         CommitteeKind::Task,
         "审计用动议甲",
-        Action::SetPolicy { key: String::from("audit_a"), value: 1 },
+        Action::SetPolicy {
+            key: String::from("audit_a"),
+            value: 1,
+        },
     )
     .expect("draft");
-    let first = council.propose(&mut kernel, &identity, draft).expect("propose");
+    let first = council
+        .propose(&mut kernel, &identity, draft)
+        .expect("propose");
     let round = council.open_round(&mut kernel, &first.id).expect("open");
     for i in 0..3 {
         let vote = Vote::cast(&agents[i], &first.id, round.round, Choice::Yes).expect("cast");
         council.cast_vote(&mut kernel, vote).expect("vote");
     }
-    council.execute(&mut kernel, &identity, &first.id).expect("execute");
+    council
+        .execute(&mut kernel, &identity, &first.id)
+        .expect("execute");
 
     // 动议乙：提案 → 表决 → 人类否决。
     let draft = ProposalDraft::by(
         &agents[0],
         CommitteeKind::Task,
         "审计用动议乙",
-        Action::SetPolicy { key: String::from("audit_b"), value: 2 },
+        Action::SetPolicy {
+            key: String::from("audit_b"),
+            value: 2,
+        },
     )
     .expect("draft");
-    let second = council.propose(&mut kernel, &identity, draft).expect("propose");
+    let second = council
+        .propose(&mut kernel, &identity, draft)
+        .expect("propose");
     let round = council.open_round(&mut kernel, &second.id).expect("open");
     for i in 0..3 {
         let vote = Vote::cast(&agents[i], &second.id, round.round, Choice::Yes).expect("cast");
         council.cast_vote(&mut kernel, vote).expect("vote");
     }
     let human = HumanObserver::new("auditor");
-    let veto = human.veto(&council, &second.id, "审计测试：理由公开").expect("veto");
+    let veto = human
+        .veto(&council, &second.id, "审计测试：理由公开")
+        .expect("veto");
     council.apply_veto(&mut kernel, &veto).expect("apply");
 
     // 紧急指令：安全委员会下发 + 全体确认。
     let directive = council
-        .issue_emergency(&mut kernel, &identity, "audit_freeze", 1, "审计测试：紧急冻结")
+        .issue_emergency(
+            &mut kernel,
+            &identity,
+            "audit_freeze",
+            1,
+            "审计测试：紧急冻结",
+        )
         .expect("issue");
     let approvals: Vec<EmergencyApproval> = agents
         .iter()
@@ -178,8 +203,14 @@ fn the_export_is_read_only_and_carries_the_whole_governance_record() {
 
     // 提案快照：一条 executed、一条 blocked。
     assert_eq!(exported.proposals.len(), 2);
-    assert_eq!(exported.proposals[0].state, au4a_council::ProposalState::Executed);
-    assert_eq!(exported.proposals[1].state, au4a_council::ProposalState::Blocked);
+    assert_eq!(
+        exported.proposals[0].state,
+        au4a_council::ProposalState::Executed
+    );
+    assert_eq!(
+        exported.proposals[1].state,
+        au4a_council::ProposalState::Blocked
+    );
     assert!(exported.proposals[0].action.contains("audit_a=1"));
 
     // 否决快照：理由公开、观察者是人类标签（不是 DID）。
@@ -190,9 +221,11 @@ fn the_export_is_read_only_and_carries_the_whole_governance_record() {
 
     // 紧急指令快照：状态与确认摘要。
     assert_eq!(exported.emergency.len(), 1);
-    assert_eq!(exported.emergency[0].status, EmergencyStatus::Confirmed.as_str());
-    assert!(exported
-        .emergency[0]
+    assert_eq!(
+        exported.emergency[0].status,
+        EmergencyStatus::Confirmed.as_str()
+    );
+    assert!(exported.emergency[0]
         .confirmation
         .as_deref()
         .unwrap_or_default()
@@ -201,7 +234,10 @@ fn the_export_is_read_only_and_carries_the_whole_governance_record() {
     // 执行收据与策略表。
     assert_eq!(exported.executions.len(), 1);
     assert!(exported.executions[0].conservation_ok);
-    assert!(exported.policies.iter().any(|(k, v)| k == "audit_a" && *v == 1));
+    assert!(exported
+        .policies
+        .iter()
+        .any(|(k, v)| k == "audit_a" && *v == 1));
 
     // JSON 投影可序列化并包含全部字段。
     let value = exported.to_json().expect("json");

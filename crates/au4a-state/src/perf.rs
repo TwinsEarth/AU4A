@@ -133,8 +133,7 @@ impl DigestCache {
     ) -> CoreResult<StateSnapshot> {
         let mut rebuilt = Vec::with_capacity(blocks.len());
         for block in blocks {
-            let digest =
-                self.digest_for(block.zone(), block.key(), block.value(), counter)?;
+            let digest = self.digest_for(block.zone(), block.key(), block.value(), counter)?;
             if digest == block.digest() {
                 // 摘要相同：直接沿用原块（连 value 都不用搬）。
                 rebuilt.push(block.clone());
@@ -258,9 +257,7 @@ pub fn materialize(
 ) -> CoreResult<StateDelta> {
     let mut ops = Vec::with_capacity(delta_plan.set.len());
     for (zone, key) in &delta_plan.set {
-        let block = to
-            .block(*zone, key)
-            .ok_or(CoreError::Encoding)?;
+        let block = to.block(*zone, key).ok_or(CoreError::Encoding)?;
         ops.push(DeltaOp::from_block(block));
         counter.blocks_materialized += 1;
     }
@@ -282,7 +279,11 @@ pub fn materialize(
 }
 
 /// 续跑核算：全量重传 vs 只补缺口，省下多少操作。
-pub fn resume_savings(total_ops: usize, resumed_from_chunks: usize, chunk_ops: usize) -> (u64, u64) {
+pub fn resume_savings(
+    total_ops: usize,
+    resumed_from_chunks: usize,
+    chunk_ops: usize,
+) -> (u64, u64) {
     let skipped_chunks = resumed_from_chunks as u64;
     let skipped = skipped_chunks * chunk_ops as u64;
     let transferred = (total_ops as u64).saturating_sub(skipped);
@@ -422,7 +423,10 @@ mod tests {
             .unwrap();
         assert_eq!(second.block_hashes, 1, "只有第 3 块真的变了");
         assert_eq!(second.hashes_reused, 7);
-        assert_ne!(first.content_root().unwrap(), updated.content_root().unwrap());
+        assert_ne!(
+            first.content_root().unwrap(),
+            updated.content_root().unwrap()
+        );
         updated.verify().unwrap();
     }
 
@@ -453,7 +457,10 @@ mod tests {
         let mut materialize_counter = WorkCounter::new();
         let delta = materialize(&from, &to, &delta_plan, &mut materialize_counter).unwrap();
         assert_eq!(materialize_counter.blocks_materialized, 3);
-        assert_eq!(delta.apply_to(&from).unwrap().content_root().unwrap(), to.content_root().unwrap());
+        assert_eq!(
+            delta.apply_to(&from).unwrap().content_root().unwrap(),
+            to.content_root().unwrap()
+        );
     }
 
     #[test]
@@ -504,7 +511,11 @@ mod tests {
             let b = cache
                 .capture_raw(&k.did(), "node-a", 1, raw(6, 1), &mut counter)
                 .unwrap();
-            (a.root().to_string(), b.root().to_string(), summary(&counter))
+            (
+                a.root().to_string(),
+                b.root().to_string(),
+                summary(&counter),
+            )
         };
         assert_eq!(run(), run(), "同样的输入必须给同样的工作量数字");
     }

@@ -303,8 +303,12 @@ fn main() -> au4a_core::CoreResult<()> {
     trust
         .apply_event(&tapnet, &settle_event)
         .map_err(|_| au4a_core::CoreError::InvalidKind)?;
-    let feedback_event =
-        ChainReputationEvent::new(&alice, ReputationEventKind::Feedback, reputation.average_bp, 1)?;
+    let feedback_event = ChainReputationEvent::new(
+        &alice,
+        ReputationEventKind::Feedback,
+        reputation.average_bp,
+        1,
+    )?;
     let profile = trust
         .apply_event(&ethnet, &feedback_event)
         .map_err(|_| au4a_core::CoreError::InvalidKind)?;
@@ -362,7 +366,10 @@ fn main() -> au4a_core::CoreResult<()> {
         summary["audit"]["all_attacks_blocked"]
     );
     println!("场景 JSON：");
-    println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&summary).unwrap_or_default()
+    );
 
     Ok(())
 }

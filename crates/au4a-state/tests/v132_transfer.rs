@@ -22,7 +22,12 @@ fn snap(agent: &Did, node: &str, epoch: u64, blocks: Vec<StateBlock>) -> StateSn
 
 fn evolved() -> Vec<StateBlock> {
     vec![
-        StateBlock::new(StateZone::Fs, "/work/notes.md", json!({"sha256": "77cc", "bytes": 12})).unwrap(),
+        StateBlock::new(
+            StateZone::Fs,
+            "/work/notes.md",
+            json!({"sha256": "77cc", "bytes": 12}),
+        )
+        .unwrap(),
         StateBlock::new(StateZone::Memory, "last_task", json!("summarize")).unwrap(),
         StateBlock::new(StateZone::Memory, "extra", json!({"n": 1})).unwrap(),
         StateBlock::new(StateZone::Context, "goal", json!({"text": "在 B 上继续"})).unwrap(),
@@ -129,8 +134,16 @@ fn a_dropped_transfer_resumes_from_the_break_point() {
     assert_eq!(session.missing(total), (2..total).collect::<Vec<_>>());
 
     // 续跑：只补发缺的块（不重头来）。
-    let resume =
-        send_chunks(&mut net, &na, &nb, &delta, 4, session.resume_from(), usize::MAX).unwrap();
+    let resume = send_chunks(
+        &mut net,
+        &na,
+        &nb,
+        &delta,
+        4,
+        session.resume_from(),
+        usize::MAX,
+    )
+    .unwrap();
     assert_eq!(resume.resumed_from, 2);
     assert_eq!(resume.frames, (total - 2) as u64);
     let (session, accepted, duplicates) = pull_into_session(&mut net, &nb, Some(session)).unwrap();
@@ -157,7 +170,10 @@ fn replayed_chunks_are_idempotent_and_conflicts_are_refused() {
     let mut session = TransferSession::open(&chunks[0]).unwrap();
     assert_eq!(session.accept(&chunks[0]).unwrap(), AcceptOutcome::Accepted);
     // 网络重发是常态：重复块幂等接受，不当成攻击。
-    assert_eq!(session.accept(&chunks[0]).unwrap(), AcceptOutcome::Duplicate);
+    assert_eq!(
+        session.accept(&chunks[0]).unwrap(),
+        AcceptOutcome::Duplicate
+    );
     assert_eq!(session.duplicates(), 1);
 }
 
@@ -178,7 +194,10 @@ fn a_session_refuses_chunks_from_another_transfer() {
 fn frames_are_bounded_and_prefix_checked() {
     let value = json!({"blob": "x".repeat(1024)});
     let frame = encode_frame(&value).unwrap();
-    assert_eq!(u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize, frame.len() - 4);
+    assert_eq!(
+        u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize,
+        frame.len() - 4
+    );
     assert_eq!(decode_frame(&frame).unwrap(), value);
     assert_eq!(decode_frame(&frame[..3]), Err(CoreError::FrameTruncated));
     let mut oversized = Vec::from((MAX_FRAME as u32 + 1).to_be_bytes());
@@ -211,7 +230,9 @@ fn cross_agent_deltas_are_refused() {
 fn scenario_transfers_a_delta_and_rebuilds_on_the_target_node() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(9);
-    kernel.register(&keys, "carrier", &["state.transfer"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.transfer"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["migration_identical"], json!(true));
     assert_eq!(out["source_content_root"], out["target_content_root"]);

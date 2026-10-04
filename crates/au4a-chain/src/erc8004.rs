@@ -182,7 +182,11 @@ impl Erc8004Adapter {
         }
     }
 
-    fn register(&mut self, net: &mut Testnet, tx: &ChainTx) -> Result<Erc8004Outcome, ChainRefusal> {
+    fn register(
+        &mut self,
+        net: &mut Testnet,
+        tx: &ChainTx,
+    ) -> Result<Erc8004Outcome, ChainRefusal> {
         if self.identity_of_did(&tx.submitter).is_some() {
             let refusal = ChainRefusal::new(
                 "erc8004.register",
@@ -193,7 +197,11 @@ impl Erc8004Adapter {
             return Err(refusal);
         }
         let agent_id = Self::agent_id_for(&tx.submitter, tx.nonce).map_err(|_| {
-            ChainRefusal::new("erc8004.register", RefusalCode::Malformed, "agent_id 计算失败")
+            ChainRefusal::new(
+                "erc8004.register",
+                RefusalCode::Malformed,
+                "agent_id 计算失败",
+            )
         })?;
         let mut receipt = net.accept(tx)?;
         Testnet::stamp(&mut receipt, "erc8004");
@@ -320,7 +328,11 @@ impl Erc8004Adapter {
             .get("agent_id")
             .and_then(Value::as_str)
             .ok_or_else(|| {
-                ChainRefusal::new("erc8004.revoke_feedback", RefusalCode::Malformed, "缺少 agent_id")
+                ChainRefusal::new(
+                    "erc8004.revoke_feedback",
+                    RefusalCode::Malformed,
+                    "缺少 agent_id",
+                )
             })?
             .to_string();
         let found = self
@@ -347,8 +359,13 @@ impl Erc8004Adapter {
         })
     }
 
-    fn validate(&mut self, net: &mut Testnet, tx: &ChainTx) -> Result<Erc8004Outcome, ChainRefusal> {
-        let malformed = |detail: &str| ChainRefusal::new("erc8004.validate", RefusalCode::Malformed, detail);
+    fn validate(
+        &mut self,
+        net: &mut Testnet,
+        tx: &ChainTx,
+    ) -> Result<Erc8004Outcome, ChainRefusal> {
+        let malformed =
+            |detail: &str| ChainRefusal::new("erc8004.validate", RefusalCode::Malformed, detail);
         let agent_id = tx
             .payload
             .get("agent_id")
@@ -600,7 +617,13 @@ mod tests {
         );
         assert_eq!(reg.summary(&ids[0]).unwrap().average_bp, 5_000);
         // 撤销后不再计入。
-        let revoke = tx(&net, "erc8004.revoke_feedback", 1, 4, json!({ "agent_id": ids[0] }));
+        let revoke = tx(
+            &net,
+            "erc8004.revoke_feedback",
+            1,
+            4,
+            json!({ "agent_id": ids[0] }),
+        );
         reg.execute(&mut net, &revoke).unwrap();
         let summary = reg.summary(&ids[0]).unwrap();
         assert_eq!(summary.count, 0);
@@ -616,7 +639,13 @@ mod tests {
         reg.execute(&mut net, &again).unwrap();
         assert_eq!(reg.summary(&ids[0]).unwrap().average_bp, 9_500);
         // 撤销不存在的反馈 → Conflict。
-        let revoke_again = tx(&net, "erc8004.revoke_feedback", 2, 2, json!({ "agent_id": ids[0] }));
+        let revoke_again = tx(
+            &net,
+            "erc8004.revoke_feedback",
+            2,
+            2,
+            json!({ "agent_id": ids[0] }),
+        );
         assert_eq!(
             reg.execute(&mut net, &revoke_again).unwrap_err().code,
             RefusalCode::Conflict

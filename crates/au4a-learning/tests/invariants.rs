@@ -25,7 +25,10 @@ fn check_run(run: &MarketRun, config: &MarketConfig, label: &str) {
     let model = ModelConfig::default();
     let expected_ticks = config.rounds * config.ticks_per_round;
 
-    assert_eq!(run.ticks, expected_ticks, "{label}: tick 数必须等于 轮数×每轮任务数");
+    assert_eq!(
+        run.ticks, expected_ticks,
+        "{label}: tick 数必须等于 轮数×每轮任务数"
+    );
     assert_eq!(run.rounds.len(), config.rounds as usize, "{label}: 轮数");
     assert_eq!(
         run.successes + run.partials + run.failures,
@@ -70,7 +73,10 @@ fn check_run(run: &MarketRun, config: &MarketConfig, label: &str) {
             r.signal_composite_bp >= -10_000 && r.signal_composite_bp <= 10_000,
             "{label}: 综合信号越界"
         );
-        assert!(r.failures + r.successes + r.partials == r.ticks, "{label}: 轮内结局分布");
+        assert!(
+            r.failures + r.successes + r.partials == r.ticks,
+            "{label}: 轮内结局分布"
+        );
     }
     assert_eq!(round_ticks, run.ticks, "{label}: 轮内 tick 之和");
     assert_eq!(round_successes, run.successes, "{label}: 轮内成功之和");
@@ -85,18 +91,30 @@ fn check_run(run: &MarketRun, config: &MarketConfig, label: &str) {
         "{label}: 经验窗口越界 {}",
         run.window_experiences
     );
-    assert_eq!(run.experiences_recorded, expected_ticks, "{label}: 记录总数");
+    assert_eq!(
+        run.experiences_recorded, expected_ticks,
+        "{label}: 记录总数"
+    );
 
     // 参数取值必须落在偏好边界内
     for v in run.final_params.task_bias_bp.values() {
-        assert!(*v >= bounds.bias_min_bp && *v <= bounds.bias_max_bp, "{label}: 任务偏好越界");
+        assert!(
+            *v >= bounds.bias_min_bp && *v <= bounds.bias_max_bp,
+            "{label}: 任务偏好越界"
+        );
     }
     for v in run.final_params.peer_bias_bp.values() {
-        assert!(*v >= bounds.bias_min_bp && *v <= bounds.bias_max_bp, "{label}: 协作者偏好越界");
+        assert!(
+            *v >= bounds.bias_min_bp && *v <= bounds.bias_max_bp,
+            "{label}: 协作者偏好越界"
+        );
     }
 
     // 信誉台账：不可转让、公开投影无 DID
-    assert_eq!(run.final_reputation["transferable"], serde_json::json!(false));
+    assert_eq!(
+        run.final_reputation["transferable"],
+        serde_json::json!(false)
+    );
     assert!(
         !run.final_reputation.to_string().contains("did:au4a:"),
         "{label}: 信誉公开投影泄露 DID"
@@ -104,7 +122,10 @@ fn check_run(run: &MarketRun, config: &MarketConfig, label: &str) {
 
     // 公开投影无 DID，且可被规范 JSON 编码（无浮点）
     let public = run.public_json().expect("公开投影可序列化");
-    assert!(!public.to_string().contains("did:au4a:"), "{label}: 跑批公开投影泄露 DID");
+    assert!(
+        !public.to_string().contains("did:au4a:"),
+        "{label}: 跑批公开投影泄露 DID"
+    );
     canonicalize(&public).expect("公开投影必须能被规范 JSON 编码");
 }
 
@@ -121,13 +142,26 @@ fn invariants_hold_across_32_seeds() {
         check_run(&learning, &config, "learning");
 
         // 对照组：参数冻结在基线，代际停在第 0 代
-        assert_eq!(control.final_params, PolicyParams::baseline(), "对照组必须冻结");
+        assert_eq!(
+            control.final_params,
+            PolicyParams::baseline(),
+            "对照组必须冻结"
+        );
         assert_eq!(control.final_generation, 0, "对照组不应推进代际");
-        assert!(control.rounds.iter().all(|r| r.price_drift_bp == 0 && !r.changed));
+        assert!(control
+            .rounds
+            .iter()
+            .all(|r| r.price_drift_bp == 0 && !r.changed));
 
         // 学习组：每轮一代，且参数确实变了（接受率 41% 远低于目标 85%，必然降价）
-        assert_eq!(learning.final_generation, config.rounds, "学习组必须每轮推进一代");
-        assert!(learning.params_changed(), "学习组必须改变策略参数（seed={seed}）");
+        assert_eq!(
+            learning.final_generation, config.rounds,
+            "学习组必须每轮推进一代"
+        );
+        assert!(
+            learning.params_changed(),
+            "学习组必须改变策略参数（seed={seed}）"
+        );
         assert!(
             learning.final_params.price_bp < PolicyParams::baseline().price_bp,
             "学习组定价必须下移（seed={seed}）"
@@ -146,7 +180,10 @@ fn invariants_hold_across_32_seeds() {
         mean_lift
     );
     // 跨种子平均必须是正提升；单个种子允许波动（噪声），但改善的种子必须占多数
-    assert!(mean_lift > 0, "32 个种子的平均成功率提升必须为正，实测 {mean_lift}bp");
+    assert!(
+        mean_lift > 0,
+        "32 个种子的平均成功率提升必须为正，实测 {mean_lift}bp"
+    );
     assert!(
         improved_seeds * 2 > seeds.len(),
         "至少过半种子有正提升，实测 {improved_seeds}/{}",
@@ -157,12 +194,27 @@ fn invariants_hold_across_32_seeds() {
 #[test]
 fn runs_are_reproducible_for_every_sampled_seed() {
     // 全部种子都做一次「跑两遍」会翻倍耗时；抽 8 个种子做逐字节复现，覆盖不同市场形态
-    for seed in [0x1616u64, 2 * 0x1616, 5 * 0x1616, 9 * 0x1616, 17 * 0x1616, 23 * 0x1616] {
+    for seed in [
+        0x1616u64,
+        2 * 0x1616,
+        5 * 0x1616,
+        9 * 0x1616,
+        17 * 0x1616,
+        23 * 0x1616,
+    ] {
         let config = sweep_config(seed);
         let a = ab_test(&config).unwrap();
         let b = ab_test(&config).unwrap();
-        assert_eq!(a.0.digest().unwrap(), b.0.digest().unwrap(), "seed={seed} 对照组可复现");
-        assert_eq!(a.1.digest().unwrap(), b.1.digest().unwrap(), "seed={seed} 学习组可复现");
+        assert_eq!(
+            a.0.digest().unwrap(),
+            b.0.digest().unwrap(),
+            "seed={seed} 对照组可复现"
+        );
+        assert_eq!(
+            a.1.digest().unwrap(),
+            b.1.digest().unwrap(),
+            "seed={seed} 学习组可复现"
+        );
         assert_eq!(a.2, b.2, "seed={seed} 对比报告可复现");
     }
     // 换种子 → 换市场（避免「所有种子都得到同一个结果」这种伪复现）

@@ -62,9 +62,9 @@ impl Action {
                 let bytes = key.as_bytes();
                 let ok = !bytes.is_empty()
                     && bytes.len() <= 64
-                    && bytes
-                        .iter()
-                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'.' || *b == b'_');
+                    && bytes.iter().all(|b| {
+                        b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'.' || *b == b'_'
+                    });
                 if !ok || *value < 0 {
                     return Err(CoreError::InvalidKind);
                 }
@@ -90,7 +90,11 @@ impl Action {
         match self {
             Action::SetPolicy { key, value } => format!("set_policy {key}={value}"),
             Action::SetReputation { did, reputation_bp } => {
-                format!("set_reputation {}={}bp", au4a_core::short_id(did.as_str()), reputation_bp)
+                format!(
+                    "set_reputation {}={}bp",
+                    au4a_core::short_id(did.as_str()),
+                    reputation_bp
+                )
             }
             Action::Transfer { from, to, amount } => format!(
                 "transfer {}->{} amount={amount}",
@@ -98,7 +102,10 @@ impl Action {
                 au4a_core::short_id(to.as_str())
             ),
             Action::Slash { did, amount } => {
-                format!("slash {} amount={amount}", au4a_core::short_id(did.as_str()))
+                format!(
+                    "slash {} amount={amount}",
+                    au4a_core::short_id(did.as_str())
+                )
             }
         }
     }
@@ -183,7 +190,12 @@ pub struct Proposal {
 
 impl Proposal {
     /// 被签名的规范载荷（不含状态与轮次：那些是治理过程，不是动议内容）。
-    pub fn content(author: &Did, committee: CommitteeKind, title: &str, action: &Action) -> CoreResult<Value> {
+    pub fn content(
+        author: &Did,
+        committee: CommitteeKind,
+        title: &str,
+        action: &Action,
+    ) -> CoreResult<Value> {
         Ok(json!({
             "author": author,
             "committee": committee,
@@ -300,7 +312,10 @@ mod tests {
         for s in [Rejected, Blocked, Executed] {
             assert!(s.is_terminal());
             for next in [Open, Passed, Rejected, Blocked, Executed] {
-                assert!(!s.can_transition_to(next), "终态 {s:?} 不应能迁移到 {next:?}");
+                assert!(
+                    !s.can_transition_to(next),
+                    "终态 {s:?} 不应能迁移到 {next:?}"
+                );
             }
         }
     }
@@ -312,7 +327,10 @@ mod tests {
             &keys,
             CommitteeKind::Resource,
             "调整结算上限",
-            Action::SetPolicy { key: "cap".into(), value: 250 },
+            Action::SetPolicy {
+                key: "cap".into(),
+                value: 250,
+            },
         )
         .expect("draft");
         a.verify().expect("verify");
@@ -320,7 +338,10 @@ mod tests {
             &keys,
             CommitteeKind::Resource,
             "调整结算上限",
-            Action::SetPolicy { key: "cap".into(), value: 250 },
+            Action::SetPolicy {
+                key: "cap".into(),
+                value: 250,
+            },
         )
         .expect("draft");
         assert_eq!(a.id().expect("id"), b.id().expect("id"));
@@ -333,10 +354,16 @@ mod tests {
             &keys,
             CommitteeKind::Task,
             "改费率",
-            Action::SetPolicy { key: "fee".into(), value: 10 },
+            Action::SetPolicy {
+                key: "fee".into(),
+                value: 10,
+            },
         )
         .expect("draft");
-        draft.action = Action::SetPolicy { key: "fee".into(), value: 0 };
+        draft.action = Action::SetPolicy {
+            key: "fee".into(),
+            value: 0,
+        };
         assert_eq!(draft.verify(), Err(CoreError::InvalidSignature));
         draft.title = String::from("改别的");
         assert_eq!(draft.verify(), Err(CoreError::InvalidSignature));
@@ -344,22 +371,58 @@ mod tests {
 
     #[test]
     fn action_validation_refuses_illegal_payloads() {
-        assert!(Action::SetPolicy { key: String::new(), value: 1 }.validate().is_err());
-        assert!(Action::SetPolicy { key: "Bad Key".into(), value: 1 }.validate().is_err());
-        assert!(Action::SetPolicy { key: "ok".into(), value: -1 }.validate().is_err());
-        assert!(Action::SetPolicy { key: "ok".into(), value: 0 }.validate().is_ok());
-        assert!(Action::SetReputation { did: agent(3).did(), reputation_bp: 10_001 }
-            .validate()
-            .is_err());
-        assert!(Action::Transfer { from: agent(4).did(), to: agent(5).did(), amount: Credits(0) }
-            .validate()
-            .is_err());
-        assert!(Action::Slash { did: agent(6).did(), amount: Credits(5) }.validate().is_ok());
+        assert!(Action::SetPolicy {
+            key: String::new(),
+            value: 1
+        }
+        .validate()
+        .is_err());
+        assert!(Action::SetPolicy {
+            key: "Bad Key".into(),
+            value: 1
+        }
+        .validate()
+        .is_err());
+        assert!(Action::SetPolicy {
+            key: "ok".into(),
+            value: -1
+        }
+        .validate()
+        .is_err());
+        assert!(Action::SetPolicy {
+            key: "ok".into(),
+            value: 0
+        }
+        .validate()
+        .is_ok());
+        assert!(Action::SetReputation {
+            did: agent(3).did(),
+            reputation_bp: 10_001
+        }
+        .validate()
+        .is_err());
+        assert!(Action::Transfer {
+            from: agent(4).did(),
+            to: agent(5).did(),
+            amount: Credits(0)
+        }
+        .validate()
+        .is_err());
+        assert!(Action::Slash {
+            did: agent(6).did(),
+            amount: Credits(5)
+        }
+        .validate()
+        .is_ok());
     }
 
     #[test]
     fn describe_is_stable_and_short_id_based() {
-        let d = Action::Transfer { from: agent(7).did(), to: agent(8).did(), amount: Credits(12) };
+        let d = Action::Transfer {
+            from: agent(7).did(),
+            to: agent(8).did(),
+            amount: Credits(12),
+        };
         let text = d.describe();
         assert!(text.starts_with("transfer did:au4a:"));
         assert!(text.ends_with("amount=12"));

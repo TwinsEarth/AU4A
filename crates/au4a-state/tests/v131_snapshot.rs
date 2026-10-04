@@ -54,7 +54,10 @@ fn an_empty_zone_still_has_a_stable_root() {
     let snap = StateSnapshot::capture(&keys.did(), "node-a", 1, only_fs).unwrap();
     assert_eq!(snap.block_count(StateZone::Memory), 0);
     // 空区 root 是确定值，不是「不存在」——否则「三区完整恢复」无法被断言。
-    assert_eq!(snap.zone_root(StateZone::Memory).unwrap(), snap.zone_root(StateZone::Memory).unwrap());
+    assert_eq!(
+        snap.zone_root(StateZone::Memory).unwrap(),
+        snap.zone_root(StateZone::Memory).unwrap()
+    );
     assert_eq!(snap.zone_root(StateZone::Memory).unwrap().len(), 64);
 }
 
@@ -72,7 +75,10 @@ fn store_roundtrip_is_byte_identical() {
     assert_eq!(before.blocks(), after.blocks());
     // 跨节点读回：状态内容一致（迁移等价性），出处不同所以文档 root 不同。
     let moved = read_snapshot(&store, "live:", &keys.did(), "node-b", 42).unwrap();
-    assert_eq!(before.content_root().unwrap(), moved.content_root().unwrap());
+    assert_eq!(
+        before.content_root().unwrap(),
+        moved.content_root().unwrap()
+    );
     assert_ne!(before.root(), moved.root());
     assert!(before.same_content(&moved));
 }
@@ -141,7 +147,10 @@ fn a_replaced_snapshot_is_refused() {
     // 攻击者保留原 root，但换成另一份块集合。
     let mut forged = original.to_value().unwrap();
     forged["blocks"] = other.to_value().unwrap()["blocks"].clone();
-    assert_eq!(StateSnapshot::from_value(&forged), Err(CoreError::InvalidSignature));
+    assert_eq!(
+        StateSnapshot::from_value(&forged),
+        Err(CoreError::InvalidSignature)
+    );
 
     // 攻击者改 root 让「两个字段自洽」，但 root 与实际内容不符。
     let mut rehashed = forged.clone();
@@ -155,7 +164,10 @@ fn a_replaced_snapshot_is_refused() {
 #[test]
 fn store_rejects_non_canonical_values_before_they_enter() {
     let mut store = MemoryStore::new();
-    assert_eq!(store.put("memory:x", json!(1.5)), Err(CoreError::FloatForbidden));
+    assert_eq!(
+        store.put("memory:x", json!(1.5)),
+        Err(CoreError::FloatForbidden)
+    );
     assert_eq!(store.get("memory:x").unwrap(), None);
 }
 
@@ -172,7 +184,9 @@ fn track_self_check_is_green() {
 fn scenario_runs_the_full_snapshot_chain_on_a_shared_kernel() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let keys = agent(9);
-    kernel.register(&keys, "carrier", &["state.snapshot"], Credits(20)).unwrap();
+    kernel
+        .register(&keys, "carrier", &["state.snapshot"], Credits(20))
+        .unwrap();
     let out = au4a_state::scenario(&mut kernel).unwrap();
     assert_eq!(out["track"], json!("1.3"));
     assert_eq!(out["identical"], json!(true));
@@ -201,6 +215,9 @@ fn store_trait_is_object_safe_for_swappable_backends() {
     let mut store = MemoryStore::new();
     let dynamic: &mut dyn StateStore = &mut store;
     dynamic.put("memory:k", json!({"v": 1})).unwrap();
-    assert_eq!(dynamic.list("memory:").unwrap(), vec!["memory:k".to_string()]);
+    assert_eq!(
+        dynamic.list("memory:").unwrap(),
+        vec!["memory:k".to_string()]
+    );
     assert_eq!(dynamic.len(), 1);
 }

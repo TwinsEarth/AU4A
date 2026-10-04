@@ -255,7 +255,11 @@ impl Testnet {
             return Err(self.deny(ChainRefusal::new(
                 &tx.op,
                 RefusalCode::Malformed,
-                format!("交易链 {} 与本测试网 {} 不符", tx.chain.as_str(), self.chain.as_str()),
+                format!(
+                    "交易链 {} 与本测试网 {} 不符",
+                    tx.chain.as_str(),
+                    self.chain.as_str()
+                ),
             )));
         }
         if self.applied.contains(&tx.id) || self.pending.iter().any(|p| p.id == tx.id) {
@@ -397,7 +401,9 @@ impl Testnet {
         let live: Vec<ChainTx> = self
             .tx_log
             .values()
-            .filter(|tx| self.applied.contains(&tx.id) || self.pending.iter().any(|p| p.id == tx.id))
+            .filter(|tx| {
+                self.applied.contains(&tx.id) || self.pending.iter().any(|p| p.id == tx.id)
+            })
             .cloned()
             .collect();
         for tx in live {
@@ -436,14 +442,7 @@ mod tests {
     }
 
     fn tx(op: &str, nonce: u64) -> ChainTx {
-        ChainTx::new(
-            ChainId::BtcRegtest,
-            op,
-            &did(1),
-            nonce,
-            json!({ "k": op }),
-        )
-        .unwrap()
+        ChainTx::new(ChainId::BtcRegtest, op, &did(1), nonce, json!({ "k": op })).unwrap()
     }
 
     #[test]
@@ -483,7 +482,10 @@ mod tests {
             json!({ "k": "other" }),
         )
         .unwrap();
-        assert_eq!(net.accept(&stale).unwrap_err().code, RefusalCode::StaleEpoch);
+        assert_eq!(
+            net.accept(&stale).unwrap_err().code,
+            RefusalCode::StaleEpoch
+        );
         assert_eq!(net.refusals().len(), 2);
     }
 

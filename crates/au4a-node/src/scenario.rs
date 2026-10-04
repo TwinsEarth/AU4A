@@ -47,7 +47,10 @@ pub fn bootstrap(kernel: &mut Kernel, agents: usize) -> CoreResult<Vec<Did>> {
 }
 
 /// 跑完整链路：自举 → 10 条轨道 → 返回内核、各轨道结果与 Agent 身份。
-pub fn run_full<F>(agents: usize, mut on_step: F) -> CoreResult<(Kernel, Vec<TrackOutcome>, Vec<Did>)>
+pub fn run_full<F>(
+    agents: usize,
+    mut on_step: F,
+) -> CoreResult<(Kernel, Vec<TrackOutcome>, Vec<Did>)>
 where
     F: FnMut(&Kernel),
 {
@@ -59,7 +62,10 @@ where
     );
     on_step(&kernel);
     let outcomes = run_tracks(&mut kernel, |k| on_step(k));
-    kernel.emit("scenario.done", format!("{} tracks executed", outcomes.len()));
+    kernel.emit(
+        "scenario.done",
+        format!("{} tracks executed", outcomes.len()),
+    );
     on_step(&kernel);
     Ok((kernel, outcomes, dids))
 }
@@ -124,7 +130,10 @@ mod tests {
         let s2 = au4a_core::canonicalize(&summary_json(&k2, &o2, &[]).unwrap()).unwrap();
         // observe 里含进度事件，两次运行的轨道自检细节可能不同；比较结构性字段
         assert_eq!(o1.len(), o2.len());
-        assert_eq!(o1.iter().filter(|o| o.ok).count(), o2.iter().filter(|o| o.ok).count());
+        assert_eq!(
+            o1.iter().filter(|o| o.ok).count(),
+            o2.iter().filter(|o| o.ok).count()
+        );
         assert!(s1.contains("\"tracks_total\":10"));
         assert!(s2.contains("\"tracks_total\":10"));
         k1.ledger().check_conservation().unwrap();
@@ -156,8 +165,7 @@ mod tests {
             );
         }
         assert_eq!(
-            summary["observe"]["progress"]["messages_delivered"],
-            summary["messages_delivered"],
+            summary["observe"]["progress"]["messages_delivered"], summary["messages_delivered"],
             "投影与摘要必须来自同一个内核状态"
         );
     }

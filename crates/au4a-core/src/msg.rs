@@ -212,10 +212,17 @@ mod tests {
     #[test]
     fn body_tampering_is_detected() {
         let a = agent(3);
-        let mut env = Envelope::new(a.did(), None, kinds::PROGRESS_EVENT, 1, None, json!({"p": 1}))
-            .unwrap()
-            .seal(&a)
-            .unwrap();
+        let mut env = Envelope::new(
+            a.did(),
+            None,
+            kinds::PROGRESS_EVENT,
+            1,
+            None,
+            json!({"p": 1}),
+        )
+        .unwrap()
+        .seal(&a)
+        .unwrap();
         env.body = json!({"p": 2});
         assert!(env.verify().is_err());
     }
@@ -235,10 +242,17 @@ mod tests {
     #[test]
     fn frame_roundtrip() {
         let a = agent(6);
-        let env = Envelope::new(a.did(), Some(agent(7).did()), kinds::AGENT_CARD, 9, None, json!({"x": 1}))
-            .unwrap()
-            .seal(&a)
-            .unwrap();
+        let env = Envelope::new(
+            a.did(),
+            Some(agent(7).did()),
+            kinds::AGENT_CARD,
+            9,
+            None,
+            json!({"x": 1}),
+        )
+        .unwrap()
+        .seal(&a)
+        .unwrap();
         let frame = encode_frame(&env).unwrap();
         assert_eq!(decode_frame(&frame).unwrap(), env);
     }
@@ -253,7 +267,10 @@ mod tests {
     #[test]
     fn truncated_frames_are_refused() {
         assert_eq!(decode_frame(&[0, 0]), Err(CoreError::FrameTruncated));
-        assert_eq!(decode_frame(&[0, 0, 0, 5, b'{']), Err(CoreError::FrameTruncated));
+        assert_eq!(
+            decode_frame(&[0, 0, 0, 5, b'{']),
+            Err(CoreError::FrameTruncated)
+        );
     }
 
     #[test]

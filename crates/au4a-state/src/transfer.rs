@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
-use crate::snapshot::{MAX_NODE_LEN, StateSnapshot};
+use crate::snapshot::{StateSnapshot, MAX_NODE_LEN};
 
 /// 单帧上限：与 PMB 一致（1 MiB）。
 pub const MAX_FRAME: usize = 1024 * 1024;
@@ -154,7 +154,10 @@ impl LocalNetwork {
     }
 
     pub fn pending(&self, node: &NodeId) -> usize {
-        self.mailboxes.get(node.as_str()).map(|b| b.len()).unwrap_or(0)
+        self.mailboxes
+            .get(node.as_str())
+            .map(|b| b.len())
+            .unwrap_or(0)
     }
 
     pub fn stats(&self) -> NetworkStats {
@@ -400,9 +403,7 @@ mod tests {
     fn snap(pairs: &[(&str, &str, Value)]) -> StateSnapshot {
         let blocks: Vec<StateBlock> = pairs
             .iter()
-            .map(|(z, k, v)| {
-                StateBlock::new(StateZone::parse(z).unwrap(), *k, v.clone()).unwrap()
-            })
+            .map(|(z, k, v)| StateBlock::new(StateZone::parse(z).unwrap(), *k, v.clone()).unwrap())
             .collect();
         StateSnapshot::capture(&did(1), "node-a", 1, blocks).unwrap()
     }
@@ -439,7 +440,10 @@ mod tests {
         assert!(session.is_complete(report.chunks));
         let rebuilt = session.assemble(report.chunks, did(1)).unwrap();
         assert_eq!(rebuilt.id().unwrap(), delta.id().unwrap());
-        assert_eq!(rebuilt.apply_to(&a).unwrap().content_root().unwrap(), b.content_root().unwrap());
+        assert_eq!(
+            rebuilt.apply_to(&a).unwrap().content_root().unwrap(),
+            b.content_root().unwrap()
+        );
     }
 
     #[test]
@@ -475,18 +479,11 @@ mod tests {
         assert_eq!(net.stats().frames_dropped, 6);
 
         // 断线后重连：从第 2 块继续发（前 2 块不重发，也不重新协商）。
-        let resume = send_delta(
-            &mut net,
-            &na,
-            &nb,
-            &delta,
-            2,
-            session.resume_from(),
-        )
-        .unwrap();
+        let resume = send_delta(&mut net, &na, &nb, &delta, 2, session.resume_from()).unwrap();
         assert_eq!(resume.resumed_from, 2);
         assert_eq!(resume.frames, 4);
-        let (session, accepted, duplicates) = pull_into_session(&mut net, &nb, Some(session)).unwrap();
+        let (session, accepted, duplicates) =
+            pull_into_session(&mut net, &nb, Some(session)).unwrap();
         assert_eq!(accepted, 4);
         assert_eq!(duplicates, 0);
         assert!(session.is_complete(6));
@@ -507,7 +504,10 @@ mod tests {
         let chunks = delta.chunked(1).unwrap();
         let mut session = TransferSession::open(&chunks[0]).unwrap();
         assert_eq!(session.accept(&chunks[0]).unwrap(), AcceptOutcome::Accepted);
-        assert_eq!(session.accept(&chunks[0]).unwrap(), AcceptOutcome::Duplicate);
+        assert_eq!(
+            session.accept(&chunks[0]).unwrap(),
+            AcceptOutcome::Duplicate
+        );
         assert_eq!(session.duplicates(), 1);
         // 同一 index 却是**另一份自洽内容** → 冲突，必须拒绝而不是覆盖。
         let conflicting = crate::diff::test_chunk(
@@ -550,7 +550,10 @@ mod tests {
         let nx = NodeId::new("node-x").unwrap();
         let nb = NodeId::new("node-b").unwrap();
         let mut net = LocalNetwork::new(&[na.clone(), nb.clone()]);
-        assert_eq!(net.deliver(&na, &nx, vec![0, 0, 0, 2, b'{', b'}']), Err(CoreError::UnknownAgent));
+        assert_eq!(
+            net.deliver(&na, &nx, vec![0, 0, 0, 2, b'{', b'}']),
+            Err(CoreError::UnknownAgent)
+        );
         net.deliver(&na, &nb, vec![0, 0, 0, 2, b'{', b'}']).unwrap();
         assert_eq!(net.pending(&nb), 1);
         assert_eq!(net.drop_pending(&nb).unwrap(), 1);

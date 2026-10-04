@@ -13,7 +13,7 @@
 //! 3. **自己签自己**：`Declaration::sign` 只在 `declaration.agent == keys.did()` 时成功，
 //!    否则返回 `InvalidSignature`。替别人声明在构造阶段就被拒，不依赖接收方小心。
 
-use au4a_core::{canonical_hash, canonicalize, CoreError, CoreResult, Did, AgentKeys};
+use au4a_core::{canonical_hash, canonicalize, AgentKeys, CoreError, CoreResult, Did};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -194,21 +194,27 @@ mod tests {
     }
 
     fn cap(name: &str) -> Capability {
-        Capability::new(
-            SkillId::new(name).expect("valid skill"),
-            Credits(3),
-        )
+        Capability::new(SkillId::new(name).expect("valid skill"), Credits(3))
     }
 
     #[test]
     fn a_self_signed_declaration_verifies() {
         let a = keys(1);
-        let d = Declaration::new(a.did(), 1, 10, vec![cap("translate.en-zh"), cap("sentiment.analyze")])
-            .expect("coherent");
+        let d = Declaration::new(
+            a.did(),
+            1,
+            10,
+            vec![cap("translate.en-zh"), cap("sentiment.analyze")],
+        )
+        .expect("coherent");
         let signed = d.sign(&a).expect("self-signing works");
         signed.verify().expect("verifies");
         assert_eq!(
-            signed.capabilities().iter().map(|c| c.skill.as_str()).collect::<Vec<_>>(),
+            signed
+                .capabilities()
+                .iter()
+                .map(|c| c.skill.as_str())
+                .collect::<Vec<_>>(),
             vec!["sentiment.analyze", "translate.en-zh"],
             "声明按技能名排序"
         );
@@ -246,7 +252,10 @@ mod tests {
     fn incoherent_capabilities_are_refused_at_declaration_time() {
         let a = keys(5);
         let bad = cap("x").with_latency(900, 100);
-        assert_eq!(Declaration::new(a.did(), 1, 10, vec![bad]), Err(CoreError::Encoding));
+        assert_eq!(
+            Declaration::new(a.did(), 1, 10, vec![bad]),
+            Err(CoreError::Encoding)
+        );
     }
 
     #[test]

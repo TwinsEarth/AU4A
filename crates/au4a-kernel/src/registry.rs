@@ -131,9 +131,8 @@ impl AgentRegistry {
 
     /// 已声明质押总额（整数运算，溢出即错误而不是回绕）。
     pub fn stake_total(&self) -> CoreResult<Credits> {
-        self.cards().try_fold(Credits::ZERO, |acc, card| {
-            acc.checked_add(card.stake)
-        })
+        self.cards()
+            .try_fold(Credits::ZERO, |acc, card| acc.checked_add(card.stake))
     }
 
     /// 可复现快照（内容寻址输入）。
@@ -195,7 +194,10 @@ mod tests {
     fn duplicate_identity_is_a_call_error() {
         let mut reg = AgentRegistry::new();
         reg.insert(card(1, "a", &["x"], 10)).unwrap();
-        assert_eq!(reg.insert(card(1, "a", &["x"], 10)), Err(CoreError::DuplicateAgent));
+        assert_eq!(
+            reg.insert(card(1, "a", &["x"], 10)),
+            Err(CoreError::DuplicateAgent)
+        );
         assert_eq!(reg.len(), 1);
     }
 
@@ -220,7 +222,8 @@ mod tests {
     fn skill_index_follows_registration_order_and_stays_faithful() {
         let mut reg = AgentRegistry::new();
         reg.insert(card(1, "first", &["translate"], 10)).unwrap();
-        reg.insert(card(2, "second", &["translate", "audit"], 10)).unwrap();
+        reg.insert(card(2, "second", &["translate", "audit"], 10))
+            .unwrap();
         let holders: Vec<&str> = reg
             .agents_with_skill("translate")
             .iter()

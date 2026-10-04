@@ -175,7 +175,9 @@ pub fn issue(
 ) -> CoreResult<EmergencyDirective> {
     // 1. 只有安全委员会持有紧急通道。
     let security = council.committee(CommitteeKind::Security);
-    let seated = security.map(|c| c.has_member(issuer.did())).unwrap_or(false);
+    let seated = security
+        .map(|c| c.has_member(issuer.did()))
+        .unwrap_or(false);
     if !seated {
         kernel.refuse(
             issuer.did(),
@@ -185,18 +187,33 @@ pub fn issue(
         return Err(CoreError::InvalidSignature);
     }
     if kernel.card(issuer.did()).is_none() {
-        kernel.refuse(issuer.did(), RefusalCode::Unauthorized, "issuer is not a registered agent");
+        kernel.refuse(
+            issuer.did(),
+            RefusalCode::Unauthorized,
+            "issuer is not a registered agent",
+        );
         return Err(CoreError::UnknownAgent);
     }
     // 2. 策略与理由都要合法、公开。
-    Action::SetPolicy { key: key.to_string(), value }
-        .validate()
-        .map_err(|err| {
-            kernel.refuse(issuer.did(), RefusalCode::Malformed, format!("illegal emergency policy: {err}"));
-            err
-        })?;
+    Action::SetPolicy {
+        key: key.to_string(),
+        value,
+    }
+    .validate()
+    .map_err(|err| {
+        kernel.refuse(
+            issuer.did(),
+            RefusalCode::Malformed,
+            format!("illegal emergency policy: {err}"),
+        );
+        err
+    })?;
     if reason.trim().is_empty() {
-        kernel.refuse(issuer.did(), RefusalCode::Malformed, "emergency directive without a public reason");
+        kernel.refuse(
+            issuer.did(),
+            RefusalCode::Malformed,
+            "emergency directive without a public reason",
+        );
         return Err(CoreError::InvalidKind);
     }
     let at = council.tick();
@@ -238,7 +255,10 @@ pub fn issue(
     council.record_event(
         "emergency.issued",
         &id,
-        format!("{key}={value} by {} :: {reason}", au4a_core::short_id(issuer.did().as_str())),
+        format!(
+            "{key}={value} by {} :: {reason}",
+            au4a_core::short_id(issuer.did().as_str())
+        ),
     );
     council.store_emergency(directive.clone());
     Ok(directive)
@@ -286,15 +306,23 @@ pub fn confirm(
             at: now,
             rolled_back,
         };
-        let updated = council.finish_emergency(directive_id, EmergencyStatus::Expired, confirmation.clone());
+        let updated =
+            council.finish_emergency(directive_id, EmergencyStatus::Expired, confirmation.clone());
         kernel.emit(
             "council.emergency.expired",
-            format!("{} 超过确认期限，已回滚策略 {}", au4a_core::short_id(directive_id), directive.key),
+            format!(
+                "{} 超过确认期限，已回滚策略 {}",
+                au4a_core::short_id(directive_id),
+                directive.key
+            ),
         );
         council.record_event(
             "emergency.expired",
             directive_id,
-            format!("deadline={} rolled_back={rolled_back}", directive.confirm_deadline),
+            format!(
+                "deadline={} rolled_back={rolled_back}",
+                directive.confirm_deadline
+            ),
         );
         return updated;
     }
@@ -304,15 +332,27 @@ pub fn confirm(
     let mut no = 0usize;
     for approval in approvals {
         if approval.directive != directive_id {
-            kernel.refuse(&approval.voter, RefusalCode::Malformed, "approval bound to another directive");
+            kernel.refuse(
+                &approval.voter,
+                RefusalCode::Malformed,
+                "approval bound to another directive",
+            );
             return Err(CoreError::InvalidKind);
         }
         if let Err(err) = approval.verify() {
-            kernel.refuse(&approval.voter, RefusalCode::Unauthorized, format!("approval signature: {err}"));
+            kernel.refuse(
+                &approval.voter,
+                RefusalCode::Unauthorized,
+                format!("approval signature: {err}"),
+            );
             return Err(err);
         }
         if !all_members.contains(&approval.voter) {
-            kernel.refuse(&approval.voter, RefusalCode::Unauthorized, "approver is not a seated member");
+            kernel.refuse(
+                &approval.voter,
+                RefusalCode::Unauthorized,
+                "approver is not a seated member",
+            );
             return Err(CoreError::InvalidSignature);
         }
         if !seen.insert(approval.voter.clone()) {

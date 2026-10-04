@@ -43,10 +43,7 @@ pub struct Announcement {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Ingest {
     /// 信封与声明都通过，结果由图给出（Applied / Unchanged / Rejected）。
-    Routed {
-        about: Did,
-        outcome: DeclareOutcome,
-    },
+    Routed { about: Did, outcome: DeclareOutcome },
     /// 在信封层就被拒：未签名、被篡改、类型不符、身份不符、协议版本不符。
     Refused {
         from: Did,
@@ -100,7 +97,11 @@ impl Ingest {
 /// 构造一条广播能力通告（`to: None`，先签名后发送）。
 ///
 /// 只能通告自己的声明：`Declaration::sign` 在 `agent != keys.did()` 时返回 `InvalidSignature`。
-pub fn announce(keys: &au4a_core::AgentKeys, declaration: &Declaration, ts: u64) -> CoreResult<Envelope> {
+pub fn announce(
+    keys: &au4a_core::AgentKeys,
+    declaration: &Declaration,
+    ts: u64,
+) -> CoreResult<Envelope> {
     let signed = declaration.clone().sign(keys)?;
     Envelope::new(
         keys.did(),
@@ -189,11 +190,18 @@ pub fn parse_announcement(env: &Envelope) -> Result<Announcement, (RefusalCode, 
         .get("declaration")
         .cloned()
         .ok_or((RefusalCode::Malformed, "missing declaration".to_string()))?;
-    let signed = SignedDeclaration::from_value(&payload)
-        .map_err(|err| (RefusalCode::Malformed, format!("declaration encoding: {err}")))?;
-    signed
-        .verify()
-        .map_err(|err| (RefusalCode::Unauthorized, format!("declaration signature: {err}")))?;
+    let signed = SignedDeclaration::from_value(&payload).map_err(|err| {
+        (
+            RefusalCode::Malformed,
+            format!("declaration encoding: {err}"),
+        )
+    })?;
+    signed.verify().map_err(|err| {
+        (
+            RefusalCode::Unauthorized,
+            format!("declaration signature: {err}"),
+        )
+    })?;
     // 5) 信封发送者必须就是声明者：信道上的身份与陈述的身份必须一致。
     if signed.declaration.agent != env.from {
         return Err((
@@ -238,7 +246,8 @@ pub fn parse_query(env: &Envelope) -> Result<(Did, SkillId), (RefusalCode, Strin
         .get("skill")
         .and_then(Value::as_str)
         .ok_or((RefusalCode::Malformed, "missing skill".to_string()))?;
-    let skill = SkillId::new(raw).map_err(|err| (RefusalCode::Malformed, format!("skill: {err}")))?;
+    let skill =
+        SkillId::new(raw).map_err(|err| (RefusalCode::Malformed, format!("skill: {err}")))?;
     Ok((env.from.clone(), skill))
 }
 
@@ -301,7 +310,11 @@ impl PumpReport {
 /// 只有 `capgraph.*` 类型的信封会被本图消费；其余信封**原样转发回队列**
 /// （重新 `send` 同一个已签名信封，id 不变），因为一个能力图没有资格吞掉别的轨道的消息。
 /// 每一条拒绝都同时写进内核的拒绝记录：这样观察层看到的「谁因为什么被拒」是完整的。
-pub fn pump(kernel: &mut au4a_kernel::Kernel, graph: &mut AgentCapabilityGraph, now: u64) -> PumpReport {
+pub fn pump(
+    kernel: &mut au4a_kernel::Kernel,
+    graph: &mut AgentCapabilityGraph,
+    now: u64,
+) -> PumpReport {
     let inbox = kernel.drain();
     let mut report = PumpReport::default();
     for env in inbox {
@@ -368,8 +381,7 @@ mod tests {
     fn tampering_with_the_announcement_is_refused() {
         let a = keys(2);
         let mut env = announce(&a, &declaration(&a, 1, &["x"]), 3).expect("announce");
-        env.body["declaration"]["declaration"]["capabilities"][0]["price_per_unit"] =
-            json!(0);
+        env.body["declaration"]["declaration"]["capabilities"][0]["price_per_unit"] = json!(0);
         let (code, _) = parse_announcement(&env).expect_err("tampered");
         assert_eq!(code, RefusalCode::Unauthorized);
         assert!(code.is_misconduct());
@@ -380,12 +392,8 @@ mod tests {
         let a = keys(3);
         let b = keys(4);
         // B 把 A 的合法声明放进自己的信封：内容是真的，但信道身份与陈述身份不一致。
-        let body = announce_body(
-            &declaration(&a, 1, &["x"])
-                .sign(&a)
-                .expect("A signs"),
-        )
-        .expect("body");
+        let body =
+            announce_body(&declaration(&a, 1, &["x"]).sign(&a).expect("A signs")).expect("body");
         let env = Envelope::new(b.did(), None, KIND_ANNOUNCE, 1, None, body)
             .expect("envelope")
             .seal(&b)
@@ -465,8 +473,12 @@ mod tests {
         let a = keys(9);
         let b = keys(10);
         let mut kernel = Kernel::new(KernelConfig::default());
-        kernel.register(&a, "a", &["x"], Credits(20)).expect("register");
-        kernel.register(&b, "b", &["y"], Credits(20)).expect("register");
+        kernel
+            .register(&a, "a", &["x"], Credits(20))
+            .expect("register");
+        kernel
+            .register(&b, "b", &["y"], Credits(20))
+            .expect("register");
         let foreign = Envelope::new(b.did(), None, kinds::AGENT_CARD, 1, None, json!({"hi": 1}))
             .expect("envelope")
             .seal(&b)

@@ -54,8 +54,7 @@ pub use observer::{
     ObserverReport, ObserverRoute,
 };
 pub use permission::{
-    authority_roots, explain, explain_with_council, Authority, Capability, Denial,
-    PermissionReport,
+    authority_roots, explain, explain_with_council, Authority, Capability, Denial, PermissionReport,
 };
 pub use pmb::{
     announce_card, classify_kind, council_vote, decode_and_verify, encode_checked, kinds_ext,
@@ -168,7 +167,10 @@ impl Kernel {
             refusals: Vec::new(),
             progress: Vec::new(),
         };
-        kernel.emit("network.genesis", format!("network_id={}", kernel.config.network_id));
+        kernel.emit(
+            "network.genesis",
+            format!("network_id={}", kernel.config.network_id),
+        );
         kernel
     }
 
@@ -360,7 +362,12 @@ impl Kernel {
         self.clock.tick();
         self.emit(
             "agent.registered",
-            format!("{} stake={} skills={}", card.display, stake, card.skills.len()),
+            format!(
+                "{} stake={} skills={}",
+                card.display,
+                stake,
+                card.skills.len()
+            ),
         );
         Ok(card)
     }
@@ -377,7 +384,11 @@ impl Kernel {
             return Err(err);
         }
         if !self.agents.contains(&env.from) {
-            self.refuse(&env.from, RefusalCode::Unauthorized, "sender not registered");
+            self.refuse(
+                &env.from,
+                RefusalCode::Unauthorized,
+                "sender not registered",
+            );
             return Err(CoreError::UnknownAgent);
         }
         if let Some(to) = &env.to {
@@ -407,7 +418,8 @@ impl Kernel {
 
     /// 记录一次拒绝。
     pub fn refuse(&mut self, who: &Did, code: RefusalCode, reason: impl Into<String>) {
-        self.refusals.push((who.clone(), Refusal::new(code, reason)));
+        self.refusals
+            .push((who.clone(), Refusal::new(code, reason)));
     }
 
     pub fn refusals(&self) -> &[(Did, Refusal)] {
@@ -433,7 +445,11 @@ impl Kernel {
         evidence: EvidenceGrade,
     ) -> CoreResult<()> {
         if !evidence.settleable(amount, self.config.cpu_proto_settle_cap) {
-            self.refuse(from, RefusalCode::PolicyDenied, "evidence gate refused settlement");
+            self.refuse(
+                from,
+                RefusalCode::PolicyDenied,
+                "evidence gate refused settlement",
+            );
             return Err(CoreError::InsufficientFunds);
         }
         self.ledger.transfer(from, to, amount)?;
@@ -586,7 +602,10 @@ pub fn self_check() -> Vec<SelfCheck> {
                 SelfCheck::pass(
                     TRACK,
                     "host.audit",
-                    format!("{} 项宿主不变式全部成立（确定性种子引导）", audit.findings.len()),
+                    format!(
+                        "{} 项宿主不变式全部成立（确定性种子引导）",
+                        audit.findings.len()
+                    ),
                 )
             } else {
                 SelfCheck::fail(
@@ -595,7 +614,11 @@ pub fn self_check() -> Vec<SelfCheck> {
                     format!(
                         "{} 项不成立：{:?}",
                         audit.failures().len(),
-                        audit.failures().iter().map(|f| f.name.clone()).collect::<Vec<String>>()
+                        audit
+                            .failures()
+                            .iter()
+                            .map(|f| f.name.clone())
+                            .collect::<Vec<String>>()
                     ),
                 )
             });
@@ -603,7 +626,10 @@ pub fn self_check() -> Vec<SelfCheck> {
         Err(e) => checks.push(SelfCheck::fail(TRACK, "host.bootstrap", e.to_string())),
     }
 
-    match (bootstrap(KernelConfig::default()), bootstrap(KernelConfig::default())) {
+    match (
+        bootstrap(KernelConfig::default()),
+        bootstrap(KernelConfig::default()),
+    ) {
         (Ok(a), Ok(b)) => {
             let same = a.registry_fingerprint() == b.registry_fingerprint();
             checks.push(if same {
@@ -695,7 +721,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let mut settled_cpu_proto = 0usize;
     let mut refused_unverified = 0usize;
     if kernel
-        .settle(&host.did, &observer.did, Credits(5), EvidenceGrade::Verified)
+        .settle(
+            &host.did,
+            &observer.did,
+            Credits(5),
+            EvidenceGrade::Verified,
+        )
         .is_ok()
     {
         settled_verified += 1;
@@ -707,7 +738,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         settled_cpu_proto += 1;
     }
     if kernel
-        .settle(&observer.did, &settler.did, Credits(1), EvidenceGrade::Unverified)
+        .settle(
+            &observer.did,
+            &settler.did,
+            Credits(1),
+            EvidenceGrade::Unverified,
+        )
         .is_err()
     {
         refused_unverified += 1;
@@ -852,10 +888,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         operator_bound.requires_operator_approval = true;
         adapt(&operator_bound, &MigrationLimits::default())
             .err()
-            .map(|refusal| json!({
-                "reason": refusal.as_str(),
-                "code": refusal.to_refusal_code().as_str(),
-            }))
+            .map(|refusal| {
+                json!({
+                    "reason": refusal.as_str(),
+                    "code": refusal.to_refusal_code().as_str(),
+                })
+            })
     };
     let migration_json = json!({
         "plugin": plan.plugin,
@@ -997,7 +1035,9 @@ mod tests {
     fn agents_register_themselves_without_a_human_account() {
         let mut k = Kernel::new(KernelConfig::default());
         let keys = agent(1);
-        let card = k.register(&keys, "translator", &["translate.en-zh"], Credits(20)).unwrap();
+        let card = k
+            .register(&keys, "translator", &["translate.en-zh"], Credits(20))
+            .unwrap();
         assert_eq!(card.did, keys.did());
         assert_eq!(k.agent_count(), 1);
         assert_eq!(k.ledger().balance(&keys.did()).locked, Credits(20));
@@ -1023,15 +1063,25 @@ mod tests {
         let b = agent(4);
         k.register(&a, "a", &["x"], Credits(20)).unwrap();
         k.register(&b, "b", &["y"], Credits(20)).unwrap();
-        let mut env = Envelope::new(a.did(), Some(b.did()), kinds::AGENT_CARD, 1, None, json!({}))
-            .unwrap()
-            .seal(&a)
-            .unwrap();
+        let mut env = Envelope::new(
+            a.did(),
+            Some(b.did()),
+            kinds::AGENT_CARD,
+            1,
+            None,
+            json!({}),
+        )
+        .unwrap()
+        .seal(&a)
+        .unwrap();
         env.body = json!({"tampered": true});
         assert!(k.send(&env).is_err());
         let (_, refusal) = &k.refusals()[0];
         assert!(refusal.code.is_misconduct());
-        assert_eq!(k.escalation_for(&a.did(), refusal.code), au4a_core::Escalation::Quarantine);
+        assert_eq!(
+            k.escalation_for(&a.did(), refusal.code),
+            au4a_core::Escalation::Quarantine
+        );
     }
 
     #[test]
@@ -1041,10 +1091,17 @@ mod tests {
         let b = agent(6);
         k.register(&a, "a", &["x"], Credits(20)).unwrap();
         k.register(&b, "b", &["y"], Credits(20)).unwrap();
-        let env = Envelope::new(a.did(), Some(b.did()), kinds::PROGRESS_EVENT, 1, None, json!({"p":1}))
-            .unwrap()
-            .seal(&a)
-            .unwrap();
+        let env = Envelope::new(
+            a.did(),
+            Some(b.did()),
+            kinds::PROGRESS_EVENT,
+            1,
+            None,
+            json!({"p":1}),
+        )
+        .unwrap()
+        .seal(&a)
+        .unwrap();
         let report = k.send(&env).unwrap();
         assert!(report.accepted);
         assert_eq!(k.drain().len(), 1);
@@ -1056,10 +1113,17 @@ mod tests {
         let mut k = Kernel::new(KernelConfig::default());
         let a = agent(7);
         k.register(&a, "a", &["x"], Credits(20)).unwrap();
-        let env = Envelope::new(a.did(), None, kinds::AGENT_CARD, 1, None, json!({"announce": true}))
-            .unwrap()
-            .seal(&a)
-            .unwrap();
+        let env = Envelope::new(
+            a.did(),
+            None,
+            kinds::AGENT_CARD,
+            1,
+            None,
+            json!({"announce": true}),
+        )
+        .unwrap()
+        .seal(&a)
+        .unwrap();
         assert!(k.send(&env).unwrap().accepted);
     }
 

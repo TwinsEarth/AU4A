@@ -38,7 +38,11 @@ fn a_sealed_announcement_survives_the_wire_and_the_frame_codec() {
     assert_eq!(env.body["protocol"].as_str(), Some(PROTOCOL));
 
     let frame = au4a_core::encode_frame(&env).expect("frames");
-    assert_eq!(&frame[..4], &(frame.len() as u32 - 4).to_be_bytes(), "4 字节大端长度前缀");
+    assert_eq!(
+        &frame[..4],
+        &(frame.len() as u32 - 4).to_be_bytes(),
+        "4 字节大端长度前缀"
+    );
     let decoded = au4a_core::decode_frame(&frame).expect("decodes");
     assert_eq!(decoded, env);
     assert_eq!(decoded.id, env.id, "内容寻址 id 不因传输改变");
@@ -46,7 +50,12 @@ fn a_sealed_announcement_survives_the_wire_and_the_frame_codec() {
 
 #[test]
 fn a_tampered_announcement_is_refused_as_misconduct_evidence() {
-    for field in ["price_per_unit", "throughput_per_min", "reliability_bp", "current_load_bp"] {
+    for field in [
+        "price_per_unit",
+        "throughput_per_min",
+        "reliability_bp",
+        "current_load_bp",
+    ] {
         let a = keys(2);
         let mut env = announce(&a, &declaration(&a, 1), 3).expect("announce");
         env.body["declaration"]["declaration"]["capabilities"][0][field] = serde_json::json!(1);
@@ -61,7 +70,8 @@ fn the_envelope_sender_must_be_the_declaration_author() {
     let a = keys(3);
     let b = keys(4);
     let signed = declaration(&a, 1).sign(&a).expect("A signs");
-    let body = serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
+    let body =
+        serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
     let smuggled = Envelope::new(b.did(), None, KIND_ANNOUNCE, 1, None, body)
         .expect("envelope")
         .seal(&b)
@@ -82,10 +92,17 @@ fn wrong_kind_or_wrong_protocol_never_reaches_the_graph() {
     let b = keys(7);
     let mut graph = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
 
-    let foreign_kind = Envelope::new(b.did(), None, kinds::PROGRESS_EVENT, 1, None, serde_json::json!({}))
-        .expect("envelope")
-        .seal(&b)
-        .expect("sealed");
+    let foreign_kind = Envelope::new(
+        b.did(),
+        None,
+        kinds::PROGRESS_EVENT,
+        1,
+        None,
+        serde_json::json!({}),
+    )
+    .expect("envelope")
+    .seal(&b)
+    .expect("sealed");
     assert_eq!(
         ingest(&mut graph, &foreign_kind, 0).refusal(),
         Some(RefusalCode::Unsupported)
@@ -120,23 +137,25 @@ fn a_full_broadcast_round_trip_lands_in_the_neighbor_view() {
     }
     let alice = &agents[0];
     let mut graph = AgentCapabilityGraph::new(alice.keys.did(), CapGraphConfig::default());
-    graph
-        .apply(
-            &Declaration::new(alice.keys.did(), 1, 0, alice.capabilities.clone())
-                .expect("coherent")
-                .sign(&alice.keys)
-                .expect("signed"),
-            0,
-        );
+    graph.apply(
+        &Declaration::new(alice.keys.did(), 1, 0, alice.capabilities.clone())
+            .expect("coherent")
+            .sign(&alice.keys)
+            .expect("signed"),
+        0,
+    );
 
     for agent in &agents[1..] {
         let env = announce(
             &agent.keys,
-            &Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone()).expect("coherent"),
+            &Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone())
+                .expect("coherent"),
             1,
         )
         .expect("announce");
-        kernel.send(&env).expect("kernel accepts the sealed broadcast");
+        kernel
+            .send(&env)
+            .expect("kernel accepts the sealed broadcast");
     }
     let report = pump(&mut kernel, &mut graph, 1);
     assert_eq!(report.routed, 4);
@@ -153,14 +172,25 @@ fn pump_leaves_other_tracks_messages_in_the_queue() {
     let a = keys(8);
     let b = keys(9);
     let mut kernel = Kernel::new(KernelConfig::default());
-    kernel.register(&a, "a", &[], Credits(20)).expect("register a");
-    kernel.register(&b, "b", &[], Credits(20)).expect("register b");
+    kernel
+        .register(&a, "a", &[], Credits(20))
+        .expect("register a");
+    kernel
+        .register(&b, "b", &[], Credits(20))
+        .expect("register b");
 
     let mine = announce(&b, &declaration(&b, 1), 1).expect("announce");
-    let theirs = Envelope::new(b.did(), None, kinds::SAFETY_REPORT, 1, None, serde_json::json!({"x": 1}))
-        .expect("envelope")
-        .seal(&b)
-        .expect("sealed");
+    let theirs = Envelope::new(
+        b.did(),
+        None,
+        kinds::SAFETY_REPORT,
+        1,
+        None,
+        serde_json::json!({"x": 1}),
+    )
+    .expect("envelope")
+    .seal(&b)
+    .expect("sealed");
     kernel.send(&mine).expect("accepted");
     kernel.send(&theirs).expect("accepted");
 
@@ -179,12 +209,17 @@ fn a_malicious_announcement_is_recorded_in_the_kernel_refusals() {
     let a = keys(10);
     let b = keys(11);
     let mut kernel = Kernel::new(KernelConfig::default());
-    kernel.register(&a, "a", &[], Credits(20)).expect("register a");
-    kernel.register(&b, "b", &[], Credits(20)).expect("register b");
+    kernel
+        .register(&a, "a", &[], Credits(20))
+        .expect("register a");
+    kernel
+        .register(&b, "b", &[], Credits(20))
+        .expect("register b");
 
     // 伪造者用自己的私钥签一个「不是我声明的声明」：信封层就被拒。
     let signed = declaration(&a, 1).sign(&a).expect("A signs");
-    let body = serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
+    let body =
+        serde_json::json!({"protocol": PROTOCOL, "declaration": signed.to_value().expect("v")});
     let forged = Envelope::new(b.did(), None, KIND_ANNOUNCE, 1, None, body)
         .expect("envelope")
         .seal(&b)
@@ -235,9 +270,15 @@ fn ingest_reports_the_graph_layer_outcome() {
     let b = keys(15);
     let mut graph = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
     let first = announce(&b, &declaration(&b, 1), 1).expect("announce");
-    assert!(matches!(ingest(&mut graph, &first, 1), Ingest::Routed { .. }));
+    assert!(matches!(
+        ingest(&mut graph, &first, 1),
+        Ingest::Routed { .. }
+    ));
     assert!(ingest(&mut graph, &first, 1).is_routed());
-    assert!(!ingest(&mut graph, &first, 1).is_applied(), "重放是 Unchanged 不是 Applied");
+    assert!(
+        !ingest(&mut graph, &first, 1).is_applied(),
+        "重放是 Unchanged 不是 Applied"
+    );
     let newer = announce(&b, &declaration(&b, 2), 2).expect("announce");
     assert!(ingest(&mut graph, &newer, 2).is_applied());
     assert_eq!(graph.neighbor(&b.did()).expect("record").epoch, 2);
@@ -261,5 +302,8 @@ fn scenario_broadcasts_and_reports_a_rejected_tamper() {
 
     // 同样的输入 → 同样的输出（可重放）。
     let mut other = Kernel::new(KernelConfig::default());
-    assert_eq!(au4a_capgraph::scenario(&mut other).expect("scenario runs"), value);
+    assert_eq!(
+        au4a_capgraph::scenario(&mut other).expect("scenario runs"),
+        value
+    );
 }

@@ -52,11 +52,7 @@ fn the_full_lifecycle_reaches_an_arbitrated_case() {
     let participants = vec![w.reporter.did(), w.subject.did()];
 
     // 1) 权限查询：Agent 自己看边界（免费、结构化）。
-    let boundary = PermissionBoundary::of(
-        &w.kernel,
-        w.office.config(),
-        &w.reporter.did(),
-    );
+    let boundary = PermissionBoundary::of(&w.kernel, w.office.config(), &w.reporter.did());
     assert!(boundary.allows(Permission::ReportViolation));
     assert!(!boundary.allows(Permission::IssueVerdict));
 
@@ -74,7 +70,10 @@ fn the_full_lifecycle_reaches_an_arbitrated_case() {
     let receipt = w.office.handle(&mut w.kernel, &queued[0]).unwrap().unwrap();
     receipt.verify().unwrap();
     assert_eq!(receipt.in_reply_to.as_deref(), Some(query.id.as_str()));
-    assert_eq!(receipt.body["result"]["boundary"]["registered"], json!(true));
+    assert_eq!(
+        receipt.body["result"]["boundary"]["registered"],
+        json!(true)
+    );
 
     // 3) 未确认举报：不动账本。
     let before_report = ledger_snapshot(&w.kernel, &participants);
@@ -102,10 +101,18 @@ fn the_full_lifecycle_reaches_an_arbitrated_case() {
             &mut w.kernel,
             &w.reporter,
             &report.id,
-            vec![CaseStatus::Reported, CaseStatus::Penalized, CaseStatus::Arbitrated],
+            vec![
+                CaseStatus::Reported,
+                CaseStatus::Penalized,
+                CaseStatus::Arbitrated,
+            ],
         )
         .unwrap();
-    assert_eq!(w.office.inbox(&w.reporter.did()).len(), 1, "订阅即回放当前状态");
+    assert_eq!(
+        w.office.inbox(&w.reporter.did()).len(),
+        1,
+        "订阅即回放当前状态"
+    );
 
     // 5) 处罚：仲裁者签名的数据契约，账本唯一改动入口。
     let order = PenaltyOrder::new(
@@ -125,9 +132,8 @@ fn the_full_lifecycle_reaches_an_arbitrated_case() {
 
     // 6) 申诉：主体本人签名，只提交证据、推状态，不动账本。
     let appeal_payload = json!({"receipt": "signed-by-receiver"});
-    let appeal_evidence = vec![
-        EvidenceRef::commit(EvidenceKind::Witness, &appeal_payload).unwrap(),
-    ];
+    let appeal_evidence =
+        vec![EvidenceRef::commit(EvidenceKind::Witness, &appeal_payload).unwrap()];
     let after_penalty = ledger_snapshot(&w.kernel, &participants);
     let appeal = w
         .office
@@ -177,7 +183,11 @@ fn the_full_lifecycle_reaches_an_arbitrated_case() {
     assert_eq!(w.kernel.ledger().slashed(), Credits(8));
     assert_eq!(w.office.slashed_total().unwrap(), Credits(8));
     assert!(w.office.verify_chain().ok);
-    assert_eq!(w.office.event_count(), 5, "reported/subscribed/penalized/appealed/arbitrated");
+    assert_eq!(
+        w.office.event_count(),
+        5,
+        "reported/subscribed/penalized/appealed/arbitrated"
+    );
     w.kernel.ledger().check_conservation().unwrap();
 
     let delivered: Vec<&str> = w
@@ -282,7 +292,7 @@ fn the_pmb_path_and_the_local_path_accept_the_same_record() {
     w.office
         .accept_report(&mut w.kernel, &report, &payload)
         .unwrap();
-    assert_eq!(w.office.status_of(&report.id), Some(CaseStatus::Reported));    // 同一份举报再走一次：案件 id 相同（内容寻址），但事件链各自追加。
+    assert_eq!(w.office.status_of(&report.id), Some(CaseStatus::Reported)); // 同一份举报再走一次：案件 id 相同（内容寻址），但事件链各自追加。
     w.office.handle(&mut w.kernel, &envelope).unwrap();
     assert_eq!(w.office.event_count(), 2);
     assert!(w.office.verify_chain().ok);

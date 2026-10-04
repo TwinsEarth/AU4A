@@ -41,7 +41,7 @@ pub use audit::{
 pub use claims::{claims_are_well_formed, claims_json, Claim, CLAIMS};
 pub use committee::{Committee, CommitteeKind, Member, COMMITTEE_COUNT};
 pub use election::{
-    Candidate, ElectionBallot, ElectionConfig, ElectionOutcome, Elected, IgnoredBallot, Ineligible,
+    Candidate, Elected, ElectionBallot, ElectionConfig, ElectionOutcome, IgnoredBallot, Ineligible,
     ScoreRow,
 };
 pub use emergency::{
@@ -50,11 +50,11 @@ pub use emergency::{
 pub use execution::{ExecutionEffect, ExecutionReceipt};
 pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
 pub use invariants::{
-    check_all, replay, replay_report, state_digest, INVARIANT_NAMES, ReplayReport,
+    check_all, replay, replay_report, state_digest, ReplayReport, INVARIANT_NAMES,
 };
 pub use ongov::{
-    no_false_chain_claims, project_all, state_summary, ChainBinding, GovExecution, GovState, GovVeto,
-    GovernorToken,
+    no_false_chain_claims, project_all, state_summary, ChainBinding, GovExecution, GovState,
+    GovVeto, GovernorToken,
 };
 pub use proposal::{Action, AgentIdentity, Proposal, ProposalDraft, ProposalState};
 pub use veto::{HumanVeto, Veto, VetoReceipt};
@@ -259,19 +259,35 @@ impl Council {
         let mut seen: std::collections::BTreeSet<Did> = std::collections::BTreeSet::new();
         for ballot in ballots {
             if ballot.committee != kind {
-                kernel.refuse(&ballot.voter, RefusalCode::Malformed, "ballot bound to another committee");
+                kernel.refuse(
+                    &ballot.voter,
+                    RefusalCode::Malformed,
+                    "ballot bound to another committee",
+                );
                 return Err(CoreError::InvalidKind);
             }
             if let Err(err) = ballot.verify() {
-                kernel.refuse(&ballot.voter, RefusalCode::Unauthorized, format!("ballot signature: {err}"));
+                kernel.refuse(
+                    &ballot.voter,
+                    RefusalCode::Unauthorized,
+                    format!("ballot signature: {err}"),
+                );
                 return Err(err);
             }
             if !kernel.agents().any(|card| card.did == ballot.voter) {
-                kernel.refuse(&ballot.voter, RefusalCode::Unauthorized, "ballot from unregistered voter");
+                kernel.refuse(
+                    &ballot.voter,
+                    RefusalCode::Unauthorized,
+                    "ballot from unregistered voter",
+                );
                 return Err(CoreError::UnknownAgent);
             }
             if !seen.insert(ballot.voter.clone()) {
-                kernel.refuse(&ballot.voter, RefusalCode::Conflict, "duplicate ballot from same voter");
+                kernel.refuse(
+                    &ballot.voter,
+                    RefusalCode::Conflict,
+                    "duplicate ballot from same voter",
+                );
                 return Err(CoreError::DuplicateAgent);
             }
         }
@@ -356,7 +372,11 @@ impl Council {
             return Err(CoreError::InvalidSignature);
         }
         if kernel.card(&draft.author).is_none() {
-            kernel.refuse(&draft.author, RefusalCode::Unauthorized, "proposer is not a registered agent");
+            kernel.refuse(
+                &draft.author,
+                RefusalCode::Unauthorized,
+                "proposer is not a registered agent",
+            );
             return Err(CoreError::UnknownAgent);
         }
         let seated = self
@@ -365,26 +385,46 @@ impl Council {
             .map(|c| c.has_member(&draft.author));
         match seated {
             None => {
-                kernel.refuse(&draft.author, RefusalCode::StaleEpoch, "no committee of that kind is seated");
+                kernel.refuse(
+                    &draft.author,
+                    RefusalCode::StaleEpoch,
+                    "no committee of that kind is seated",
+                );
                 return Err(CoreError::UnknownAgent);
             }
             Some(false) => {
-                kernel.refuse(&draft.author, RefusalCode::Unauthorized, "proposer is not a seated member");
+                kernel.refuse(
+                    &draft.author,
+                    RefusalCode::Unauthorized,
+                    "proposer is not a seated member",
+                );
                 return Err(CoreError::InvalidSignature);
             }
             Some(true) => {}
         }
         if let Err(err) = draft.action.validate() {
-            kernel.refuse(&draft.author, RefusalCode::Malformed, format!("illegal action: {err}"));
+            kernel.refuse(
+                &draft.author,
+                RefusalCode::Malformed,
+                format!("illegal action: {err}"),
+            );
             return Err(err);
         }
         if draft.title.trim().is_empty() || draft.title.len() > self.cfg.max_title_len {
-            kernel.refuse(&draft.author, RefusalCode::Malformed, "title empty or too long");
+            kernel.refuse(
+                &draft.author,
+                RefusalCode::Malformed,
+                "title empty or too long",
+            );
             return Err(CoreError::InvalidKind);
         }
         let id = draft.id()?;
         if self.proposals.contains_key(&id) {
-            kernel.refuse(&draft.author, RefusalCode::Conflict, "identical proposal already exists");
+            kernel.refuse(
+                &draft.author,
+                RefusalCode::Conflict,
+                "identical proposal already exists",
+            );
             return Err(CoreError::DuplicateAgent);
         }
         self.clock.tick();
@@ -429,7 +469,10 @@ impl Council {
 
     /// 全部动议，按提交顺序。
     pub fn proposals(&self) -> Vec<&Proposal> {
-        self.proposal_order.iter().filter_map(|id| self.proposals.get(id)).collect()
+        self.proposal_order
+            .iter()
+            .filter_map(|id| self.proposals.get(id))
+            .collect()
     }
 
     /// 某个委员会的动议，按提交顺序。
@@ -449,11 +492,19 @@ impl Council {
     ) -> CoreResult<Proposal> {
         self.clock.tick();
         self.apply_state(kernel, id, next)?;
-        self.proposals.get(id).cloned().ok_or(CoreError::UnknownAgent)
+        self.proposals
+            .get(id)
+            .cloned()
+            .ok_or(CoreError::UnknownAgent)
     }
 
     /// 状态落地的唯一内部路径：先过状态机，再记账。
-    fn apply_state(&mut self, kernel: &mut Kernel, id: &str, next: ProposalState) -> CoreResult<()> {
+    fn apply_state(
+        &mut self,
+        kernel: &mut Kernel,
+        id: &str,
+        next: ProposalState,
+    ) -> CoreResult<()> {
         let (state, author) = match self.proposals.get(id) {
             Some(p) => (p.state, p.author.clone()),
             None => return Err(CoreError::UnknownAgent),
@@ -472,9 +523,18 @@ impl Council {
         }
         kernel.emit(
             "council.proposal.state",
-            format!("{} {} -> {}", au4a_core::short_id(id), state.as_str(), next.as_str()),
+            format!(
+                "{} {} -> {}",
+                au4a_core::short_id(id),
+                state.as_str(),
+                next.as_str()
+            ),
         );
-        self.record_event("proposal.state", id, format!("{} -> {}", state.as_str(), next.as_str()));
+        self.record_event(
+            "proposal.state",
+            id,
+            format!("{} -> {}", state.as_str(), next.as_str()),
+        );
         Ok(())
     }
 
@@ -497,11 +557,19 @@ impl Council {
         let (seats, quorum, fault_bound) = match self.committees.get(&committee_kind) {
             Some(c) if c.is_bft_consistent() => (c.size(), c.quorum(), c.fault_bound()),
             Some(_) => {
-                kernel.refuse(&author, RefusalCode::PolicyDenied, "committee has no voting capacity");
+                kernel.refuse(
+                    &author,
+                    RefusalCode::PolicyDenied,
+                    "committee has no voting capacity",
+                );
                 return Err(CoreError::InvalidKind);
             }
             None => {
-                kernel.refuse(&author, RefusalCode::StaleEpoch, "no committee of that kind is seated");
+                kernel.refuse(
+                    &author,
+                    RefusalCode::StaleEpoch,
+                    "no committee of that kind is seated",
+                );
                 return Err(CoreError::UnknownAgent);
             }
         };
@@ -551,12 +619,17 @@ impl Council {
     /// * 同轮不同选择（模棱两可/双签）→ [`CoreError::DuplicateAgent`] + `conflict`，
     ///   **整轮作废**（`void_ambiguous`），已投票全部不计入结论，必须重开一轮。
     pub fn cast_vote(&mut self, kernel: &mut Kernel, vote: Vote) -> CoreResult<RoundState> {
-        let (committee_kind, proposal_round, proposal_state) = match self.proposals.get(&vote.proposal) {
-            Some(p) => (p.committee, p.round, p.state),
-            None => return Err(CoreError::UnknownAgent),
-        };
+        let (committee_kind, proposal_round, proposal_state) =
+            match self.proposals.get(&vote.proposal) {
+                Some(p) => (p.committee, p.round, p.state),
+                None => return Err(CoreError::UnknownAgent),
+            };
         if let Err(err) = vote.verify() {
-            kernel.refuse(&vote.voter, RefusalCode::Unauthorized, format!("vote signature: {err}"));
+            kernel.refuse(
+                &vote.voter,
+                RefusalCode::Unauthorized,
+                format!("vote signature: {err}"),
+            );
             return Err(err);
         }
         let seated = self
@@ -565,7 +638,11 @@ impl Council {
             .map(|c| c.has_member(&vote.voter))
             .unwrap_or(false);
         if !seated {
-            kernel.refuse(&vote.voter, RefusalCode::Unauthorized, "voter is not a seated member");
+            kernel.refuse(
+                &vote.voter,
+                RefusalCode::Unauthorized,
+                "voter is not a seated member",
+            );
             return Err(CoreError::InvalidSignature);
         }
         // 轮次不匹配或轮次已关闭 → 竞争语义（stale_epoch），不升级为恶意。
@@ -573,7 +650,10 @@ impl Council {
             kernel.refuse(
                 &vote.voter,
                 RefusalCode::StaleEpoch,
-                format!("vote for round {} but the current round is {proposal_round}", vote.round),
+                format!(
+                    "vote for round {} but the current round is {proposal_round}",
+                    vote.round
+                ),
             );
             return Err(CoreError::InvalidVersion);
         }
@@ -587,7 +667,11 @@ impl Council {
             return Err(CoreError::InvalidVersion);
         }
         if closed {
-            kernel.refuse(&vote.voter, RefusalCode::StaleEpoch, "voting round is closed");
+            kernel.refuse(
+                &vote.voter,
+                RefusalCode::StaleEpoch,
+                "voting round is closed",
+            );
             return Err(CoreError::InvalidVersion);
         }
         // 轮次还开着但动议已不在待表决状态（被否决阻断 / 已执行）→ 协议冲突。
@@ -607,14 +691,24 @@ impl Council {
         if let Some(previous) = previous {
             self.clock.tick();
             if previous == vote.choice {
-                kernel.refuse(&vote.voter, RefusalCode::Conflict, "duplicate vote in the same round");
+                kernel.refuse(
+                    &vote.voter,
+                    RefusalCode::Conflict,
+                    "duplicate vote in the same round",
+                );
                 return Err(CoreError::DuplicateAgent);
             }
             if let Some(round) = self.rounds.get_mut(&key) {
                 round.outcome = RoundOutcome::VoidAmbiguous;
-                round.votes.insert(vote.voter.as_str().to_string(), vote.clone());
+                round
+                    .votes
+                    .insert(vote.voter.as_str().to_string(), vote.clone());
             }
-            kernel.refuse(&vote.voter, RefusalCode::Conflict, "ambiguous double vote: round voided");
+            kernel.refuse(
+                &vote.voter,
+                RefusalCode::Conflict,
+                "ambiguous double vote: round voided",
+            );
             kernel.emit(
                 "council.vote.void",
                 format!(
@@ -642,7 +736,9 @@ impl Council {
         self.clock.tick();
         match self.rounds.get_mut(&key) {
             Some(round) => {
-                round.votes.insert(vote.voter.as_str().to_string(), vote.clone());
+                round
+                    .votes
+                    .insert(vote.voter.as_str().to_string(), vote.clone());
                 let outcome = round.tally().outcome();
                 round.outcome = outcome;
             }
@@ -701,7 +797,9 @@ impl Council {
 
     /// 读某一轮表决的快照。
     pub fn round(&self, proposal_id: &str, round: u32) -> Option<RoundState> {
-        self.rounds.get(&(proposal_id.to_string(), round)).map(|r| r.state())
+        self.rounds
+            .get(&(proposal_id.to_string(), round))
+            .map(|r| r.state())
     }
 
     /// 读动议当前轮次的快照。
@@ -870,7 +968,11 @@ impl Council {
                 format!("{installed} 届委员会满足 n ≥ 3f+1 且 quorum = n - f 且 quorum ≥ 2f+1"),
             )
         } else {
-            SelfCheck::fail(TRACK, "council.quorum.bft", "存在不满足 BFT-lite 数学的委员会")
+            SelfCheck::fail(
+                TRACK,
+                "council.quorum.bft",
+                "存在不满足 BFT-lite 数学的委员会",
+            )
         });
         let empty: Vec<&str> = self
             .committees()
@@ -881,7 +983,9 @@ impl Council {
             SelfCheck::pass(
                 TRACK,
                 "council.committees.nonempty",
-                format!("{installed} 类委员会均有在任成员，无 0 席委员会（0 席会使 quorum=0 自动通过）"),
+                format!(
+                    "{installed} 类委员会均有在任成员，无 0 席委员会（0 席会使 quorum=0 自动通过）"
+                ),
             )
         } else {
             SelfCheck::fail(
@@ -899,10 +1003,17 @@ impl Council {
             SelfCheck::pass(
                 TRACK,
                 "council.proposals.content_addressed",
-                format!("{} 条动议的 id 均可由内容复算（作者/委员会/标题/动作）", self.proposals.len()),
+                format!(
+                    "{} 条动议的 id 均可由内容复算（作者/委员会/标题/动作）",
+                    self.proposals.len()
+                ),
             )
         } else {
-            SelfCheck::fail(TRACK, "council.proposals.content_addressed", "存在 id 与内容不一致的动议")
+            SelfCheck::fail(
+                TRACK,
+                "council.proposals.content_addressed",
+                "存在 id 与内容不一致的动议",
+            )
         });
         let monotonic = self.events.windows(2).all(|w| w[0].at <= w[1].at);
         checks.push(if monotonic {
@@ -929,10 +1040,12 @@ impl Council {
         });
         let members_only = self.rounds.values().all(|r| {
             let committee = self.committees.get(&r.committee);
-            r.votes.keys().all(|did| match (Did::parse(did), committee) {
-                (Ok(did), Some(c)) => c.has_member(&did),
-                _ => false,
-            })
+            r.votes
+                .keys()
+                .all(|did| match (Did::parse(did), committee) {
+                    (Ok(did), Some(c)) => c.has_member(&did),
+                    _ => false,
+                })
         });
         checks.push(if members_only {
             SelfCheck::pass(
@@ -947,7 +1060,12 @@ impl Council {
             RoundOutcome::Passed => self
                 .proposals
                 .get(&r.proposal)
-                .map(|p| matches!(p.state, ProposalState::Passed | ProposalState::Executed | ProposalState::Blocked))
+                .map(|p| {
+                    matches!(
+                        p.state,
+                        ProposalState::Passed | ProposalState::Executed | ProposalState::Blocked
+                    )
+                })
                 .unwrap_or(false),
             RoundOutcome::Rejected => self
                 .proposals
@@ -990,18 +1108,26 @@ impl Council {
             .values()
             .filter(|p| p.state == ProposalState::Executed)
             .all(|p| self.executions.contains_key(&p.id))
-            && self
-                .executions
-                .values()
-                .all(|r| self.proposals.get(&r.proposal).map(|p| p.state == ProposalState::Executed).unwrap_or(false));
+            && self.executions.values().all(|r| {
+                self.proposals
+                    .get(&r.proposal)
+                    .map(|p| p.state == ProposalState::Executed)
+                    .unwrap_or(false)
+            });
         checks.push(if paired {
             SelfCheck::pass(
                 TRACK,
                 "council.executions.state_matches",
-                format!("{executions} 张收据与 executed 状态一一对应（无未执行的状态、无无收据的执行）"),
+                format!(
+                    "{executions} 张收据与 executed 状态一一对应（无未执行的状态、无无收据的执行）"
+                ),
             )
         } else {
-            SelfCheck::fail(TRACK, "council.executions.state_matches", "executed 状态与执行收据不一一对应")
+            SelfCheck::fail(
+                TRACK,
+                "council.executions.state_matches",
+                "executed 状态与执行收据不一一对应",
+            )
         });
 
         // 否决不变式：否决只通向 blocked，理由公开，且被阻断的动议永远没有执行收据。
@@ -1016,10 +1142,16 @@ impl Council {
             SelfCheck::pass(
                 TRACK,
                 "council.vetoes.blocks_only",
-                format!("{vetoes} 张人类否决全部只把动议推进到 blocked，且被阻断的动议没有任何执行收据"),
+                format!(
+                    "{vetoes} 张人类否决全部只把动议推进到 blocked，且被阻断的动议没有任何执行收据"
+                ),
             )
         } else {
-            SelfCheck::fail(TRACK, "council.vetoes.blocks_only", "存在没有阻断、或被阻断后仍被执行的非决")
+            SelfCheck::fail(
+                TRACK,
+                "council.vetoes.blocks_only",
+                "存在没有阻断、或被阻断后仍被执行的非决",
+            )
         });
         let reasons_public = self.vetoes.values().all(|v| !v.reason().trim().is_empty());
         checks.push(if reasons_public {
@@ -1039,27 +1171,34 @@ impl Council {
             .filter_map(|p| GovernorToken::project(self, &p.id).ok())
             .collect();
         let mapping_ok = tokens.len() == self.proposals.len()
-            && tokens.iter().all(|t| {
-                match self.proposals.get(&t.proposal).map(|p| p.state) {
-                    Some(ProposalState::Open) => matches!(t.state, GovState::Pending | GovState::Active),
+            && tokens
+                .iter()
+                .all(|t| match self.proposals.get(&t.proposal).map(|p| p.state) {
+                    Some(ProposalState::Open) => {
+                        matches!(t.state, GovState::Pending | GovState::Active)
+                    }
                     Some(ProposalState::Passed) => t.state == GovState::Succeeded,
                     Some(ProposalState::Rejected) => t.state == GovState::Defeated,
                     Some(ProposalState::Blocked) => t.state == GovState::Canceled,
                     Some(ProposalState::Executed) => t.state == GovState::Executed,
                     None => false,
-                }
-            });
+                });
         checks.push(if mapping_ok {
             SelfCheck::pass(
                 TRACK,
                 "council.ongov.mapping",
-                format!("{} 条动议的 GovernorToken 状态与治理状态一一对应", tokens.len()),
+                format!(
+                    "{} 条动议的 GovernorToken 状态与治理状态一一对应",
+                    tokens.len()
+                ),
             )
         } else {
             SelfCheck::fail(TRACK, "council.ongov.mapping", "存在映射状态不一致的动议")
         });
         let honest = no_false_chain_claims(&tokens)
-            && tokens.iter().all(|t| t.evidence() == au4a_core::EvidenceGrade::CpuProto);
+            && tokens
+                .iter()
+                .all(|t| t.evidence() == au4a_core::EvidenceGrade::CpuProto);
         checks.push(if honest {
             SelfCheck::pass(
                 TRACK,
@@ -1075,7 +1214,9 @@ impl Council {
 
         // 紧急通道不变式：只有安全委员会能下发；已终结的指令必须有确认记录且策略与状态一致。
         let directives: Vec<&EmergencyDirective> = self.emergency.values().collect();
-        let channel_ok = directives.iter().all(|d| d.committee == CommitteeKind::Security);
+        let channel_ok = directives
+            .iter()
+            .all(|d| d.committee == CommitteeKind::Security);
         checks.push(if channel_ok {
             SelfCheck::pass(
                 TRACK,
@@ -1083,23 +1224,38 @@ impl Council {
                 format!("{} 条紧急指令全部由安全委员会下发", directives.len()),
             )
         } else {
-            SelfCheck::fail(TRACK, "council.emergency.security_only", "存在非安全委员会下发的紧急指令")
+            SelfCheck::fail(
+                TRACK,
+                "council.emergency.security_only",
+                "存在非安全委员会下发的紧急指令",
+            )
         });
         let resolved_ok = directives.iter().all(|d| {
             if d.status.is_final() {
                 d.confirmation.is_some() && emergency::policy_matches_status(self, d)
             } else {
-                d.confirmation.is_none() || d.confirmation.as_ref().map(|c| !c.rolled_back).unwrap_or(false)
+                d.confirmation.is_none()
+                    || d.confirmation
+                        .as_ref()
+                        .map(|c| !c.rolled_back)
+                        .unwrap_or(false)
             }
         });
         checks.push(if resolved_ok {
             SelfCheck::pass(
                 TRACK,
                 "council.emergency.resolved",
-                format!("{} 条紧急指令的确认记录与策略值一致（否决/超期必回滚）", directives.len()),
+                format!(
+                    "{} 条紧急指令的确认记录与策略值一致（否决/超期必回滚）",
+                    directives.len()
+                ),
             )
         } else {
-            SelfCheck::fail(TRACK, "council.emergency.resolved", "存在确认记录缺失或未回滚的紧急指令")
+            SelfCheck::fail(
+                TRACK,
+                "council.emergency.resolved",
+                "存在确认记录缺失或未回滚的紧急指令",
+            )
         });
         checks
     }
@@ -1134,19 +1290,34 @@ fn ensure_agent(
 }
 
 /// 登记治理 Agent：6 个有真实贡献的 Agent + 8 个信誉为零的空壳 DID。
-fn enroll(kernel: &mut Kernel, council: &mut Council) -> CoreResult<(Vec<AgentKeys>, Vec<AgentKeys>)> {
+fn enroll(
+    kernel: &mut Kernel,
+    council: &mut Council,
+) -> CoreResult<(Vec<AgentKeys>, Vec<AgentKeys>)> {
     let mut agents = Vec::new();
     let mut socks = Vec::new();
     for i in 0..6u8 {
         let keys = AgentKeys::from_seed(&council_seed(i));
-        ensure_agent(kernel, &keys, &format!("governor-{i}"), &["governance.vote"], Credits(20))?;
+        ensure_agent(
+            kernel,
+            &keys,
+            &format!("governor-{i}"),
+            &["governance.vote"],
+            Credits(20),
+        )?;
         council.note_reputation(&keys.did(), 4_000 + u32::from(i) * 400);
         council.note_uptime(&keys.did(), 100 + u64::from(i) * 50);
         agents.push(keys);
     }
     for i in 0..8u8 {
         let keys = AgentKeys::from_seed(&council_seed(100 + i));
-        ensure_agent(kernel, &keys, &format!("sock-{i}"), &["governance.vote"], Credits(20))?;
+        ensure_agent(
+            kernel,
+            &keys,
+            &format!("sock-{i}"),
+            &["governance.vote"],
+            Credits(20),
+        )?;
         council.note_uptime(&keys.did(), 1);
         socks.push(keys);
     }
@@ -1162,7 +1333,9 @@ fn seat_all_committees(
 ) -> CoreResult<()> {
     let eligible: Vec<Did> = agents.iter().map(|k| k.did()).collect();
     for (j, kind) in CommitteeKind::ALL.iter().enumerate() {
-        let picks: Vec<Did> = (0..3).map(|n| eligible[(j + n) % eligible.len()].clone()).collect();
+        let picks: Vec<Did> = (0..3)
+            .map(|n| eligible[(j + n) % eligible.len()].clone())
+            .collect();
         let mut ballots: Vec<ElectionBallot> = Vec::new();
         for keys in agents {
             ballots.push(ElectionBallot::cast(keys, *kind, &picks)?);
@@ -1245,7 +1418,10 @@ fn build_full() -> CoreResult<Build> {
         proposer,
         CommitteeKind::Resource,
         "把 cpu-proto 结算上限设为 250 微积分",
-        Action::SetPolicy { key: String::from("cpu_proto_settle_cap"), value: 250 },
+        Action::SetPolicy {
+            key: String::from("cpu_proto_settle_cap"),
+            value: 250,
+        },
     )?;
     let proposal = council.propose(&mut kernel, &identity, draft)?;
     let round = vote_yes_all(&mut kernel, &mut council, &agents, &proposal.id)?;
@@ -1294,7 +1470,10 @@ fn build_vetoed() -> CoreResult<VetoRun> {
         proposer,
         CommitteeKind::Task,
         "把任务准入门槛提高到 400",
-        Action::SetPolicy { key: String::from("task_entry_bar"), value: 400 },
+        Action::SetPolicy {
+            key: String::from("task_entry_bar"),
+            value: 400,
+        },
     )?;
     let proposal = council.propose(&mut kernel, &identity, draft)?;
     let _ = vote_yes_all(&mut kernel, &mut council, &agents, &proposal.id)?;
@@ -1308,7 +1487,9 @@ fn build_vetoed() -> CoreResult<VetoRun> {
     )?;
     council.apply_veto(&mut kernel, &veto)?;
     let proposals_after = council.proposals().len();
-    let execute_refused = council.execute(&mut kernel, &identity, &proposal.id).is_err();
+    let execute_refused = council
+        .execute(&mut kernel, &identity, &proposal.id)
+        .is_err();
     let action_unchanged = council
         .proposal(&proposal.id)
         .map(|p| p.action == proposal.action && p.title == proposal.title)
@@ -1320,7 +1501,10 @@ fn build_vetoed() -> CoreResult<VetoRun> {
         .committee(CommitteeKind::Security)
         .and_then(|c| c.members.first())
         .map(|m| m.did.clone());
-    if let Some(issuer) = agents.iter().find(|k| Some(&k.did()) == security_member.as_ref()) {
+    if let Some(issuer) = agents
+        .iter()
+        .find(|k| Some(&k.did()) == security_member.as_ref())
+    {
         let security_identity = AgentIdentity::from_keys(issuer);
         let directive = council.issue_emergency(
             &mut kernel,
@@ -1365,7 +1549,8 @@ pub fn self_check() -> Vec<SelfCheck> {
 
     let kinds_ok = CommitteeKind::ALL.len() == COMMITTEE_COUNT
         && CommitteeKind::ALL.iter().all(|k| {
-            CommitteeKind::parse(k.as_str()) == Some(*k) && k.has_emergency_channel() == (k.as_str() == "security")
+            CommitteeKind::parse(k.as_str()) == Some(*k)
+                && k.has_emergency_channel() == (k.as_str() == "security")
         });
     checks.push(if kinds_ok {
         SelfCheck::pass(
@@ -1381,7 +1566,11 @@ pub fn self_check() -> Vec<SelfCheck> {
         .iter()
         .all(|n| n >= &(3 * ((n - 1) / 3) + 1) && n - ((n - 1) / 3) == 2 * ((n - 1) / 3) + 1);
     checks.push(if math_ok {
-        SelfCheck::pass(TRACK, "council.quorum.math", "n∈{4,7,10} 时 quorum = n - f = 2f+1 成立")
+        SelfCheck::pass(
+            TRACK,
+            "council.quorum.math",
+            "n∈{4,7,10} 时 quorum = n - f = 2f+1 成立",
+        )
     } else {
         SelfCheck::fail(TRACK, "council.quorum.math", "BFT-lite 法定人数数学不成立")
     });
@@ -1390,13 +1579,24 @@ pub fn self_check() -> Vec<SelfCheck> {
     let second = build_full();
     match (first, second) {
         (Ok(a), Ok(b)) => {
-            let id_a = a.council.committee(CommitteeKind::Resource).map(|c| c.election_id.clone()).unwrap_or_default();
-            let id_b = b.council.committee(CommitteeKind::Resource).map(|c| c.election_id.clone()).unwrap_or_default();
+            let id_a = a
+                .council
+                .committee(CommitteeKind::Resource)
+                .map(|c| c.election_id.clone())
+                .unwrap_or_default();
+            let id_b = b
+                .council
+                .committee(CommitteeKind::Resource)
+                .map(|c| c.election_id.clone())
+                .unwrap_or_default();
             checks.push(if !id_a.is_empty() && id_a == id_b {
                 SelfCheck::pass(
                     TRACK,
                     "council.election.reproducible",
-                    format!("同一花名册与选票跑两遍，资源委员会选举 id 相同：{}", au4a_core::short_id(&id_a)),
+                    format!(
+                        "同一花名册与选票跑两遍，资源委员会选举 id 相同：{}",
+                        au4a_core::short_id(&id_a)
+                    ),
                 )
             } else {
                 SelfCheck::fail(TRACK, "council.election.reproducible", "两次选举结果不一致")
@@ -1407,7 +1607,12 @@ pub fn self_check() -> Vec<SelfCheck> {
                 .flat_map(|c| c.member_dids())
                 .filter(|d| a.sock_dids.contains(d))
                 .count();
-            let ignored: usize = a.council.elections().iter().map(|e| e.ballots_ignored.len()).sum();
+            let ignored: usize = a
+                .council
+                .elections()
+                .iter()
+                .map(|e| e.ballots_ignored.len())
+                .sum();
             checks.push(if sock_elected == 0 && ignored == a.sock_dids.len() {
                 SelfCheck::pass(
                     TRACK,
@@ -1440,29 +1645,31 @@ pub fn self_check() -> Vec<SelfCheck> {
             } else {
                 SelfCheck::fail(TRACK, "council.proposal.agent_only", "委员动议未能提交或未走到执行")
             });
-            checks.push(if a.round.outcome == RoundOutcome::Passed
-                && a.round.tally.yes >= a.round.tally.quorum
-                && a.round.tally.quorum == a.round.tally.n - a.round.tally.f
-            {
-                SelfCheck::pass(
-                    TRACK,
-                    "council.vote.quorum",
-                    format!(
-                        "资源委员会第 {} 轮：n={} f={} quorum={} yes={} → passed",
-                        a.round.round,
-                        a.round.tally.n,
-                        a.round.tally.f,
-                        a.round.tally.quorum,
-                        a.round.tally.yes
-                    ),
-                )
-            } else {
-                SelfCheck::fail(
-                    TRACK,
-                    "council.vote.quorum",
-                    format!("表决未按 BFT-lite 法定人数出结论：{:?}", a.round.outcome),
-                )
-            });
+            checks.push(
+                if a.round.outcome == RoundOutcome::Passed
+                    && a.round.tally.yes >= a.round.tally.quorum
+                    && a.round.tally.quorum == a.round.tally.n - a.round.tally.f
+                {
+                    SelfCheck::pass(
+                        TRACK,
+                        "council.vote.quorum",
+                        format!(
+                            "资源委员会第 {} 轮：n={} f={} quorum={} yes={} → passed",
+                            a.round.round,
+                            a.round.tally.n,
+                            a.round.tally.f,
+                            a.round.tally.quorum,
+                            a.round.tally.yes
+                        ),
+                    )
+                } else {
+                    SelfCheck::fail(
+                        TRACK,
+                        "council.vote.quorum",
+                        format!("表决未按 BFT-lite 法定人数出结论：{:?}", a.round.outcome),
+                    )
+                },
+            );
             checks.push(if a.receipt.conservation_ok
                 && a.receipt.ledger_effect_consistent()
                 && a.council.policy("cpu_proto_settle_cap") == Some(250)
@@ -1484,31 +1691,44 @@ pub fn self_check() -> Vec<SelfCheck> {
                 )
             });
             let tokens = project_all(&a.council).unwrap_or_default();
-            checks.push(if no_false_chain_claims(&tokens)
-                && tokens.iter().all(|t| t.evidence() == au4a_core::EvidenceGrade::CpuProto)
-                && tokens.len() == a.council.proposals().len()
-            {
-                SelfCheck::pass(
-                    TRACK,
-                    "council.ongov.no_false_chain",
-                    format!(
+            checks.push(
+                if no_false_chain_claims(&tokens)
+                    && tokens
+                        .iter()
+                        .all(|t| t.evidence() == au4a_core::EvidenceGrade::CpuProto)
+                    && tokens.len() == a.council.proposals().len()
+                {
+                    SelfCheck::pass(
+                        TRACK,
+                        "council.ongov.no_false_chain",
+                        format!(
                         "{} 个 GovernorToken 全部标注 cpu-proto / real_chain=false，状态分布 {}",
                         tokens.len(),
                         state_summary(&tokens)
                     ),
-                )
-            } else {
-                SelfCheck::fail(TRACK, "council.ongov.no_false_chain", "链上治理映射出现不实声明")
-            });
+                    )
+                } else {
+                    SelfCheck::fail(
+                        TRACK,
+                        "council.ongov.no_false_chain",
+                        "链上治理映射出现不实声明",
+                    )
+                },
+            );
             checks.extend(a.council.checks());
         }
         (Err(err), _) | (_, Err(err)) => {
-            checks.push(SelfCheck::fail(TRACK, "council.election.reproducible", err.to_string()));
+            checks.push(SelfCheck::fail(
+                TRACK,
+                "council.election.reproducible",
+                err.to_string(),
+            ));
         }
     }
 
     match build_vetoed() {
-        Ok(v) => {            let blocked = matches!(
+        Ok(v) => {
+            let blocked = matches!(
                 v.council.proposal(&v.proposal_id).map(|p| p.state),
                 Some(ProposalState::Blocked)
             );
@@ -1558,7 +1778,11 @@ pub fn self_check() -> Vec<SelfCheck> {
             checks.extend(audit::audit_checks(&v.council));
             checks.extend(v.council.checks());
         }
-        Err(err) => checks.push(SelfCheck::fail(TRACK, "council.veto.blocks_only", err.to_string())),
+        Err(err) => checks.push(SelfCheck::fail(
+            TRACK,
+            "council.veto.blocks_only",
+            err.to_string(),
+        )),
     }
 
     // 确定性重放：用 LCG 驱动一段真实治理历史，每一步之后跑全部不变式。
@@ -1588,31 +1812,37 @@ pub fn self_check() -> Vec<SelfCheck> {
                     format!("重放出现 {} 条违例：{}", report.violations.len(), report.violations.join("; ")),
                 )
             });
-            checks.push(if report.voided_rounds > 0
-                && report.executed > 0
-                && report.blocked > 0
-                && report.refusals > 0
-            {
-                SelfCheck::pass(
-                    TRACK,
-                    "council.replay.coverage",
-                    format!(
+            checks.push(
+                if report.voided_rounds > 0
+                    && report.executed > 0
+                    && report.blocked > 0
+                    && report.refusals > 0
+                {
+                    SelfCheck::pass(
+                        TRACK,
+                        "council.replay.coverage",
+                        format!(
                         "重放覆盖了双签作废（{} 轮）、执行（{}）、人类阻断（{}）、拒绝路径（{}）",
                         report.voided_rounds, report.executed, report.blocked, report.refusals
                     ),
-                )
-            } else {
-                SelfCheck::fail(
-                    TRACK,
-                    "council.replay.coverage",
-                    format!(
-                        "重放覆盖不足：voided={} executed={} blocked={} refusals={}",
-                        report.voided_rounds, report.executed, report.blocked, report.refusals
-                    ),
-                )
-            });
+                    )
+                } else {
+                    SelfCheck::fail(
+                        TRACK,
+                        "council.replay.coverage",
+                        format!(
+                            "重放覆盖不足：voided={} executed={} blocked={} refusals={}",
+                            report.voided_rounds, report.executed, report.blocked, report.refusals
+                        ),
+                    )
+                },
+            );
         }
-        Err(err) => checks.push(SelfCheck::fail(TRACK, "council.replay.invariants", err.to_string())),
+        Err(err) => checks.push(SelfCheck::fail(
+            TRACK,
+            "council.replay.invariants",
+            err.to_string(),
+        )),
     }
 
     checks
@@ -1729,7 +1959,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         proposer,
         CommitteeKind::Resource,
         "把 cpu-proto 结算上限设为 250 微积分",
-        Action::SetPolicy { key: String::from("cpu_proto_settle_cap"), value: 250 },
+        Action::SetPolicy {
+            key: String::from("cpu_proto_settle_cap"),
+            value: 250,
+        },
     )?;
     let proposal = council.propose(kernel, &identity, draft)?;
     // 表决第 1 轮：一名委员先投赞成、再改投反对 —— 模棱两可，整轮作废。
@@ -1739,7 +1972,9 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let flip = Vote::cast(proposer, &proposal.id, first_round.round, Choice::No)?;
     let ambiguity_rejected = council.cast_vote(kernel, flip).is_err();
     let voided = council.round(&proposal.id, first_round.round);
-    let ambiguity_outcome = voided.map(|r| r.outcome.as_str().to_string()).unwrap_or_default();
+    let ambiguity_outcome = voided
+        .map(|r| r.outcome.as_str().to_string())
+        .unwrap_or_default();
     // 表决第 2 轮：重开后按 BFT-lite 法定人数出结论。
     let round = vote_yes_all(kernel, &mut council, &agents, &proposal.id)?;
     // 执行：通过的决议落成真实状态变更。
@@ -1750,7 +1985,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         proposer,
         CommitteeKind::Resource,
         "把任务准入门槛提高到 400",
-        Action::SetPolicy { key: String::from("task_entry_bar"), value: 400 },
+        Action::SetPolicy {
+            key: String::from("task_entry_bar"),
+            value: 400,
+        },
     )?;
     let second = council.propose(kernel, &identity, draft2)?;
     let second_round = vote_yes_all(kernel, &mut council, &agents, &second.id)?;
@@ -1823,7 +2061,11 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         .flat_map(|c| c.member_dids())
         .filter(|d| sock_dids.contains(d))
         .count();
-    let ignored: usize = council.elections().iter().map(|e| e.ballots_ignored.len()).sum();
+    let ignored: usize = council
+        .elections()
+        .iter()
+        .map(|e| e.ballots_ignored.len())
+        .sum();
     let seats: usize = council.committees().map(|c| c.size()).sum();
 
     kernel.emit(

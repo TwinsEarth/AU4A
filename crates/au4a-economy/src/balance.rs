@@ -107,7 +107,10 @@ pub fn spendable(ledger: &Ledger, who: &Did, policy: &BalancePolicy) -> CoreResu
 /// 目标锁定量：`总资产 × stake_target_bp`（向下取整）。
 pub fn stake_target(ledger: &Ledger, who: &Did, policy: &BalancePolicy) -> CoreResult<Credits> {
     policy.validate()?;
-    ledger.balance(who).total()?.scaled_bp(policy.stake_target_bp)
+    ledger
+        .balance(who)
+        .total()?
+        .scaled_bp(policy.stake_target_bp)
 }
 
 /// 距离质押目标还差多少（已达标返回 0）。
@@ -248,7 +251,10 @@ impl BalanceManager {
     }
 
     pub fn policy(&self, who: &Did) -> CoreResult<BalancePolicy> {
-        self.policies.get(who).copied().ok_or(CoreError::UnknownAgent)
+        self.policies
+            .get(who)
+            .copied()
+            .ok_or(CoreError::UnknownAgent)
     }
 
     pub fn declared(&self) -> usize {
@@ -269,7 +275,12 @@ impl BalanceManager {
         spend(ledger, from, to, amount, &self.policy(from)?)
     }
 
-    pub fn autostake(&self, ledger: &mut Ledger, who: &Did, budget: Credits) -> CoreResult<Credits> {
+    pub fn autostake(
+        &self,
+        ledger: &mut Ledger,
+        who: &Did,
+        budget: Credits,
+    ) -> CoreResult<Credits> {
         autostake(ledger, who, &self.policy(who)?, budget)
     }
 
@@ -336,7 +347,10 @@ mod tests {
         let mut l = Ledger::new();
         l.mint(&a, Credits(1_000)).unwrap();
         let p = policy(100, 2_000, 5_000);
-        assert_eq!(check_spend(&l, &a, Credits(300), &p).unwrap(), SpendVerdict::Allow);
+        assert_eq!(
+            check_spend(&l, &a, Credits(300), &p).unwrap(),
+            SpendVerdict::Allow
+        );
         spend(&mut l, &a, &b, Credits(300), &p).unwrap();
         assert_eq!(l.balance(&a).available, Credits(700));
         assert_eq!(l.balance(&b).available, Credits(300));
@@ -354,7 +368,10 @@ mod tests {
             check_spend(&l, &a, Credits(301), &p).unwrap(),
             SpendVerdict::BelowReserve
         );
-        assert_eq!(spend(&mut l, &a, &b, Credits(301), &p), Err(CoreError::InsufficientFunds));
+        assert_eq!(
+            spend(&mut l, &a, &b, Credits(301), &p),
+            Err(CoreError::InsufficientFunds)
+        );
         assert_eq!(l.balance(&a).available, Credits(400));
         assert_eq!(l.balance(&b).available, Credits::ZERO);
         assert_conserved(&l).unwrap();
@@ -370,7 +387,10 @@ mod tests {
             check_spend(&l, &a, Credits(1_001), &p).unwrap(),
             SpendVerdict::OverSingleCap
         );
-        assert_eq!(spend(&mut l, &a, &b, Credits(1_001), &p), Err(CoreError::InsufficientFunds));
+        assert_eq!(
+            spend(&mut l, &a, &b, Credits(1_001), &p),
+            Err(CoreError::InsufficientFunds)
+        );
         spend(&mut l, &a, &b, Credits(1_000), &p).unwrap();
         assert_eq!(l.balance(&b).available, Credits(1_000));
         assert_conserved(&l).unwrap();
@@ -382,8 +402,14 @@ mod tests {
         let mut l = Ledger::new();
         l.mint(&a, Credits(10)).unwrap();
         let p = BalancePolicy::DEFAULT;
-        assert_eq!(check_spend(&l, &a, Credits::ZERO, &p).unwrap(), SpendVerdict::ZeroAmount);
-        assert_eq!(spend(&mut l, &a, &did(10), Credits::ZERO, &p), Err(CoreError::ZeroAmount));
+        assert_eq!(
+            check_spend(&l, &a, Credits::ZERO, &p).unwrap(),
+            SpendVerdict::ZeroAmount
+        );
+        assert_eq!(
+            spend(&mut l, &a, &did(10), Credits::ZERO, &p),
+            Err(CoreError::ZeroAmount)
+        );
         assert_conserved(&l).unwrap();
     }
 
@@ -395,11 +421,17 @@ mod tests {
         let p = policy(100, 2_000, 5_000); // 目标锁定 = 1_000 的 20% = 200
         assert_eq!(stake_target(&l, &a, &p).unwrap(), Credits(200));
         assert_eq!(stake_deficit(&l, &a, &p).unwrap(), Credits(200));
-        assert_eq!(autostake(&mut l, &a, &p, Credits(1_000)).unwrap(), Credits(200));
+        assert_eq!(
+            autostake(&mut l, &a, &p, Credits(1_000)).unwrap(),
+            Credits(200)
+        );
         assert_eq!(l.balance(&a).locked, Credits(200));
         assert_eq!(l.balance(&a).available, Credits(800));
         // 已达标：再补一次必须拒绝，而不是静默成功。
-        assert_eq!(autostake(&mut l, &a, &p, Credits(1_000)), Err(CoreError::ZeroAmount));
+        assert_eq!(
+            autostake(&mut l, &a, &p, Credits(1_000)),
+            Err(CoreError::ZeroAmount)
+        );
         assert_conserved(&l).unwrap();
     }
 
@@ -409,11 +441,17 @@ mod tests {
         let mut l = Ledger::new();
         l.mint(&a, Credits(200)).unwrap();
         let p = policy(150, 10_000, 10_000); // 缺口 200，可用额度只有 50
-        assert_eq!(autostake(&mut l, &a, &p, Credits(1_000)).unwrap(), Credits(50));
+        assert_eq!(
+            autostake(&mut l, &a, &p, Credits(1_000)).unwrap(),
+            Credits(50)
+        );
         assert_eq!(l.balance(&a).locked, Credits(50));
         let small = did(13);
         l.mint(&small, Credits(200)).unwrap();
-        assert_eq!(autostake(&mut l, &small, &p, Credits(30)).unwrap(), Credits(30));
+        assert_eq!(
+            autostake(&mut l, &small, &p, Credits(30)).unwrap(),
+            Credits(30)
+        );
         assert_eq!(l.balance(&small).locked, Credits(30));
         assert_conserved(&l).unwrap();
     }

@@ -14,7 +14,9 @@ fn keys(seed: u8) -> AgentKeys {
 fn kernel_with(agents: &[&AgentKeys]) -> Kernel {
     let mut kernel = Kernel::new(KernelConfig::default());
     for k in agents {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
     }
     kernel
 }
@@ -41,7 +43,10 @@ fn ballots_for(kind: CommitteeKind, voters: &[&AgentKeys], picks: &[Did]) -> Vec
 fn five_committee_kinds_are_stable_and_security_holds_the_channel() {
     assert_eq!(CommitteeKind::ALL.len(), 5);
     let names: Vec<&str> = CommitteeKind::ALL.iter().map(|k| k.as_str()).collect();
-    assert_eq!(names, vec!["resource", "task", "arbitration", "evolution", "security"]);
+    assert_eq!(
+        names,
+        vec!["resource", "task", "arbitration", "evolution", "security"]
+    );
     for k in CommitteeKind::ALL {
         assert_eq!(CommitteeKind::parse(k.as_str()), Some(k));
     }
@@ -62,7 +67,9 @@ fn high_reputation_long_online_agents_win_the_seats() {
     let mut voters: Vec<&AgentKeys> = agents.iter().collect();
     voters.push(&sock);
     let ballots = ballots_for(CommitteeKind::Task, &voters, &picks);
-    let outcome = council.elect(&mut kernel, CommitteeKind::Task, &ballots).expect("elect");
+    let outcome = council
+        .elect(&mut kernel, CommitteeKind::Task, &ballots)
+        .expect("elect");
 
     assert_eq!(outcome.epoch, 1);
     // 三人得分相同（全体选民都投了同一组），因此名次由信誉决定：5 > 4 > 3。
@@ -78,7 +85,10 @@ fn high_reputation_long_online_agents_win_the_seats() {
     assert!(committee.is_bft_consistent());
     assert_eq!(committee.quorum(), 4); // n = 5，f = 1
     assert_eq!(committee.elected_at, 1);
-    assert_eq!(committee.members[0].term_ends_at, 1 + ElectionConfig::default().term);
+    assert_eq!(
+        committee.members[0].term_ends_at,
+        1 + ElectionConfig::default().term
+    );
 }
 
 #[test]
@@ -120,16 +130,24 @@ fn sybil_flood_cannot_win_or_shift_the_outcome() {
     let picks: Vec<Did> = agents.iter().take(3).map(|k| k.did()).collect();
 
     // 基线：只有合格 Agent 投票。
-    let honest = ballots_for(CommitteeKind::Evolution, &agents.iter().collect::<Vec<_>>(), &picks);
+    let honest = ballots_for(
+        CommitteeKind::Evolution,
+        &agents.iter().collect::<Vec<_>>(),
+        &picks,
+    );
     let baseline = council
         .elect(&mut kernel, CommitteeKind::Evolution, &honest)
         .expect("baseline");
 
     // 攻击：60 个空壳 DID 各自投自己（权重为 0，必须被忽略）。
-    let mut attack_ballots =
-        ballots_for(CommitteeKind::Evolution, &agents.iter().collect::<Vec<_>>(), &picks);
+    let mut attack_ballots = ballots_for(
+        CommitteeKind::Evolution,
+        &agents.iter().collect::<Vec<_>>(),
+        &picks,
+    );
     for s in &socks {
-        attack_ballots.push(ElectionBallot::cast(s, CommitteeKind::Evolution, &[s.did()]).expect("cast"));
+        attack_ballots
+            .push(ElectionBallot::cast(s, CommitteeKind::Evolution, &[s.did()]).expect("cast"));
     }
     let outcome = council
         .elect(&mut kernel, CommitteeKind::Evolution, &attack_ballots)
@@ -139,7 +157,8 @@ fn sybil_flood_cannot_win_or_shift_the_outcome() {
     // 同一选民两张票 → 类型化拒绝，且不改变已安装的委员会。
     let dup = vec![
         ElectionBallot::cast(&agents[0], CommitteeKind::Evolution, &picks).expect("cast"),
-        ElectionBallot::cast(&agents[0], CommitteeKind::Evolution, &[socks[0].did()]).expect("cast"),
+        ElectionBallot::cast(&agents[0], CommitteeKind::Evolution, &[socks[0].did()])
+            .expect("cast"),
     ];
     assert_eq!(
         council.elect(&mut kernel, CommitteeKind::Evolution, &dup),
@@ -147,7 +166,9 @@ fn sybil_flood_cannot_win_or_shift_the_outcome() {
     );
 
     // 空壳既不当选，也不改变得分：忽略票被留痕。
-    let committee = council.committee(CommitteeKind::Evolution).expect("committee");
+    let committee = council
+        .committee(CommitteeKind::Evolution)
+        .expect("committee");
     for s in &socks {
         assert!(!committee.has_member(&s.did()));
     }
@@ -165,7 +186,9 @@ fn forged_replayed_and_foreign_ballots_are_refused_with_typed_reasons() {
     let outsider = keys(210);
     let mut kernel = Kernel::new(KernelConfig::default());
     for k in agents.iter().chain(std::iter::once(&outsider)) {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
     }
     let mut council = seeded_council(&agents, &outsider);
     let picks: Vec<Did> = vec![agents[0].did()];
@@ -203,27 +226,38 @@ fn committee_of_zero_candidates_is_empty_but_consistent() {
     let mut kernel = kernel_with(&refs);
     // 不给任何信誉 → 无人有候选资格。
     let mut council = Council::new(CouncilConfig::default());
-    let ballots = vec![ElectionBallot::cast(&agents[0], CommitteeKind::Arbitration, &[agents[0].did()]).expect("cast")];
+    let ballots =
+        vec![
+            ElectionBallot::cast(&agents[0], CommitteeKind::Arbitration, &[agents[0].did()])
+                .expect("cast"),
+        ];
     let outcome = council
         .elect(&mut kernel, CommitteeKind::Arbitration, &ballots)
         .expect("elect");
     assert!(outcome.elected.is_empty());
     assert_eq!(outcome.ineligible.len(), 3);
-    let committee = council.committee(CommitteeKind::Arbitration).expect("committee");
+    let committee = council
+        .committee(CommitteeKind::Arbitration)
+        .expect("committee");
     assert!(committee.is_empty());
     assert_eq!(committee.quorum(), 0);
     // 空委员会**没有表决资格**：否则 quorum = 0 会让「0 票 ≥ 0」的决议自动通过。
     assert!(!committee.is_bft_consistent());
     let checks = council.checks();
     assert!(!au4a_core::all_passed(&checks));
-    assert!(checks.iter().any(|c| c.name == "council.committees.nonempty" && !c.passed));
+    assert!(checks
+        .iter()
+        .any(|c| c.name == "council.committees.nonempty" && !c.passed));
 }
 
 #[test]
 fn self_check_and_results_json_are_real_assertions() {
     let checks = au4a_council::self_check();
     assert!(checks.len() >= 4);
-    assert!(au4a_core::all_passed(&checks), "self_check 未全绿: {checks:?}");
+    assert!(
+        au4a_core::all_passed(&checks),
+        "self_check 未全绿: {checks:?}"
+    );
     for c in &checks {
         assert_eq!(c.track, "1.7");
         assert!(!c.detail.is_empty());

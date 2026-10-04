@@ -314,8 +314,13 @@ impl ExperienceStore {
     }
 
     /// 按任务类型过滤（服务学习行为里「任务类型偏好」的统计）。
-    pub fn by_task_type<'a>(&'a self, task_type: &'a str) -> impl Iterator<Item = &'a Experience> + 'a {
-        self.entries.iter().filter(move |e| e.task_type == task_type)
+    pub fn by_task_type<'a>(
+        &'a self,
+        task_type: &'a str,
+    ) -> impl Iterator<Item = &'a Experience> + 'a {
+        self.entries
+            .iter()
+            .filter(move |e| e.task_type == task_type)
     }
 
     /// 出现过的任务类型（升序，确定性）。
@@ -334,7 +339,9 @@ impl ExperienceStore {
     pub fn stats(&self) -> StoreStats {
         let mut by_outcome: BTreeMap<String, usize> = BTreeMap::new();
         for e in &self.entries {
-            *by_outcome.entry(e.outcome.as_str().to_string()).or_insert(0) += 1;
+            *by_outcome
+                .entry(e.outcome.as_str().to_string())
+                .or_insert(0) += 1;
         }
         StoreStats {
             len: self.entries.len(),
@@ -475,7 +482,11 @@ impl ExperienceStore {
                 "同内容经验键相同、不同结局经验键不同（SHA-256 内容寻址）",
             )
         } else {
-            SelfCheck::fail(super::TRACK, "experience.content_addressed", "内容键计算失败或不唯一")
+            SelfCheck::fail(
+                super::TRACK,
+                "experience.content_addressed",
+                "内容键计算失败或不唯一",
+            )
         });
 
         // 3) 可移植：规范 JSON 往返后摘要不变
@@ -492,7 +503,11 @@ impl ExperienceStore {
                 "规范 JSON 往返后条目数与内容摘要逐字节一致",
             )
         } else {
-            SelfCheck::fail(super::TRACK, "experience.portable_roundtrip", "往返后摘要或条目数变化")
+            SelfCheck::fail(
+                super::TRACK,
+                "experience.portable_roundtrip",
+                "往返后摘要或条目数变化",
+            )
         });
 
         // 4) 非法输入必须被拒绝

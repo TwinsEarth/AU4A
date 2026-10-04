@@ -263,7 +263,13 @@ mod tests {
 
     #[test]
     fn quorum_is_n_minus_f() {
-        for (n, f, quorum) in [(1usize, 0usize, 1usize), (4, 1, 3), (5, 1, 4), (7, 2, 5), (10, 3, 7)] {
+        for (n, f, quorum) in [
+            (1usize, 0usize, 1usize),
+            (4, 1, 3),
+            (5, 1, 4),
+            (7, 2, 5),
+            (10, 3, 7),
+        ] {
             let round = VotingRound {
                 proposal: String::from("p"),
                 committee: CommitteeKind::Task,
@@ -294,14 +300,26 @@ mod tests {
             outcome: RoundOutcome::Pending,
             opened_at: 0,
         };
-        round.votes.insert(vote(1, 1, Choice::Yes).voter.as_str().to_string(), vote(1, 1, Choice::Yes));
+        round.votes.insert(
+            vote(1, 1, Choice::Yes).voter.as_str().to_string(),
+            vote(1, 1, Choice::Yes),
+        );
         assert_eq!(round.tally().outcome(), RoundOutcome::Pending);
-        round.votes.insert(vote(2, 1, Choice::No).voter.as_str().to_string(), vote(2, 1, Choice::No));
+        round.votes.insert(
+            vote(2, 1, Choice::No).voter.as_str().to_string(),
+            vote(2, 1, Choice::No),
+        );
         assert_eq!(round.tally().outcome(), RoundOutcome::Pending);
-        round.votes.insert(vote(3, 1, Choice::Yes).voter.as_str().to_string(), vote(3, 1, Choice::Yes));
+        round.votes.insert(
+            vote(3, 1, Choice::Yes).voter.as_str().to_string(),
+            vote(3, 1, Choice::Yes),
+        );
         // yes = 2 < quorum = 3：还没有结论。
         assert_eq!(round.tally().outcome(), RoundOutcome::Pending);
-        round.votes.insert(vote(4, 1, Choice::Yes).voter.as_str().to_string(), vote(4, 1, Choice::Yes));
+        round.votes.insert(
+            vote(4, 1, Choice::Yes).voter.as_str().to_string(),
+            vote(4, 1, Choice::Yes),
+        );
         let tally = round.tally();
         assert_eq!(tally.outcome(), RoundOutcome::Passed, "yes=3 达到 quorum=3");
         assert!(tally.is_consistent());
@@ -321,7 +339,11 @@ mod tests {
             outcome: RoundOutcome::Pending,
             opened_at: 0,
         };
-        for (i, choice) in [(1u8, Choice::Abstain), (2, Choice::Abstain), (3, Choice::Abstain)] {
+        for (i, choice) in [
+            (1u8, Choice::Abstain),
+            (2, Choice::Abstain),
+            (3, Choice::Abstain),
+        ] {
             let v = vote(i, 1, choice);
             round.votes.insert(v.voter.as_str().to_string(), v);
         }

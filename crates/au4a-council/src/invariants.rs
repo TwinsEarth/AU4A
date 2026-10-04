@@ -130,8 +130,14 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
 
     // 15. 事件主题必须指向真实存在的对象（防止日志指向幽灵动议/选举/紧急指令）。
     let proposal_ids: BTreeSet<&str> = council.proposals().iter().map(|p| p.id.as_str()).collect();
-    let election_ids: BTreeSet<&str> = council.committees().map(|c| c.election_id.as_str()).collect();
-    let directive_ids: BTreeSet<&str> = council.emergency_directives().map(|d| d.id.as_str()).collect();
+    let election_ids: BTreeSet<&str> = council
+        .committees()
+        .map(|c| c.election_id.as_str())
+        .collect();
+    let directive_ids: BTreeSet<&str> = council
+        .emergency_directives()
+        .map(|d| d.id.as_str())
+        .collect();
     let subjects_ok = council.events().iter().all(|e| {
         if e.kind.starts_with("election.") {
             election_ids.contains(e.subject.as_str())
@@ -154,7 +160,11 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
             ),
         )
     } else {
-        SelfCheck::fail(track, "council.events.subjects_resolve", "存在指向不存在对象的治理事件")
+        SelfCheck::fail(
+            track,
+            "council.events.subjects_resolve",
+            "存在指向不存在对象的治理事件",
+        )
     });
 
     // 16. 表决轮所属委员会必须仍然在任，且委员会人数与开轮时记录的一致。
@@ -168,10 +178,17 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
         SelfCheck::pass(
             track,
             "council.rounds.committee_seated",
-            format!("{} 轮表决的受理委员会均在任，且 n/quorum 与开轮时一致", council.rounds().count()),
+            format!(
+                "{} 轮表决的受理委员会均在任，且 n/quorum 与开轮时一致",
+                council.rounds().count()
+            ),
         )
     } else {
-        SelfCheck::fail(track, "council.rounds.committee_seated", "存在受理委员会已变更的表决轮")
+        SelfCheck::fail(
+            track,
+            "council.rounds.committee_seated",
+            "存在受理委员会已变更的表决轮",
+        )
     });
 
     // 17. 策略表只允许由执行引擎写入的合法键（非空、小写 ASCII 标识符）。
@@ -185,7 +202,10 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
         SelfCheck::pass(
             track,
             "council.policies.well_formed",
-            format!("{} 条治理策略的键名合法（执行引擎写入路径已校验动作）", council.policies().len()),
+            format!(
+                "{} 条治理策略的键名合法（执行引擎写入路径已校验动作）",
+                council.policies().len()
+            ),
         )
     } else {
         SelfCheck::fail(track, "council.policies.well_formed", "存在非法策略键")
@@ -199,13 +219,21 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
                 SelfCheck::pass(
                     track,
                     "council.audit.chain_verifies",
-                    format!("{} 条治理事件的哈希链全部通过复算（链根 {}）", log.len(), au4a_core::short_id(log.root())),
+                    format!(
+                        "{} 条治理事件的哈希链全部通过复算（链根 {}）",
+                        log.len(),
+                        au4a_core::short_id(log.root())
+                    ),
                 )
             } else {
                 SelfCheck::fail(track, "council.audit.chain_verifies", verdict.reason)
             });
         }
-        Err(err) => checks.push(SelfCheck::fail(track, "council.audit.chain_verifies", err.to_string())),
+        Err(err) => checks.push(SelfCheck::fail(
+            track,
+            "council.audit.chain_verifies",
+            err.to_string(),
+        )),
     }
 
     checks
@@ -217,7 +245,10 @@ struct Lcg(u64);
 
 impl Lcg {
     fn new(seed: u64) -> Self {
-        Self(seed.wrapping_mul(2_862_933_555_777_941_757).wrapping_add(3_037_000_493))
+        Self(
+            seed.wrapping_mul(2_862_933_555_777_941_757)
+                .wrapping_add(3_037_000_493),
+        )
     }
 
     fn next(&mut self) -> u64 {
@@ -313,7 +344,10 @@ pub fn replay(seed: u64, steps: u32) -> CoreResult<ReplayReport> {
             // 0..4：提案（委员提出，内容含步号，因此不会撞内容地址）
             0..=3 => {
                 let kind = CommitteeKind::ALL[rng.below(CommitteeKind::ALL.len() as u64) as usize];
-                let members = council.committee(kind).map(|c| c.member_dids()).unwrap_or_default();
+                let members = council
+                    .committee(kind)
+                    .map(|c| c.member_dids())
+                    .unwrap_or_default();
                 if members.is_empty() {
                     continue;
                 }
@@ -325,14 +359,23 @@ pub fn replay(seed: u64, steps: u32) -> CoreResult<ReplayReport> {
                             key: format!("policy_{}", report.applied),
                             value: report.applied as i64,
                         },
-                        1 => Action::SetReputation { did: did.clone(), reputation_bp: 4_000 },
+                        1 => Action::SetReputation {
+                            did: did.clone(),
+                            reputation_bp: 4_000,
+                        },
                         2 => Action::Transfer {
                             from: did.clone(),
                             to: agents[0].did(),
                             amount: Credits(5),
                         },
-                        3 => Action::Slash { did: did.clone(), amount: Credits(5) },
-                        _ => Action::SetPolicy { key: format!("k{}", report.applied), value: 1 },
+                        3 => Action::Slash {
+                            did: did.clone(),
+                            amount: Credits(5),
+                        },
+                        _ => Action::SetPolicy {
+                            key: format!("k{}", report.applied),
+                            value: 1,
+                        },
                     };
                     let draft = ProposalDraft::by(
                         keys,
@@ -375,7 +418,11 @@ pub fn replay(seed: u64, steps: u32) -> CoreResult<ReplayReport> {
                     .proposals()
                     .into_iter()
                     .filter(|p| p.state == ProposalState::Open)
-                    .filter_map(|p| council.current_round(&p.id).map(|r| (p.id.clone(), r.round)))
+                    .filter_map(|p| {
+                        council
+                            .current_round(&p.id)
+                            .map(|r| (p.id.clone(), r.round))
+                    })
                     .filter(|(id, round)| {
                         council
                             .round(id, *round)
@@ -448,7 +495,11 @@ pub fn replay(seed: u64, steps: u32) -> CoreResult<ReplayReport> {
                     .proposals()
                     .into_iter()
                     .filter(|p| p.state == ProposalState::Open)
-                    .filter_map(|p| council.current_round(&p.id).map(|r| (p.id.clone(), r.round)))
+                    .filter_map(|p| {
+                        council
+                            .current_round(&p.id)
+                            .map(|r| (p.id.clone(), r.round))
+                    })
                     .filter(|(id, round)| {
                         council
                             .round(id, *round)
@@ -540,14 +591,17 @@ pub fn replay(seed: u64, steps: u32) -> CoreResult<ReplayReport> {
         // 每一步之后：全部不变式 + 状态推进检查。
         for check in check_all(&council) {
             if !check.passed {
-                report
-                    .violations
-                    .push(format!("step {}: {} — {}", report.applied, check.name, check.detail));
+                report.violations.push(format!(
+                    "step {}: {} — {}",
+                    report.applied, check.name, check.detail
+                ));
             }
         }
         let after = record(&council);
         if after.0 + after.1 + after.2 + after.3 < before.0 + before.1 + before.2 + before.3 {
-            report.violations.push(format!("step {}: 治理记录数量倒退", report.applied));
+            report
+                .violations
+                .push(format!("step {}: 治理记录数量倒退", report.applied));
         }
     }
 

@@ -18,16 +18,66 @@ pub fn version() -> &'static str {
 /// 轨道清单（轨道号、crate 名、标题、版本区间）。
 pub fn track_table() -> Vec<String> {
     vec![
-        row(au4a_kernel::TRACK, "au4a-kernel", au4a_kernel::TITLE, au4a_kernel::RANGE),
-        row(au4a_capgraph::TRACK, "au4a-capgraph", au4a_capgraph::TITLE, au4a_capgraph::RANGE),
-        row(au4a_negotiate::TRACK, "au4a-negotiate", au4a_negotiate::TITLE, au4a_negotiate::RANGE),
-        row(au4a_state::TRACK, "au4a-state", au4a_state::TITLE, au4a_state::RANGE),
-        row(au4a_economy::TRACK, "au4a-economy", au4a_economy::TITLE, au4a_economy::RANGE),
-        row(au4a_safety::TRACK, "au4a-safety", au4a_safety::TITLE, au4a_safety::RANGE),
-        row(au4a_learning::TRACK, "au4a-learning", au4a_learning::TITLE, au4a_learning::RANGE),
-        row(au4a_council::TRACK, "au4a-council", au4a_council::TITLE, au4a_council::RANGE),
-        row(au4a_chain::TRACK, "au4a-chain", au4a_chain::TITLE, au4a_chain::RANGE),
-        row(au4a_scale::TRACK, "au4a-scale", au4a_scale::TITLE, au4a_scale::RANGE),
+        row(
+            au4a_kernel::TRACK,
+            "au4a-kernel",
+            au4a_kernel::TITLE,
+            au4a_kernel::RANGE,
+        ),
+        row(
+            au4a_capgraph::TRACK,
+            "au4a-capgraph",
+            au4a_capgraph::TITLE,
+            au4a_capgraph::RANGE,
+        ),
+        row(
+            au4a_negotiate::TRACK,
+            "au4a-negotiate",
+            au4a_negotiate::TITLE,
+            au4a_negotiate::RANGE,
+        ),
+        row(
+            au4a_state::TRACK,
+            "au4a-state",
+            au4a_state::TITLE,
+            au4a_state::RANGE,
+        ),
+        row(
+            au4a_economy::TRACK,
+            "au4a-economy",
+            au4a_economy::TITLE,
+            au4a_economy::RANGE,
+        ),
+        row(
+            au4a_safety::TRACK,
+            "au4a-safety",
+            au4a_safety::TITLE,
+            au4a_safety::RANGE,
+        ),
+        row(
+            au4a_learning::TRACK,
+            "au4a-learning",
+            au4a_learning::TITLE,
+            au4a_learning::RANGE,
+        ),
+        row(
+            au4a_council::TRACK,
+            "au4a-council",
+            au4a_council::TITLE,
+            au4a_council::RANGE,
+        ),
+        row(
+            au4a_chain::TRACK,
+            "au4a-chain",
+            au4a_chain::TITLE,
+            au4a_chain::RANGE,
+        ),
+        row(
+            au4a_scale::TRACK,
+            "au4a-scale",
+            au4a_scale::TITLE,
+            au4a_scale::RANGE,
+        ),
     ]
 }
 
@@ -111,11 +161,11 @@ pub fn run_tracks(
 ) -> Vec<TrackOutcome> {
     let mut out: Vec<TrackOutcome> = Vec::new();
     let push = |kernel: &mut au4a_kernel::Kernel,
-                    on_step: &mut dyn FnMut(&au4a_kernel::Kernel),
-                    track: &str,
-                    title: &str,
-                    result: CoreResult<Value>,
-                    out: &mut Vec<TrackOutcome>| {
+                on_step: &mut dyn FnMut(&au4a_kernel::Kernel),
+                track: &str,
+                title: &str,
+                result: CoreResult<Value>,
+                out: &mut Vec<TrackOutcome>| {
         let outcome = match result {
             Ok(v) => TrackOutcome {
                 track: track.to_string(),
@@ -132,32 +182,107 @@ pub fn run_tracks(
         };
         kernel.emit(
             "track.scenario",
-            format!("{} {} -> {}", outcome.track, outcome.title, if outcome.ok { "ok" } else { "err" }),
+            format!(
+                "{} {} -> {}",
+                outcome.track,
+                outcome.title,
+                if outcome.ok { "ok" } else { "err" }
+            ),
         );
         out.push(outcome);
         on_step(kernel);
     };
 
     let r = Ok(kernel.results_json());
-    push(kernel, &mut on_step, au4a_kernel::TRACK, au4a_kernel::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_kernel::TRACK,
+        au4a_kernel::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_capgraph::scenario(kernel);
-    push(kernel, &mut on_step, au4a_capgraph::TRACK, au4a_capgraph::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_capgraph::TRACK,
+        au4a_capgraph::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_negotiate::scenario(kernel);
-    push(kernel, &mut on_step, au4a_negotiate::TRACK, au4a_negotiate::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_negotiate::TRACK,
+        au4a_negotiate::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_state::scenario(kernel);
-    push(kernel, &mut on_step, au4a_state::TRACK, au4a_state::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_state::TRACK,
+        au4a_state::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_economy::scenario(kernel);
-    push(kernel, &mut on_step, au4a_economy::TRACK, au4a_economy::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_economy::TRACK,
+        au4a_economy::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_safety::scenario(kernel);
-    push(kernel, &mut on_step, au4a_safety::TRACK, au4a_safety::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_safety::TRACK,
+        au4a_safety::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_learning::scenario(kernel);
-    push(kernel, &mut on_step, au4a_learning::TRACK, au4a_learning::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_learning::TRACK,
+        au4a_learning::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_council::scenario(kernel);
-    push(kernel, &mut on_step, au4a_council::TRACK, au4a_council::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_council::TRACK,
+        au4a_council::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_chain::scenario(kernel);
-    push(kernel, &mut on_step, au4a_chain::TRACK, au4a_chain::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_chain::TRACK,
+        au4a_chain::TITLE,
+        r,
+        &mut out,
+    );
     let r = au4a_scale::scenario(kernel);
-    push(kernel, &mut on_step, au4a_scale::TRACK, au4a_scale::TITLE, r, &mut out);
+    push(
+        kernel,
+        &mut on_step,
+        au4a_scale::TRACK,
+        au4a_scale::TITLE,
+        r,
+        &mut out,
+    );
 
     out
 }

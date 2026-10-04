@@ -24,18 +24,40 @@ fn two_agents_negotiate_six_message_types_over_pmb() {
     let mut k = kernel();
     let a = agent(1);
     let b = agent(2);
-    k.register(&a, "proposer", &["summarize.zh"], Credits(20)).unwrap();
-    k.register(&b, "responder", &["summarize.zh"], Credits(20)).unwrap();
+    k.register(&a, "proposer", &["summarize.zh"], Credits(20))
+        .unwrap();
+    k.register(&b, "responder", &["summarize.zh"], Credits(20))
+        .unwrap();
 
     let session = msg::session_id(&a.did(), &b.did(), &terms(120)).unwrap();
     let h = terms(100).hash().unwrap();
     // `AgentKeys` 不可克隆（私钥不出结构体），所以每一轮用同一个种子重建同一把密钥。
     let outbound = vec![
-        (agent(1), b.did(), NegotiationMsg::request(&session, terms(120)).unwrap()),
-        (agent(2), a.did(), NegotiationMsg::counter(&session, 1, terms(100)).unwrap()),
-        (agent(1), b.did(), NegotiationMsg::accept(&session, 1, &h).unwrap()),
-        (agent(2), a.did(), NegotiationMsg::reject(&session, 2, "deadline too tight").unwrap()),
-        (agent(1), b.did(), NegotiationMsg::sign_contract("c-1", &h).unwrap()),
+        (
+            agent(1),
+            b.did(),
+            NegotiationMsg::request(&session, terms(120)).unwrap(),
+        ),
+        (
+            agent(2),
+            a.did(),
+            NegotiationMsg::counter(&session, 1, terms(100)).unwrap(),
+        ),
+        (
+            agent(1),
+            b.did(),
+            NegotiationMsg::accept(&session, 1, &h).unwrap(),
+        ),
+        (
+            agent(2),
+            a.did(),
+            NegotiationMsg::reject(&session, 2, "deadline too tight").unwrap(),
+        ),
+        (
+            agent(1),
+            b.did(),
+            NegotiationMsg::sign_contract("c-1", &h).unwrap(),
+        ),
         (
             agent(2),
             a.did(),
@@ -79,7 +101,10 @@ fn a_forged_negotiation_message_is_refused_as_misconduct() {
         .unwrap()
         .signed(&a, &b.did(), 1, None)
         .unwrap();
-    env.body = NegotiationMsg::counter("s-forged", 1, terms(1)).unwrap().body().unwrap();
+    env.body = NegotiationMsg::counter("s-forged", 1, terms(1))
+        .unwrap()
+        .body()
+        .unwrap();
 
     assert_eq!(k.send(&env), Err(CoreError::InvalidSignature));
     assert_eq!(k.queue_len(), 0);
@@ -124,7 +149,10 @@ fn a_reply_must_reference_an_existing_parent_envelope() {
     assert_eq!(reply.in_reply_to.as_deref(), Some(env.id.as_str()));
     k.send(&reply).unwrap();
     let delivered = k.drain();
-    assert_eq!(delivered[1].in_reply_to.as_deref(), Some(delivered[0].id.as_str()));
+    assert_eq!(
+        delivered[1].in_reply_to.as_deref(),
+        Some(delivered[0].id.as_str())
+    );
 }
 
 #[test]
@@ -140,7 +168,10 @@ fn unsigned_envelopes_never_reach_the_queue() {
         kinds::NEGOTIATE_REQUEST,
         1,
         None,
-        NegotiationMsg::request("s1", terms(10)).unwrap().body().unwrap(),
+        NegotiationMsg::request("s1", terms(10))
+            .unwrap()
+            .body()
+            .unwrap(),
     )
     .unwrap();
     assert_eq!(k.send(&unsealed), Err(CoreError::NotSealed));
@@ -162,7 +193,10 @@ fn scenario_is_repeatable_and_idempotent() {
         au4a_negotiate::transcript_kinds(&second)
     );
     assert_ne!(first["transcript"][0]["id"], second["transcript"][0]["id"]);
-    assert!(second["transcript"][0]["ts"].as_u64().unwrap() > first["transcript"][0]["ts"].as_u64().unwrap());
+    assert!(
+        second["transcript"][0]["ts"].as_u64().unwrap()
+            > first["transcript"][0]["ts"].as_u64().unwrap()
+    );
 
     // 换一个全新的内核、同样的种子：逐字段相同（brief §2 的可重复要求）。
     let mut k2 = kernel();
@@ -186,5 +220,8 @@ fn scenario_is_repeatable_and_idempotent() {
     assert!(first["session"].as_str().unwrap().len() == 64);
     assert_ne!(p, r);
     assert!(au4a_core::all_passed(&au4a_negotiate::self_check()));
-    assert_eq!(au4a_negotiate::results_json().unwrap()["kinds"][0], kinds::NEGOTIATE_REQUEST);
+    assert_eq!(
+        au4a_negotiate::results_json().unwrap()["kinds"][0],
+        kinds::NEGOTIATE_REQUEST
+    );
 }

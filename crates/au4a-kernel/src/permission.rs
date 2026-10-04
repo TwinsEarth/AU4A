@@ -166,8 +166,7 @@ impl PermissionReport {
             }
             seen.push(denial.capability);
         }
-        seen.len() == Capability::ALL.len()
-            && Capability::ALL.iter().all(|cap| seen.contains(cap))
+        seen.len() == Capability::ALL.len() && Capability::ALL.iter().all(|cap| seen.contains(cap))
     }
 
     pub fn allows(&self, capability: Capability) -> bool {
@@ -394,8 +393,13 @@ mod tests {
     fn kernel_with(n: u8, config: KernelConfig) -> Kernel {
         let mut k = Kernel::new(config);
         for i in 0..n {
-            k.register(&keys(60 + i), format!("agent-{i}"), &["skill.a"], Credits(20))
-                .unwrap();
+            k.register(
+                &keys(60 + i),
+                format!("agent-{i}"),
+                &["skill.a"],
+                Credits(20),
+            )
+            .unwrap();
         }
         k
     }
@@ -406,9 +410,21 @@ mod tests {
         for i in 0..3 {
             let report = explain(&k, &keys(60 + i).did()).unwrap();
             assert!(report.registered);
-            assert!(report.is_total_partition(), "allowed ∪ denied 必须恰好覆盖全部能力");
-            assert_eq!(report.allowed.len() + report.denied.len(), Capability::ALL.len());
-            assert_eq!(report.fingerprint().unwrap(), explain(&k, &keys(60 + i).did()).unwrap().fingerprint().unwrap());
+            assert!(
+                report.is_total_partition(),
+                "allowed ∪ denied 必须恰好覆盖全部能力"
+            );
+            assert_eq!(
+                report.allowed.len() + report.denied.len(),
+                Capability::ALL.len()
+            );
+            assert_eq!(
+                report.fingerprint().unwrap(),
+                explain(&k, &keys(60 + i).did())
+                    .unwrap()
+                    .fingerprint()
+                    .unwrap()
+            );
         }
     }
 
@@ -434,7 +450,10 @@ mod tests {
         let k = kernel_with(1, KernelConfig::default());
         let report = explain(&k, &keys(60).did()).unwrap();
         assert!(report.allows(Capability::PublishCard));
-        assert!(report.allows(Capability::ProposeMotion), "提案权来自自证身份");
+        assert!(
+            report.allows(Capability::ProposeMotion),
+            "提案权来自自证身份"
+        );
         assert!(report.allows(Capability::SettleVerified));
         assert!(report.allows(Capability::SettleCpuProto));
         assert!(report.allows(Capability::Offer));
@@ -454,7 +473,10 @@ mod tests {
         for authority in Authority::ALL {
             let name = authority.as_str();
             for forbidden in ["operator", "human", "admin", "owner", "approver"] {
-                assert!(!name.contains(forbidden), "权限来源不能是 {forbidden}：{name}");
+                assert!(
+                    !name.contains(forbidden),
+                    "权限来源不能是 {forbidden}：{name}"
+                );
             }
         }
         let roots = authority_roots();
@@ -543,7 +565,10 @@ mod tests {
             .seal(&ghost)
             .unwrap();
         assert!(k.send(&env).is_err());
-        assert_eq!(k.refusals().last().map(|(_, r)| r.code), Some(RefusalCode::Unauthorized));
+        assert_eq!(
+            k.refusals().last().map(|(_, r)| r.code),
+            Some(RefusalCode::Unauthorized)
+        );
         assert_eq!(
             explain(&k, &ghost.did()).unwrap().denied[0].code,
             RefusalCode::Unauthorized

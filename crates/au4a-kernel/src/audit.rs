@@ -113,7 +113,11 @@ pub fn audit_kernel(kernel: &Kernel) -> HostAudit {
     } else {
         AuditFinding::fail(
             "admission.min_stake",
-            format!("{} 个 Agent 低于下限：{:?}", under_staked.len(), under_staked),
+            format!(
+                "{} 个 Agent 低于下限：{:?}",
+                under_staked.len(),
+                under_staked
+            ),
         )
     });
 
@@ -182,7 +186,10 @@ pub fn audit_kernel(kernel: &Kernel) -> HostAudit {
     findings.push(if unknown == 0 {
         AuditFinding::pass(
             "refusal.classification",
-            format!("{} 条拒绝：恶意码 {misconduct} / 竞争码 {competitive}", kernel.refusals().len()),
+            format!(
+                "{} 条拒绝：恶意码 {misconduct} / 竞争码 {competitive}",
+                kernel.refusals().len()
+            ),
         )
     } else {
         AuditFinding::fail(
@@ -238,7 +245,13 @@ pub fn audit_kernel(kernel: &Kernel) -> HostAudit {
         last = event.at;
     }
     findings.push(if backwards == 0 {
-        AuditFinding::pass("clock.monotonic", format!("{} 条事件时间戳单调且不超前", kernel.progress_events().len()))
+        AuditFinding::pass(
+            "clock.monotonic",
+            format!(
+                "{} 条事件时间戳单调且不超前",
+                kernel.progress_events().len()
+            ),
+        )
     } else {
         AuditFinding::fail("clock.monotonic", format!("{backwards} 条事件时间戳异常"))
     });
@@ -296,10 +309,7 @@ mod tests {
         k.replace_card_for_audit(card);
         let audit = audit_kernel(&k);
         assert!(!audit.is_clean());
-        assert!(audit
-            .failures()
-            .iter()
-            .any(|f| f.name == "stake.covered"));
+        assert!(audit.failures().iter().any(|f| f.name == "stake.covered"));
     }
 
     #[test]
@@ -335,10 +345,7 @@ mod tests {
         let b = audit_kernel(&kernel_with_two_agents());
         assert_eq!(a, b);
         assert_eq!(a.to_json(), b.to_json());
-        assert_eq!(
-            audit_digest(&a).unwrap(),
-            audit_digest(&b).unwrap()
-        );
+        assert_eq!(audit_digest(&a).unwrap(), audit_digest(&b).unwrap());
     }
 
     #[test]

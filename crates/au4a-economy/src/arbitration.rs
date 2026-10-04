@@ -123,7 +123,10 @@ impl Dispute {
         if total <= 0 {
             return Ok(0);
         }
-        uphold.checked_mul(10_000).map(|v| v / total).ok_or(CoreError::Overflow)
+        uphold
+            .checked_mul(10_000)
+            .map(|v| v / total)
+            .ok_or(CoreError::Overflow)
     }
 }
 
@@ -516,7 +519,13 @@ mod tests {
         let (claimant, respondent) = (did(5), did(6));
         let mut court = Court::new();
         let case = court
-            .open(&claimant, &respondent, Credits(10), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(10),
+                EvidenceGrade::Verified,
+                1,
+            )
             .unwrap();
         assert_eq!(
             court.vote(&case.id, &claimant, true, 5_000),
@@ -539,7 +548,10 @@ mod tests {
             court.vote(&case.id, &did(8), true, -1),
             Err(CoreError::NegativeAmount)
         );
-        assert_eq!(court.vote("nope", &did(8), true, 1), Err(CoreError::UnknownAgent));
+        assert_eq!(
+            court.vote("nope", &did(8), true, 1),
+            Err(CoreError::UnknownAgent)
+        );
     }
 
     #[test]
@@ -548,7 +560,13 @@ mod tests {
         let mut court = Court::new();
         let terms = ArbitrationTerms::DEFAULT;
         let case = court
-            .open(&claimant, &respondent, Credits(50), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(50),
+                EvidenceGrade::Verified,
+                1,
+            )
             .unwrap();
         court.vote(&case.id, &did(11), true, 9_000).unwrap();
         let (_, mut ledger) = funded(10, 1_000, 500);
@@ -574,7 +592,13 @@ mod tests {
         let mut court = Court::new();
         let (_, mut ledger) = funded(14, 1_000, 500);
         let case = court
-            .open(&claimant, &respondent, Credits(400), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(400),
+                EvidenceGrade::Verified,
+                1,
+            )
             .unwrap();
         court.vote(&case.id, &did(15), false, 6_000).unwrap();
         court.vote(&case.id, &did(16), true, 4_000).unwrap();
@@ -597,7 +621,13 @@ mod tests {
         // 锁定只有 50，索赔 1_000_000 —— 罚没必须被锁定余额截断。
         let (_, mut ledger) = funded(21, 10_000, 50);
         let case = court
-            .open(&claimant, &respondent, Credits(1_000_000), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(1_000_000),
+                EvidenceGrade::Verified,
+                1,
+            )
             .unwrap();
         court.vote(&case.id, &did(22), true, 10_000).unwrap();
         court.vote(&case.id, &did(23), true, 10_000).unwrap();
@@ -620,7 +650,13 @@ mod tests {
         let mut court = Court::new();
         let (_, mut ledger) = funded(25, 10_000, 5_000);
         let case = court
-            .open(&claimant, &respondent, Credits(10_000), EvidenceGrade::CpuProto, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(10_000),
+                EvidenceGrade::CpuProto,
+                1,
+            )
             .unwrap();
         court.vote(&case.id, &did(26), true, 6_000).unwrap();
         court.vote(&case.id, &did(27), true, 4_000).unwrap();
@@ -639,7 +675,13 @@ mod tests {
         let (_, mut ledger) = funded(31, 1_000, 400);
         let terms = ArbitrationTerms::DEFAULT;
         let case = court
-            .open(&claimant, &respondent, Credits(300), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(300),
+                EvidenceGrade::Verified,
+                1,
+            )
             .unwrap();
         court.vote(&case.id, &did(32), true, 7_000).unwrap();
         court.vote(&case.id, &did(33), true, 3_000).unwrap();
@@ -648,7 +690,9 @@ mod tests {
         assert_eq!(ledger.slashed(), Credits(300));
 
         // 窗口内申诉：票作废、回到投票。
-        let appeal = court.appeal(&case.id, &respondent, "new evidence", &terms, 15).unwrap();
+        let appeal = court
+            .appeal(&case.id, &respondent, "new evidence", &terms, 15)
+            .unwrap();
         assert_eq!(appeal.round, 1);
         assert_eq!(court.case(&case.id).unwrap().votes.len(), 0);
         assert_eq!(court.case(&case.id).unwrap().state, DisputeState::Appealed);
@@ -680,12 +724,18 @@ mod tests {
         let (_, mut ledger) = funded(41, 1_000, 200);
         let terms = ArbitrationTerms::DEFAULT; // 窗口 10、最多 1 次
         let case = court
-            .open(&claimant, &respondent, Credits(100), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(100),
+                EvidenceGrade::Verified,
+                1,
+            )
             .unwrap();
         court.vote(&case.id, &did(42), false, 10_000).unwrap();
         court.vote(&case.id, &did(43), false, 10_000).unwrap();
         court.rule(&mut ledger, &case.id, &terms, 100).unwrap(); // ruled_at = 100
-        // 非当事人不能申诉。
+                                                                 // 非当事人不能申诉。
         assert_eq!(
             court.appeal(&case.id, &did(44), "let me in", &terms, 101),
             Err(CoreError::UnknownAgent)
@@ -700,7 +750,9 @@ mod tests {
             court.appeal(&case.id, &claimant, "   ", &terms, 101),
             Err(CoreError::InvalidKind)
         );
-        court.appeal(&case.id, &claimant, "within window", &terms, 105).unwrap();
+        court
+            .appeal(&case.id, &claimant, "within window", &terms, 105)
+            .unwrap();
         // 已经申诉过一次：再次申诉冲突（state 也不是 Ruled）。
         assert_eq!(
             court.appeal(&case.id, &respondent, "again", &terms, 106),
@@ -725,7 +777,13 @@ mod tests {
         let (_, mut ledger) = funded(51, 1_000, 100);
         let terms = ArbitrationTerms::DEFAULT;
         let case = court
-            .open(&claimant, &respondent, Credits(10), EvidenceGrade::Verified, 1)
+            .open(
+                &claimant,
+                &respondent,
+                Credits(10),
+                EvidenceGrade::Verified,
+                1,
+            )
             .unwrap();
         // 未达法定人数不能裁决。
         assert_eq!(

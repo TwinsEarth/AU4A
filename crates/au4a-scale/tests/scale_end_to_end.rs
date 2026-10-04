@@ -30,7 +30,11 @@ fn the_whole_chain_collect_fit_adjudicate_agrees_on_the_same_model() {
     let report = fit(&bundle, &FitSearch::around(1_000, 500, 10, vec![1, 2, 3])).unwrap();
     assert_eq!(report.alpha_estimate, 2);
     assert!(report.n0_estimate.abs_diff(1_000) <= 50);
-    assert!(report.max_residual_ppm <= 10_000, "残差 {} ppm", report.max_residual_ppm);
+    assert!(
+        report.max_residual_ppm <= 10_000,
+        "残差 {} ppm",
+        report.max_residual_ppm
+    );
 
     // 裁决给出的容量顶点必须与解析式一致（α=2 → n* = N0）。
     let verdict = adjudicate(&params, 100_000, 1, 4_000).unwrap();
@@ -41,12 +45,9 @@ fn the_whole_chain_collect_fit_adjudicate_agrees_on_the_same_model() {
 
     // 档位报告与实验框架对同一档位给同一数值。
     let tiers = tier_report(&params, 100_000).unwrap();
-    let experiment = au4a_scale::run_experiment(&ExperimentConfig::new(
-        TIERS.to_vec(),
-        params,
-        100_000,
-    ))
-    .unwrap();
+    let experiment =
+        au4a_scale::run_experiment(&ExperimentConfig::new(TIERS.to_vec(), params, 100_000))
+            .unwrap();
     for tier in &tiers.tiers {
         let row = experiment.row(tier.nodes).unwrap();
         assert_eq!(row.aggregate_milli, tier.aggregate_milli);
@@ -114,7 +115,10 @@ fn the_scenario_is_byte_identical_across_fresh_kernels() {
     assert_eq!(a, b);
     assert_eq!(a["digest"], b["digest"]);
     assert_eq!(a["verdict"]["kind"], b["verdict"]["kind"]);
-    assert_eq!(a["note"], serde_json::json!("确定性聚合模型（解析式实现），非真实分布式压测"));
+    assert_eq!(
+        a["note"],
+        serde_json::json!("确定性聚合模型（解析式实现），非真实分布式压测")
+    );
 }
 
 #[test]

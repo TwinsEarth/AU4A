@@ -53,7 +53,11 @@ fn build_store() -> ExperienceStore {
 fn pipeline_snapshot() -> serde_json::Value {
     let store = build_store();
     let report = FeedbackAnalyser::analyse(&store).unwrap();
-    let signals = Signals::cold_start(store.len(), report.overall.quality_bp, report.overall.mean_reward);
+    let signals = Signals::cold_start(
+        store.len(),
+        report.overall.quality_bp,
+        report.overall.mean_reward,
+    );
     let adjustment = adjust(
         &PolicyParams::baseline(),
         &report,
@@ -124,13 +128,19 @@ fn changing_any_input_changes_the_digest() {
     .unwrap();
     mutated.record(changed).unwrap();
     assert_ne!(base.digest().unwrap(), mutated.digest().unwrap());
-    assert_ne!(base.canonical_json().unwrap(), mutated.canonical_json().unwrap());
+    assert_ne!(
+        base.canonical_json().unwrap(),
+        mutated.canonical_json().unwrap()
+    );
 
     // 反馈报告、公开视图、加密切片也都随内容变化
     let policy = PrivacyPolicy::default();
     assert_ne!(
         FeedbackAnalyser::analyse(&base).unwrap().digest().unwrap(),
-        FeedbackAnalyser::analyse(&mutated).unwrap().digest().unwrap()
+        FeedbackAnalyser::analyse(&mutated)
+            .unwrap()
+            .digest()
+            .unwrap()
     );
     assert_ne!(
         publish(&base, &policy).unwrap().digest().unwrap(),

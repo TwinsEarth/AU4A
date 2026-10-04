@@ -145,13 +145,17 @@ mod tests {
     fn statuses_are_normalized_and_the_id_is_stable() {
         let (_, a) = subscription(
             41,
-            vec![CaseStatus::Arbitrated, CaseStatus::Reported, CaseStatus::Reported],
+            vec![
+                CaseStatus::Arbitrated,
+                CaseStatus::Reported,
+                CaseStatus::Reported,
+            ],
         );
-        let (_, b) = subscription(
-            41,
-            vec![CaseStatus::Reported, CaseStatus::Arbitrated],
+        let (_, b) = subscription(41, vec![CaseStatus::Reported, CaseStatus::Arbitrated]);
+        assert_eq!(
+            a.statuses,
+            vec![CaseStatus::Reported, CaseStatus::Arbitrated]
         );
-        assert_eq!(a.statuses, vec![CaseStatus::Reported, CaseStatus::Arbitrated]);
         assert_eq!(a.id, b.id, "同一意图必须得到同一订阅 id");
         assert_eq!(a.sig, b.sig);
     }

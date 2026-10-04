@@ -296,10 +296,12 @@ mod tests {
         )
         .unwrap();
         newer.verify().unwrap(); // 它自己的签名是对的
-        let policy = SnapshotPolicy::for_agent(k.did()).expecting_content_root(
-            older.snapshot().content_root().unwrap(),
+        let policy = SnapshotPolicy::for_agent(k.did())
+            .expecting_content_root(older.snapshot().content_root().unwrap());
+        assert_eq!(
+            newer.verify_policy(&policy),
+            Err(CoreError::InvalidSignature)
         );
-        assert_eq!(newer.verify_policy(&policy), Err(CoreError::InvalidSignature));
         assert!(older.verify_policy(&policy).is_ok());
     }
 
@@ -309,7 +311,10 @@ mod tests {
         let signed = SignedSnapshot::sign(snap(&k, "node-a"), &k).unwrap();
         let mut value = signed.to_value().unwrap();
         value["sig"] = json!("00".repeat(64));
-        assert_eq!(SignedSnapshot::from_value(&value), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            SignedSnapshot::from_value(&value),
+            Err(CoreError::InvalidSignature)
+        );
     }
 
     #[test]
@@ -318,11 +323,17 @@ mod tests {
         let signed = SignedSnapshot::sign(snap(&k, "node-a"), &k).unwrap();
         let mut unsigned = signed.to_value().unwrap();
         unsigned["sig"] = json!("");
-        assert_eq!(SignedSnapshot::from_value(&unsigned), Err(CoreError::NotSealed));
+        assert_eq!(
+            SignedSnapshot::from_value(&unsigned),
+            Err(CoreError::NotSealed)
+        );
 
         let mut old = signed.to_value().unwrap();
         old["version"] = json!(99);
-        assert_eq!(SignedSnapshot::from_value(&old), Err(CoreError::InvalidVersion));
+        assert_eq!(
+            SignedSnapshot::from_value(&old),
+            Err(CoreError::InvalidVersion)
+        );
     }
 
     #[test]
@@ -330,7 +341,10 @@ mod tests {
         let k = keys(7);
         let signed = SignedSnapshot::sign(snap(&k, "node-a"), &k).unwrap();
         let policy = SnapshotPolicy::for_agent(k.did()).with_min_epoch(10);
-        assert_eq!(signed.verify_policy(&policy), Err(CoreError::InvalidVersion));
+        assert_eq!(
+            signed.verify_policy(&policy),
+            Err(CoreError::InvalidVersion)
+        );
         // 单验签名仍然通过：过期不是伪造，两者必须分开。
         signed.verify().unwrap();
     }
@@ -353,7 +367,10 @@ mod tests {
         let policy = SnapshotPolicy::for_agent(k.did());
         let verified: VerifiedSnapshot = signed.verify_policy(&policy).unwrap();
         assert_eq!(verified.signer(), &k.did());
-        assert_eq!(verified.content_root(), signed.snapshot().content_root().unwrap());
+        assert_eq!(
+            verified.content_root(),
+            signed.snapshot().content_root().unwrap()
+        );
         let inner = verified.into_snapshot();
         assert!(inner.verify().is_ok());
     }
@@ -365,6 +382,9 @@ mod tests {
         let signed = SignedSnapshot::sign(snap(&a, "node-a"), &a).unwrap();
         let mut value = signed.to_value().unwrap();
         value["signer"] = json!(b.did().as_str());
-        assert_eq!(SignedSnapshot::from_value(&value), Err(CoreError::InvalidSignature));
+        assert_eq!(
+            SignedSnapshot::from_value(&value),
+            Err(CoreError::InvalidSignature)
+        );
     }
 }

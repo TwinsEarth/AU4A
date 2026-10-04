@@ -92,7 +92,12 @@ pub struct RgbContract {
 
 impl RgbContract {
     /// 创世：生成资产 id（内容寻址）与初始分配。
-    pub fn issue(ticker: &str, supply: Credits, genesis_seal: Seal, nonce: u64) -> CoreResult<Self> {
+    pub fn issue(
+        ticker: &str,
+        supply: Credits,
+        genesis_seal: Seal,
+        nonce: u64,
+    ) -> CoreResult<Self> {
         if ticker.is_empty() {
             return Err(CoreError::InvalidKind);
         }
@@ -137,7 +142,10 @@ impl RgbContract {
     }
 
     pub fn balance_of(&self, seal: &Seal) -> Credits {
-        self.allocations.get(&seal.key()).copied().unwrap_or_default()
+        self.allocations
+            .get(&seal.key())
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn is_spent(&self, seal: &Seal) -> bool {
@@ -203,9 +211,11 @@ impl TransferBundle {
 
     /// 校验密封包：承诺自洽、输入输出非空、封印不重复、`Σ输入 == Σ输出`。
     pub fn verify(&self) -> Result<(), ChainRefusal> {
-        if self.commitment != self.compute_commitment().map_err(|_| {
-            ChainRefusal::new("rgb.transfer", RefusalCode::Malformed, "承诺计算失败")
-        })? {
+        if self.commitment
+            != self.compute_commitment().map_err(|_| {
+                ChainRefusal::new("rgb.transfer", RefusalCode::Malformed, "承诺计算失败")
+            })?
+        {
             return Err(ChainRefusal::new(
                 "rgb.transfer",
                 RefusalCode::Malformed,
@@ -325,9 +335,7 @@ impl RgbAdapter {
             .payload
             .get("ticker")
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                ChainRefusal::new("rgb.issue", RefusalCode::Malformed, "缺少 ticker")
-            })?;
+            .ok_or_else(|| ChainRefusal::new("rgb.issue", RefusalCode::Malformed, "缺少 ticker"))?;
         let supply = tx
             .payload
             .get("supply")
@@ -359,7 +367,11 @@ impl RgbAdapter {
             return Err(refusal);
         }
         let contract = self.contract.as_mut().ok_or_else(|| {
-            ChainRefusal::new("rgb.transfer", RefusalCode::Conflict, "尚未发行，无契约状态")
+            ChainRefusal::new(
+                "rgb.transfer",
+                RefusalCode::Conflict,
+                "尚未发行，无契约状态",
+            )
         })?;
         if bundle.asset_id != contract.asset_id {
             let refusal = ChainRefusal::new(
@@ -392,11 +404,9 @@ impl RgbAdapter {
                 net.record_refusal(refusal.clone());
                 return Err(refusal);
             }
-            total_in = total_in
-                .checked_add(amount)
-                .map_err(|_| {
-                    ChainRefusal::new("rgb.transfer", RefusalCode::Malformed, "输入金额溢出")
-                })?;
+            total_in = total_in.checked_add(amount).map_err(|_| {
+                ChainRefusal::new("rgb.transfer", RefusalCode::Malformed, "输入金额溢出")
+            })?;
         }
         let mut total_out = Credits::ZERO;
         for (_, amount) in &bundle.outputs {
@@ -447,9 +457,10 @@ impl RgbAdapter {
             net.record_refusal(refusal.clone());
             return Err(refusal);
         }
-        let contract = self.contract.as_ref().ok_or_else(|| {
-            ChainRefusal::new("rgb.verify", RefusalCode::Malformed, "尚未发行")
-        })?;
+        let contract = self
+            .contract
+            .as_ref()
+            .ok_or_else(|| ChainRefusal::new("rgb.verify", RefusalCode::Malformed, "尚未发行"))?;
         contract.check_supply_conservation().map_err(|_| {
             ChainRefusal::new("rgb.verify", RefusalCode::Conflict, "总量守恒被破坏")
         })?;
@@ -500,14 +511,15 @@ impl RgbAdapter {
             return Err(refusal);
         }
         let contract = self.contract.as_mut().ok_or_else(|| {
-            ChainRefusal::new("rgb.finalize", RefusalCode::Conflict, "尚未发行，无契约状态")
-        })?;
-        if contract.finalized.contains(&bundle_id) {
-            let refusal = ChainRefusal::new(
+            ChainRefusal::new(
                 "rgb.finalize",
                 RefusalCode::Conflict,
-                "该转移包已经最终化",
-            );
+                "尚未发行，无契约状态",
+            )
+        })?;
+        if contract.finalized.contains(&bundle_id) {
+            let refusal =
+                ChainRefusal::new("rgb.finalize", RefusalCode::Conflict, "该转移包已经最终化");
             net.record_refusal(refusal.clone());
             return Err(refusal);
         }
@@ -561,10 +573,7 @@ mod tests {
         let bundle = TransferBundle::new(
             &adapter.contract().unwrap().asset_id,
             inputs,
-            outputs
-                .into_iter()
-                .map(|(s, a)| (s, Credits(a)))
-                .collect(),
+            outputs.into_iter().map(|(s, a)| (s, Credits(a))).collect(),
             "blind-au4a",
         )
         .unwrap();
@@ -592,7 +601,10 @@ mod tests {
         assert_eq!(contract.asset_id.len(), 64);
         contract.check_supply_conservation().unwrap();
         // 创世封印挂在发行交易自己的 id 上。
-        assert_eq!(contract.balance_of(&Seal::new(genesis.id.clone(), 0)), Credits(1_000));
+        assert_eq!(
+            contract.balance_of(&Seal::new(genesis.id.clone(), 0)),
+            Credits(1_000)
+        );
         // 第二次发行被拒绝。
         let again = ChainTx::new(
             ChainId::BtcRegtest,
@@ -626,7 +638,10 @@ mod tests {
         net.mine();
         let contract = adapter.contract().unwrap();
         assert!(contract.is_spent(&Seal::new(genesis.id.clone(), 0)));
-        assert_eq!(contract.balance_of(&Seal::new("alice-out", 0)), Credits(600));
+        assert_eq!(
+            contract.balance_of(&Seal::new("alice-out", 0)),
+            Credits(600)
+        );
         assert_eq!(contract.balance_of(&Seal::new("bob-out", 1)), Credits(400));
         assert_eq!(contract.circulating().unwrap(), Credits(1_000));
         contract.check_supply_conservation().unwrap();
@@ -695,7 +710,10 @@ mod tests {
         let err = adapter.execute(&mut net, &tx).unwrap_err();
         assert_eq!(err.code, RefusalCode::Conflict);
         assert!(err.detail.contains("双花"));
-        assert_eq!(adapter.contract().unwrap().circulating().unwrap(), Credits(1_000));
+        assert_eq!(
+            adapter.contract().unwrap().circulating().unwrap(),
+            Credits(1_000)
+        );
     }
 
     #[test]
@@ -852,9 +870,16 @@ mod tests {
         // 双轨守恒：本地托管 == 链上表示 == RGB 流通量。
         assert_eq!(book.escrowed(), Credits(400));
         assert_eq!(book.chain_supply(), Credits(400));
-        assert_eq!(adapter.contract().unwrap().circulating().unwrap(), Credits(400));
+        assert_eq!(
+            adapter.contract().unwrap().circulating().unwrap(),
+            Credits(400)
+        );
         book.require_consistent(&ledger).unwrap();
-        adapter.contract().unwrap().check_supply_conservation().unwrap();
+        adapter
+            .contract()
+            .unwrap()
+            .check_supply_conservation()
+            .unwrap();
         ledger.check_conservation().unwrap();
     }
 }

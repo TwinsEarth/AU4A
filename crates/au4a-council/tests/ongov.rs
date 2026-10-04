@@ -7,7 +7,7 @@ use au4a_core::{AgentKeys, Credits, Did, EvidenceGrade};
 use au4a_council::ongov::{no_false_chain_claims, project_all, state_summary};
 use au4a_council::{
     Action, AgentIdentity, ChainBinding, Choice, CommitteeKind, Council, CouncilConfig,
-    ElectionBallot, ElectionConfig, GovernorToken, GovState, HumanObserver, ProposalDraft, Vote,
+    ElectionBallot, ElectionConfig, GovState, GovernorToken, HumanObserver, ProposalDraft, Vote,
 };
 use au4a_kernel::{Kernel, KernelConfig};
 
@@ -24,12 +24,17 @@ struct Scene {
 fn scene(n: u8) -> Scene {
     let mut kernel = Kernel::new(KernelConfig::default());
     let mut council = Council::new(CouncilConfig {
-        election: ElectionConfig { seats: n as usize, ..ElectionConfig::default() },
+        election: ElectionConfig {
+            seats: n as usize,
+            ..ElectionConfig::default()
+        },
         ..CouncilConfig::default()
     });
     let agents: Vec<AgentKeys> = (0..n).map(keys).collect();
     for k in &agents {
-        kernel.register(k, "t", &["governance.vote"], Credits(20)).expect("register");
+        kernel
+            .register(k, "t", &["governance.vote"], Credits(20))
+            .expect("register");
         council.note_reputation(&k.did(), 5_000);
         council.note_uptime(&k.did(), 300);
     }
@@ -38,8 +43,14 @@ fn scene(n: u8) -> Scene {
         .iter()
         .map(|k| ElectionBallot::cast(k, CommitteeKind::Evolution, &picks).expect("cast"))
         .collect();
-    council.elect(&mut kernel, CommitteeKind::Evolution, &ballots).expect("elect");
-    Scene { kernel, council, agents }
+    council
+        .elect(&mut kernel, CommitteeKind::Evolution, &ballots)
+        .expect("elect");
+    Scene {
+        kernel,
+        council,
+        agents,
+    }
 }
 
 impl Scene {
@@ -49,7 +60,10 @@ impl Scene {
             &self.agents[0],
             CommitteeKind::Evolution,
             title,
-            Action::SetPolicy { key: key.to_string(), value: 42 },
+            Action::SetPolicy {
+                key: key.to_string(),
+                value: 42,
+            },
         )
         .expect("draft");
         self.council
@@ -70,9 +84,16 @@ impl Scene {
             if state.outcome.is_closed() {
                 break;
             }
-            let k = self.agents.iter().find(|k| &k.did() == did).expect("member");
+            let k = self
+                .agents
+                .iter()
+                .find(|k| &k.did() == did)
+                .expect("member");
             let vote = Vote::cast(k, id, state.round, choice).expect("cast");
-            state = self.council.cast_vote(&mut self.kernel, vote).expect("vote");
+            state = self
+                .council
+                .cast_vote(&mut self.kernel, vote)
+                .expect("vote");
         }
         state.round
     }
@@ -86,7 +107,10 @@ fn the_mapping_covers_the_whole_lifecycle() {
     // 1) 已提交、未开轮 → pending
     let token = GovernorToken::project(&s.council, &id).expect("project");
     assert_eq!(token.state, GovState::Pending);
-    assert_eq!(token.for_votes + token.against_votes + token.abstain_votes, 0);
+    assert_eq!(
+        token.for_votes + token.against_votes + token.abstain_votes,
+        0
+    );
     assert_eq!(token.quorum_fraction(), (3, 4));
 
     // 2) 开轮 → active
@@ -108,11 +132,16 @@ fn the_mapping_covers_the_whole_lifecycle() {
     }
     let token = GovernorToken::project(&s.council, &id).expect("project");
     assert_eq!(token.state, GovState::Succeeded);
-    assert_eq!((token.for_votes, token.against_votes, token.abstain_votes), (3, 0, 0));
+    assert_eq!(
+        (token.for_votes, token.against_votes, token.abstain_votes),
+        (3, 0, 0)
+    );
 
     // 5) 执行 → executed，但没有 tx_ref（不是真实链上）
     let identity = AgentIdentity::from_keys(&s.agents[0]);
-    s.council.execute(&mut s.kernel, &identity, &id).expect("execute");
+    s.council
+        .execute(&mut s.kernel, &identity, &id)
+        .expect("execute");
     let token = GovernorToken::project(&s.council, &id).expect("project");
     assert_eq!(token.state, GovState::Executed);
     let execution = token.execution.as_ref().expect("execution");
@@ -128,12 +157,20 @@ fn defeated_and_canceled_are_distinguishable() {
     let blocked = s.propose("会被人类阻断", "canceled");
     s.vote_all(&blocked, Choice::Yes);
     let human = HumanObserver::new("operator-2");
-    let veto = human.veto(&s.council, &blocked, "影响长期公平").expect("veto");
+    let veto = human
+        .veto(&s.council, &blocked, "影响长期公平")
+        .expect("veto");
     s.council.apply_veto(&mut s.kernel, &veto).expect("apply");
     let token = GovernorToken::project(&s.council, &blocked).expect("project");
     assert_eq!(token.state, GovState::Canceled);
-    assert_eq!(token.veto.as_ref().map(|v| v.reason.as_str()), Some("影响长期公平"));
-    assert_eq!(token.veto.as_ref().map(|v| v.observer.as_str()), Some("operator-2"));
+    assert_eq!(
+        token.veto.as_ref().map(|v| v.reason.as_str()),
+        Some("影响长期公平")
+    );
+    assert_eq!(
+        token.veto.as_ref().map(|v| v.observer.as_str()),
+        Some("operator-2")
+    );
     assert!(token.execution.is_none());
 
     // 表决否决路径 → defeated（没有否决记录）
@@ -218,11 +255,11 @@ fn projection_is_deterministic_and_serializable() {
 #[test]
 fn self_check_results_and_scenario_expose_the_mapping() {
     let checks = au4a_council::self_check();
-    assert!(au4a_core::all_passed(&checks), "self_check 未全绿: {checks:?}");
-    for name in [
-        "council.ongov.mapping",
-        "council.ongov.no_false_chain",
-    ] {
+    assert!(
+        au4a_core::all_passed(&checks),
+        "self_check 未全绿: {checks:?}"
+    );
+    for name in ["council.ongov.mapping", "council.ongov.no_false_chain"] {
         assert!(checks.iter().any(|c| c.name == name), "缺少自检项 {name}");
     }
 

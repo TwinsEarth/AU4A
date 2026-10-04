@@ -6,9 +6,7 @@
 //! * 同种子的运行时在两台内核上产生完全相同的日志（可重放）。
 
 use au4a_core::{AgentKeys, Credits, Envelope, RefusalCode};
-use au4a_kernel::{
-    AutonomyLayer, AutonomyPolicy, IntentKind, Kernel, KernelConfig, results_json,
-};
+use au4a_kernel::{results_json, AutonomyLayer, AutonomyPolicy, IntentKind, Kernel, KernelConfig};
 
 fn seed(tag: u8) -> AgentKeys {
     AgentKeys::from_seed(&[tag; 32])
@@ -16,7 +14,9 @@ fn seed(tag: u8) -> AgentKeys {
 
 fn join(kernel: &mut Kernel, tag: u8, skill: &str) -> AutonomyLayer {
     let mut layer = AutonomyLayer::new(seed(tag), AutonomyPolicy::default());
-    layer.join(kernel, "autonomous", &[skill], Credits(20)).unwrap();
+    layer
+        .join(kernel, "autonomous", &[skill], Credits(20))
+        .unwrap();
     layer
 }
 
@@ -65,7 +65,9 @@ fn an_agent_registers_announces_and_offers_without_any_human_step() {
         .unwrap_or_default();
     for key in keys {
         let lower = key.to_lowercase();
-        assert!(!lower.contains("human") && !lower.contains("approv") && !lower.contains("operator"));
+        assert!(
+            !lower.contains("human") && !lower.contains("approv") && !lower.contains("operator")
+        );
     }
     for kind in IntentKind::ALL {
         let name = kind.as_str();
@@ -78,7 +80,9 @@ fn a_race_causes_backoff_while_misconduct_causes_self_suspension() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let mut layer = join(&mut kernel, 33, "kernel.settle");
     let payee = seed(34);
-    kernel.register(&payee, "payee", &["x"], Credits(20)).unwrap();
+    kernel
+        .register(&payee, "payee", &["x"], Credits(20))
+        .unwrap();
 
     // 竞争路径：对端请求一笔 unverified 结算 → 证据闸门拒绝 → 退避，绝不隔离。
     let request = Envelope::new(
@@ -135,7 +139,11 @@ fn same_seed_produces_the_same_autonomous_journal() {
             kernel.tick();
             turns.push(layer.turn(&mut kernel).unwrap());
         }
-        (turns, layer.state().clone(), kernel.registry_fingerprint().unwrap())
+        (
+            turns,
+            layer.state().clone(),
+            kernel.registry_fingerprint().unwrap(),
+        )
     };
     let (a_turns, a_state, a_fp) = run();
     let (b_turns, b_state, b_fp) = run();
@@ -158,6 +166,11 @@ fn the_journal_accounts_for_every_plan_without_a_human_gate() {
         assert!(IntentKind::ALL.contains(&record.intent.kind()));
     }
     assert!(journal.iter().any(|r| r.acted));
-    assert!(journal.iter().any(|r| !r.acted), "Idle/Defer 只是决定，不动内核");
-    assert!(results_json().unwrap()["all_passed"].as_bool().unwrap_or(false));
+    assert!(
+        journal.iter().any(|r| !r.acted),
+        "Idle/Defer 只是决定，不动内核"
+    );
+    assert!(results_json().unwrap()["all_passed"]
+        .as_bool()
+        .unwrap_or(false));
 }

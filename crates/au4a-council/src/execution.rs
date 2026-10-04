@@ -67,7 +67,11 @@ impl ExecutionEffect {
         match self {
             ExecutionEffect::PolicySet { key, value } => format!("policy {key}={value}"),
             ExecutionEffect::ReputationSet { did, reputation_bp } => {
-                format!("reputation {}={}bp", au4a_core::short_id(did.as_str()), reputation_bp)
+                format!(
+                    "reputation {}={}bp",
+                    au4a_core::short_id(did.as_str()),
+                    reputation_bp
+                )
             }
             ExecutionEffect::Transferred { from, to, amount } => format!(
                 "transfer {}->{} amount={amount}",
@@ -75,7 +79,10 @@ impl ExecutionEffect {
                 au4a_core::short_id(to.as_str())
             ),
             ExecutionEffect::Slashed { did, amount } => {
-                format!("slash {} amount={amount}", au4a_core::short_id(did.as_str()))
+                format!(
+                    "slash {} amount={amount}",
+                    au4a_core::short_id(did.as_str())
+                )
             }
         }
     }
@@ -118,9 +125,12 @@ impl ExecutionReceipt {
 
     /// 是否发生了账本变更。
     pub fn touches_ledger(&self) -> bool {
-        self.effects
-            .iter()
-            .any(|e| matches!(e, ExecutionEffect::Transferred { .. } | ExecutionEffect::Slashed { .. }))
+        self.effects.iter().any(|e| {
+            matches!(
+                e,
+                ExecutionEffect::Transferred { .. } | ExecutionEffect::Slashed { .. }
+            )
+        })
     }
 
     /// 账本效应自洽：转账不改变总量；罚没使总量恰好减少罚没额、累计罚没恰好增加同样的量。
@@ -182,7 +192,11 @@ pub fn execute(
     }
     // 2. 执行者必须是已注册 Agent 且为该委员会在任委员。
     if kernel.card(executor.did()).is_none() {
-        kernel.refuse(executor.did(), RefusalCode::Unauthorized, "executor is not a registered agent");
+        kernel.refuse(
+            executor.did(),
+            RefusalCode::Unauthorized,
+            "executor is not a registered agent",
+        );
         return Err(CoreError::UnknownAgent);
     }
     let seated = council
@@ -190,12 +204,20 @@ pub fn execute(
         .map(|c| c.has_member(executor.did()))
         .unwrap_or(false);
     if !seated {
-        kernel.refuse(executor.did(), RefusalCode::Unauthorized, "executor is not a seated member");
+        kernel.refuse(
+            executor.did(),
+            RefusalCode::Unauthorized,
+            "executor is not a seated member",
+        );
         return Err(CoreError::InvalidSignature);
     }
     // 3. 幂等：已经执行过的动议不会再产生任何账本效应。
     if council.execution(proposal_id).is_some() {
-        kernel.refuse(executor.did(), RefusalCode::Conflict, "proposal already executed");
+        kernel.refuse(
+            executor.did(),
+            RefusalCode::Conflict,
+            "proposal already executed",
+        );
         return Err(CoreError::InvalidKind);
     }
 
@@ -236,15 +258,25 @@ pub fn execute(
 }
 
 /// 把动作落成状态变更。任何一步失败都不留下部分变更。
-fn apply(council: &mut Council, kernel: &mut Kernel, action: &Action) -> CoreResult<Vec<ExecutionEffect>> {
+fn apply(
+    council: &mut Council,
+    kernel: &mut Kernel,
+    action: &Action,
+) -> CoreResult<Vec<ExecutionEffect>> {
     match action {
         Action::SetPolicy { key, value } => {
             council.set_policy(key.clone(), *value);
-            Ok(vec![ExecutionEffect::PolicySet { key: key.clone(), value: *value }])
+            Ok(vec![ExecutionEffect::PolicySet {
+                key: key.clone(),
+                value: *value,
+            }])
         }
         Action::SetReputation { did, reputation_bp } => {
             council.note_reputation(did, *reputation_bp);
-            Ok(vec![ExecutionEffect::ReputationSet { did: did.clone(), reputation_bp: *reputation_bp }])
+            Ok(vec![ExecutionEffect::ReputationSet {
+                did: did.clone(),
+                reputation_bp: *reputation_bp,
+            }])
         }
         Action::Transfer { from, to, amount } => {
             kernel.ledger_mut().transfer(from, to, *amount)?;
@@ -266,7 +298,10 @@ fn apply(council: &mut Council, kernel: &mut Kernel, action: &Action) -> CoreRes
                 return Err(CoreError::InsufficientFunds);
             }
             kernel.ledger_mut().slash(did, *amount)?;
-            Ok(vec![ExecutionEffect::Slashed { did: did.clone(), amount: *amount }])
+            Ok(vec![ExecutionEffect::Slashed {
+                did: did.clone(),
+                amount: *amount,
+            }])
         }
     }
 }

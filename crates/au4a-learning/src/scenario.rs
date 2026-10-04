@@ -108,7 +108,8 @@ pub fn run(kernel: &mut Kernel) -> CoreResult<Value> {
     let mut successes = 0u32;
     let mut reward_total = Credits::ZERO;
     for i in 0..SCENARIO_TASKS {
-        let task_type = TASK_TYPES[(hash64(SCENARIO_SEED, &[i]) % TASK_TYPES.len() as u64) as usize];
+        let task_type =
+            TASK_TYPES[(hash64(SCENARIO_SEED, &[i]) % TASK_TYPES.len() as u64) as usize];
         let outcome = outcome_of(i);
         let partner_count = 1 + (hash64(SCENARIO_SEED, &[i, 11]) % 2) as usize;
         let peers = &peer_dids[..partner_count];
@@ -348,10 +349,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         .and_then(|f| f.get("total"))
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let settled = a
-        .get("settled_total")
-        .and_then(Value::as_i64)
-        .unwrap_or(-1);
+    let settled = a.get("settled_total").and_then(Value::as_i64).unwrap_or(-1);
     let successes = a.get("successes").and_then(Value::as_u64).unwrap_or(0);
     let honest = feedback_total == experiences
         && settled >= 0

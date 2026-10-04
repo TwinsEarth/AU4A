@@ -67,7 +67,9 @@ impl Feedback {
                 Outcome::Partial => partials += 1,
                 Outcome::Failure => {}
             }
-            quality_sum = quality_sum.checked_add(e.quality_bp()).ok_or(CoreError::Overflow)?;
+            quality_sum = quality_sum
+                .checked_add(e.quality_bp())
+                .ok_or(CoreError::Overflow)?;
             reward_total = reward_total.checked_add(e.reward)?;
         }
         let n = sample as i64;
@@ -212,7 +214,12 @@ impl FeedbackReport {
                     exact,
                     format!(
                         "sample={} success={} partial={} failure={} quality={} mean_reward={}",
-                        o.sample, o.success_bp, o.partial_bp, o.failure_bp, o.quality_bp, o.mean_reward
+                        o.sample,
+                        o.success_bp,
+                        o.partial_bp,
+                        o.failure_bp,
+                        o.quality_bp,
+                        o.mean_reward
                     ),
                 )
             }
@@ -226,7 +233,16 @@ impl FeedbackReport {
             Err(_) => return checks,
         };
         let context = "ctx-tiny".to_string();
-        if let Ok(e) = Experience::new("t-1", "x", &context, "a", Outcome::Success, Credits(1), 1, &[]) {
+        if let Ok(e) = Experience::new(
+            "t-1",
+            "x",
+            &context,
+            "a",
+            Outcome::Success,
+            Credits(1),
+            1,
+            &[],
+        ) {
             let _ = tiny.record(e);
         }
         let under = FeedbackAnalyser::analyse(&tiny)

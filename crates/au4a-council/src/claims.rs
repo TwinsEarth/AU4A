@@ -210,9 +210,12 @@ pub fn claims_are_well_formed() -> bool {
     ids.sort();
     ids.dedup();
     let ids_unique = ids.len() == before;
-    let populated = CLAIMS
-        .iter()
-        .all(|c| !c.id.is_empty() && !c.capability.is_empty() && !c.interface.is_empty() && !c.test.is_empty());
+    let populated = CLAIMS.iter().all(|c| {
+        !c.id.is_empty()
+            && !c.capability.is_empty()
+            && !c.interface.is_empty()
+            && !c.test.is_empty()
+    });
     // verified 必须有测试名；cpu-proto 必须写明边界；unverified 不允许出现在清单里。
     let graded = CLAIMS.iter().all(|c| match c.grade {
         EvidenceGrade::Verified => !c.test.is_empty(),
@@ -235,9 +238,20 @@ pub fn claims_json() -> Value {
 
 /// 一行摘要（人类可读）。
 pub fn summary() -> String {
-    let verified = CLAIMS.iter().filter(|c| c.grade == EvidenceGrade::Verified).count();
-    let proto = CLAIMS.iter().filter(|c| c.grade == EvidenceGrade::CpuProto).count();
-    format!("{} 条能力：{} verified / {} cpu-proto / 0 unverified", CLAIMS.len(), verified, proto)
+    let verified = CLAIMS
+        .iter()
+        .filter(|c| c.grade == EvidenceGrade::Verified)
+        .count();
+    let proto = CLAIMS
+        .iter()
+        .filter(|c| c.grade == EvidenceGrade::CpuProto)
+        .count();
+    format!(
+        "{} 条能力：{} verified / {} cpu-proto / 0 unverified",
+        CLAIMS.len(),
+        verified,
+        proto
+    )
 }
 
 #[cfg(test)]

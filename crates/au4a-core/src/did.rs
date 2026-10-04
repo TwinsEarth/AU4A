@@ -41,9 +41,15 @@ impl Did {
 
     /// 取回公钥。DID 与公钥是同一件事的两种表示。
     pub fn public_key(&self) -> CoreResult<VerifyingKey> {
-        let hex_part = self.0.strip_prefix(DID_PREFIX).ok_or(CoreError::InvalidDid)?;
+        let hex_part = self
+            .0
+            .strip_prefix(DID_PREFIX)
+            .ok_or(CoreError::InvalidDid)?;
         let bytes = hex::decode(hex_part).map_err(|_| CoreError::InvalidDid)?;
-        let arr: [u8; 32] = bytes.as_slice().try_into().map_err(|_| CoreError::InvalidDid)?;
+        let arr: [u8; 32] = bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| CoreError::InvalidDid)?;
         VerifyingKey::from_bytes(&arr).map_err(|_| CoreError::InvalidDid)
     }
 

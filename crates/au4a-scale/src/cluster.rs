@@ -197,10 +197,22 @@ mod tests {
         assert_eq!(report.tiers.len(), TIERS.len());
         assert_eq!(report.tiers[3].nodes, 10_000);
         for row in &report.tiers {
-            assert_eq!(row.per_node_milli, effective_per_node_milli(row.nodes, &report.params).unwrap());
-            assert_eq!(row.aggregate_milli, aggregate_throughput_milli(row.nodes, &report.params).unwrap());
-            assert_eq!(row.net_milli, net_throughput_milli(row.nodes, &report.params).unwrap());
-            assert_eq!(row.overhead_ratio_bp, overhead_ratio_bp(row.nodes, &report.params).unwrap());
+            assert_eq!(
+                row.per_node_milli,
+                effective_per_node_milli(row.nodes, &report.params).unwrap()
+            );
+            assert_eq!(
+                row.aggregate_milli,
+                aggregate_throughput_milli(row.nodes, &report.params).unwrap()
+            );
+            assert_eq!(
+                row.net_milli,
+                net_throughput_milli(row.nodes, &report.params).unwrap()
+            );
+            assert_eq!(
+                row.overhead_ratio_bp,
+                overhead_ratio_bp(row.nodes, &report.params).unwrap()
+            );
         }
         assert_eq!(report.evaluations, report.vertex.evaluations);
         assert!(report.evaluations <= evaluation_budget());
@@ -285,9 +297,18 @@ mod tests {
     #[test]
     fn invalid_scan_requests_are_refused() {
         let p = params();
-        assert_eq!(bounded_vertex_scan(&p, 0, 100, 16).err(), Some(CoreError::InvalidKind));
-        assert_eq!(bounded_vertex_scan(&p, 100, 10, 16).err(), Some(CoreError::InvalidKind));
-        assert_eq!(bounded_vertex_scan(&p, 1, 100, 1).err(), Some(CoreError::InvalidKind));
+        assert_eq!(
+            bounded_vertex_scan(&p, 0, 100, 16).err(),
+            Some(CoreError::InvalidKind)
+        );
+        assert_eq!(
+            bounded_vertex_scan(&p, 100, 10, 16).err(),
+            Some(CoreError::InvalidKind)
+        );
+        assert_eq!(
+            bounded_vertex_scan(&p, 1, 100, 1).err(),
+            Some(CoreError::InvalidKind)
+        );
         assert_eq!(
             bounded_vertex_scan(&p, 1, 100, MAX_SCAN_SAMPLES + 1).err(),
             Some(CoreError::InvalidKind)

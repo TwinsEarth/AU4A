@@ -64,7 +64,11 @@ pub fn demo_report(seed: u64) -> CoreResult<Value> {
             &format!("demo-{i:03}"),
             profile.name,
             &context,
-            if outcome.is_success() { "deliver" } else { "retry-planned" },
+            if outcome.is_success() {
+                "deliver"
+            } else {
+                "retry-planned"
+            },
             outcome,
             reward,
             i,
@@ -122,7 +126,14 @@ pub fn demo_report(seed: u64) -> CoreResult<Value> {
     let (control, learning, comparison) = ab_test(&config)?;
 
     // ---- 可解释性：为什么参数是这个值（可直接对外发布）----
-    let explanation = explain(&model.params(), &report, &violations, &signals, &bounds, &targets)?;
+    let explanation = explain(
+        &model.params(),
+        &report,
+        &violations,
+        &signals,
+        &bounds,
+        &targets,
+    )?;
 
     Ok(json!({
         "demo": "track-1.6 individual learning loop",
