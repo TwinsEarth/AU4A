@@ -116,6 +116,16 @@ impl Declaration {
     pub fn signing_bytes(&self) -> CoreResult<String> {
         canonicalize(&self.to_value()?)
     }
+
+    /// **能力集合**的内容指纹：不含 `epoch` / `issued_at`。
+    ///
+    /// 版本化的语义是「版本号 → 能力内容」是一个函数：重新签名、换一个签发时刻、
+    /// 或者换一个版本号，都不该让同一份能力看起来「变了」。
+    /// 因此版本递增、幂等判定、冲突检测全部以这个指纹为准。
+    pub fn capabilities_fingerprint(&self) -> CoreResult<String> {
+        let value = serde_json::to_value(&self.capabilities).map_err(|_| CoreError::Encoding)?;
+        canonical_hash(&value)
+    }
 }
 
 /// 已签名声明。签名覆盖 `declaration` 的规范 JSON 字节。
@@ -151,6 +161,11 @@ impl SignedDeclaration {
     /// 声明内容指纹（不含签名）：用于「同版本同内容」的判定。
     pub fn content_fingerprint(&self) -> CoreResult<String> {
         self.declaration.fingerprint()
+    }
+
+    /// 能力集合的内容指纹（版本化以它为准，见 [`Declaration::capabilities_fingerprint`]）。
+    pub fn capabilities_fingerprint(&self) -> CoreResult<String> {
+        self.declaration.capabilities_fingerprint()
     }
 
     /// 含签名的整体指纹：内容相同但签名不同（重放/替换签名）也能被发现。

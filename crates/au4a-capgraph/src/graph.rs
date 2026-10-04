@@ -9,13 +9,14 @@
 //! 拒绝是有类型的（[`RefusalCode`]），可以被内核记录、被观察层只读展示、
 //! 也可以被上层拿去升级判定（`Kernel::escalation_for`）。这是 `au4a-core::refusal` 的既有纪律。
 
-use au4a_core::{CoreError, Did, RefusalCode};
+use au4a_core::{CoreError, CoreResult, Did, RefusalCode};
 use serde_json::{json, Value};
 
 use crate::cache::{CacheStats, CapabilityCache};
 use crate::capability::{Capability, SkillId};
-use crate::declaration::SignedDeclaration;
+use crate::declaration::{Declaration, SignedDeclaration};
 use crate::index::{rank_and_truncate, CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats};
+use crate::version::{VersionHistory, VersionRecord};
 
 /// 能力图配置。人类可以设定容量与上限，但不能设定「谁有什么能力」。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,9 +154,11 @@ pub struct AgentCapabilityGraph {
     config: CapGraphConfig,
     own: Vec<Capability>,
     own_epoch: u64,
-    own_fingerprint: Option<String>,
+    /// 当前自有能力的**内容**指纹（不含版本号与签发时刻）。
+    own_content_fingerprint: Option<String>,
     neighbors: CapabilityCache,
     index: CapabilityIndex,
+    history: VersionHistory,
 }
 
 impl AgentCapabilityGraph {
@@ -166,9 +169,10 @@ impl AgentCapabilityGraph {
             config,
             own: Vec::new(),
             own_epoch: 0,
-            own_fingerprint: None,
+            own_content_fingerprint: None,
             neighbors,
             index: CapabilityIndex::new(),
+            history: VersionHistory::new(),
         }
     }
 
@@ -187,6 +191,55 @@ impl AgentCapabilityGraph {
 
     pub fn own_capabilities(&self) -> &[Capability] {
         &self.own
+    }
+
+    /// 版本历史（append-only、有界、内容寻址）。
+    pub fn history(&self) -> &VersionHistory {
+        &self.history
+    }
+
+    /// 某个 Agent 最近一次见到的版本号。
+    pub fn last_version_of(&self, did: &Did) -> Option<u64> {
+        self.history.last_version(did)
+    }
+
+    /// 自动递增版本号的自有声明入口（v1.1.7）。
+    ///
+    /// 内容没变就不新开版本（返回 `Unchanged`）；内容变了就 `own_epoch + 1`。
+    /// 只有 owner 自己的私钥能走这条路——版本号的所有者必须与内容的所有者一致。
+    pub fn declare(
+        &mut self,
+        keys: &au4a_core::AgentKeys,
+        capabilities: Vec<Capability>,
+        now: u64,
+    ) -> CoreResult<DeclareOutcome> {
+        if keys.did() != self.owner {
+            return Err(CoreError::InvalidSignature);
+        }
+        let declaration = Declaration::new(self.owner.clone(), self.own_epoch, now, capabilities)?;
+        let content = declaration.capabilities_fingerprint()?;
+        if self.own_content_fingerprint.as_deref() == Some(content.as_str()) {
+            // 内容一致：版本号不动。发出去的声明仍然是当前版本，对端只会看到 Unchanged。
+            return Ok(DeclareOutcome::unchanged(&self.owner, self.own_epoch));
+        }
+        let next = self.own_epoch.saturating_add(1);
+        let signed = Declaration::new(self.owner.clone(), next, now, declaration.capabilities)?.sign(keys)?;
+        Ok(self.apply(&signed, now))
+    }
+
+    /// 版本摘要（观察层与场景报告用）。
+    pub fn version_summary(&self) -> Value {
+        json!({
+            "own": self.own_epoch,
+            "own_hash": self.own_content_fingerprint,
+            "neighbors": self
+                .neighbors
+                .iter()
+                .map(|record| (record.did.as_str().to_string(), record.epoch))
+                .collect::<std::collections::BTreeMap<_, _>>(),
+            "history": self.history.len(),
+            "bumps": self.history.bumps(),
+        })
     }
 
     /// 应用一份已签名声明：自己的进 `own`，别人的进邻居缓存。
@@ -210,7 +263,7 @@ impl AgentCapabilityGraph {
             };
             return DeclareOutcome::rejected(&agent, code, format!("declaration rejected: {err}"));
         }
-        let fingerprint = match signed.content_fingerprint() {
+        let fingerprint = match signed.capabilities_fingerprint() {
             Ok(fp) => fp,
             Err(err) => {
                 return DeclareOutcome::rejected(
@@ -230,9 +283,10 @@ impl AgentCapabilityGraph {
     fn apply_own(&mut self, signed: &SignedDeclaration, fingerprint: String) -> DeclareOutcome {
         let agent = self.owner.clone();
         let epoch = signed.epoch();
-        if self.own_fingerprint.as_deref() == Some(fingerprint.as_str()) {
-            return DeclareOutcome::unchanged(&agent, self.own_epoch);
-        }
+        // 先比版本序，再比内容：
+        // 「版本号 → 内容」是一个函数，所以版本回退永远是陈旧；
+        // 只有**同一个**版本号才用内容区分「幂等」（Unchanged）与「冲突」（Conflict）。
+        // 版本推进（epoch > 当前）即使内容相同也算状态变化：我们记录的是对端所处的版本。
         if epoch < self.own_epoch {
             return DeclareOutcome::rejected(
                 &agent,
@@ -240,20 +294,36 @@ impl AgentCapabilityGraph {
                 format!("epoch {epoch} < current {}", self.own_epoch),
             );
         }
-        if epoch == self.own_epoch && self.own_epoch != 0 {
-            // 同一个版本号下内容不同：要么是发送方没有递增版本，要么是被篡改。
-            // 两种情况都不能接受——接受会让「版本号 → 内容」不再是一个函数。
-            return DeclareOutcome::rejected(
-                &agent,
-                RefusalCode::Conflict,
-                format!("epoch {epoch} reused with different content"),
-            );
+        if epoch == self.own_epoch {
+            if self.own_content_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+                return DeclareOutcome::unchanged(&agent, self.own_epoch);
+            }
+            if self.own_epoch != 0 {
+                // 同一个版本号下内容不同：要么是发送方没有递增版本，要么是被篡改。
+                // 两种情况都不能接受——接受会让「版本号 → 内容」不再是一个函数。
+                return DeclareOutcome::rejected(
+                    &agent,
+                    RefusalCode::Conflict,
+                    format!("epoch {epoch} reused with different content"),
+                );
+            }
         }
         self.own = signed.capabilities().to_vec();
         self.own_epoch = epoch;
-        self.own_fingerprint = Some(fingerprint.clone());
+        self.own_content_fingerprint = Some(fingerprint.clone());
         // 索引与数据同步：索引只记「哪里有」，因此每个写入口都必须更新它。
         self.index.insert_agent(&agent, &self.own);
+        self.history.record(VersionRecord {
+            did: agent.clone(),
+            version: epoch,
+            hash: fingerprint.clone(),
+            at: signed.declaration.issued_at,
+            skills: signed
+                .capabilities()
+                .iter()
+                .map(|c| c.skill.as_str().to_string())
+                .collect(),
+        });
         DeclareOutcome::applied(&agent, epoch, self.own.len(), fingerprint)
     }
 
@@ -272,9 +342,6 @@ impl AgentCapabilityGraph {
             .filter(|_| self.neighbors.is_live(&agent, now))
             .map(|record| (record.epoch, record.fingerprint.clone()));
         if let Some((known_epoch, known_fingerprint)) = known {
-            if known_fingerprint == fingerprint {
-                return DeclareOutcome::unchanged(&agent, known_epoch);
-            }
             if epoch < known_epoch {
                 return DeclareOutcome::rejected(
                     &agent,
@@ -283,11 +350,35 @@ impl AgentCapabilityGraph {
                 );
             }
             if epoch == known_epoch {
+                return if known_fingerprint == fingerprint {
+                    DeclareOutcome::unchanged(&agent, known_epoch)
+                } else {
+                    DeclareOutcome::rejected(
+                        &agent,
+                        RefusalCode::Conflict,
+                        format!("epoch {epoch} reused with different content"),
+                    )
+                };
+            }
+        } else if let Some(last_known) = self.history.last_version(&agent) {
+            // v1.1.7：缓存里没有（过期/被淘汰），但**历史**记得。
+            // 只看缓存的话，「先发 v3-A、等它过期、再发 v3-B」就能骗过冲突检测。
+            if epoch < last_known {
                 return DeclareOutcome::rejected(
                     &agent,
-                    RefusalCode::Conflict,
-                    format!("epoch {epoch} reused with different content"),
+                    RefusalCode::StaleEpoch,
+                    format!("epoch {epoch} < last known {last_known} (from history)"),
                 );
+            }
+            if epoch == last_known {
+                let remembered = self.history.hash_of(&agent, epoch).unwrap_or_default();
+                if remembered != fingerprint {
+                    return DeclareOutcome::rejected(
+                        &agent,
+                        RefusalCode::Conflict,
+                        format!("epoch {epoch} reused with different content (history)"),
+                    );
+                }
             }
         }
         let record = NeighborRecord {
@@ -312,6 +403,17 @@ impl AgentCapabilityGraph {
             self.index.remove_agent(gone);
         }
         self.index.insert_agent(&agent, signed.capabilities());
+        self.history.record(VersionRecord {
+            did: agent.clone(),
+            version: epoch,
+            hash: fingerprint.clone(),
+            at: signed.declaration.issued_at,
+            skills: signed
+                .capabilities()
+                .iter()
+                .map(|c| c.skill.as_str().to_string())
+                .collect(),
+        });
         DeclareOutcome::applied(&agent, epoch, signed.capabilities().len(), fingerprint)
     }
 
@@ -347,6 +449,8 @@ impl AgentCapabilityGraph {
     }
 
     /// 清理过期邻居，返回被清理的 DID（字典序）。
+    ///
+    /// 只要真的清掉了东西就推进修订号：所有派生状态（索引、查询缓存）都以它为准。
     pub fn expire_neighbors(&mut self, now: u64) -> Vec<Did> {
         let expired = self.neighbors.expire(now);
         for did in &expired {
@@ -619,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn an_expired_neighbor_is_treated_as_unknown() {
+    fn an_expired_neighbor_is_gone_from_the_cache_but_remembered_by_history() {
         let a = keys(1);
         let b = keys(2);
         let config = CapGraphConfig {
@@ -629,8 +733,14 @@ mod tests {
         let mut g = AgentCapabilityGraph::new(a.did(), config);
         assert!(g.apply(&signed(&b, 5, &["x"]), 100).is_applied());
         assert_eq!(g.live_neighbor_count(110), 1);
-        // 过期后同 epoch 异内容不再是 conflict（旧世界已经不存在了），而是重新接受。
-        let after = g.apply(&signed(&b, 5, &["y"]), 111);
+        // 缓存过期 → 能力数据不再可用。
+        assert_eq!(g.expire_neighbors(1_000), vec![b.did()]);
+        assert!(g.capabilities_of(&b.did()).is_none());
+        // 但版本历史记得 v5 的内容，因此「同版本异内容」仍然必须被拒（v1.1.7 起）。
+        let conflict = g.apply(&signed(&b, 5, &["y"]), 1_001);
+        assert_eq!(conflict.refusal(), Some(RefusalCode::Conflict), "{:?}", conflict.to_value());
+        // 递增版本才是合法路径。
+        let after = g.apply(&signed(&b, 6, &["y"]), 1_002);
         assert!(after.is_applied(), "{:?}", after.to_value());
         assert_eq!(g.cache_stats().expirations, 1);
     }

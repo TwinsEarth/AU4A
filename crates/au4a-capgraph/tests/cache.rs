@@ -97,7 +97,7 @@ fn ttl_expiry_is_driven_by_logical_ticks() {
 }
 
 #[test]
-fn an_expired_neighbor_is_a_fresh_world_for_the_graph() {
+fn an_expired_neighbor_is_removed_from_the_cache() {
     let owner = AgentKeys::from_seed(&[50; 32]);
     let peer = AgentKeys::from_seed(&[51; 32]);
     let mut graph = AgentCapabilityGraph::new(
@@ -112,9 +112,13 @@ fn an_expired_neighbor_is_a_fresh_world_for_the_graph() {
     // 同 epoch 异内容：没过期时是 conflict。
     let changed = declare(&peer, 3, &["sentiment.analyze"]).sign(&peer).expect("signed");
     assert_eq!(graph.apply(&changed, 105).refusal(), Some(au4a_core::RefusalCode::Conflict));
-    // 过期之后，同 epoch 异内容不再冲突（旧世界已不存在），重新接受。
+    // 过期之后缓存里没有数据了 —— 但 v1.1.7 起版本历史仍然记得 v3 的内容，
+    // 所以「同版本异内容」依旧被拒；要换内容必须递增版本。
     assert_eq!(graph.expire_neighbors(200), vec![peer.did()]);
-    assert!(graph.apply(&changed, 200).is_applied());
+    assert!(graph.capabilities_of(&peer.did()).is_none(), "缓存确实被清掉了");
+    assert_eq!(graph.apply(&changed, 200).refusal(), Some(au4a_core::RefusalCode::Conflict));
+    let upgraded = declare(&peer, 4, &["sentiment.analyze"]).sign(&peer).expect("signed");
+    assert!(graph.apply(&upgraded, 201).is_applied());
     assert_eq!(
         graph
             .capabilities_of(&peer.did())

@@ -31,6 +31,7 @@ pub mod declaration;
 pub mod graph;
 pub mod index;
 pub mod planner;
+pub mod version;
 
 pub use broadcast::{
     announce, announce_to, ingest, parse_announcement, parse_query, pump, query_skill,
@@ -49,6 +50,7 @@ pub use planner::{
     plan, NoPath, NoPathReason, Pipeline, PipelineNode, PipelineRequest, PipelineStep, PlanCost,
     PlanOutcome, SearchStats,
 };
+pub use version::{VersionHistory, VersionRecord, HISTORY_CAPACITY};
 
 use au4a_core::{AgentKeys, CoreResult, Credits, SelfCheck};
 use serde_json::{json, Value};
@@ -641,6 +643,124 @@ fn checks_v116() -> Vec<SelfCheck> {
     checks
 }
 
+/// v1.1.7：版本随内容自动递增；陈旧与冲突在缓存失效后依然能被历史抓住。
+fn checks_v117() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.7.version_auto_increments", || {
+        let alice = AgentKeys::from_seed(&[51; 32]);
+        let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
+        let first = graph
+            .declare(&alice, vec![sample_capability()?], 0)
+            .map_err(show)?;
+        let second = graph
+            .declare(
+                &alice,
+                vec![sample_capability()?.with_price(Credits(9))],
+                1,
+            )
+            .map_err(show)?;
+        let same_again = graph
+            .declare(
+                &alice,
+                vec![sample_capability()?.with_price(Credits(9))],
+                2,
+            )
+            .map_err(show)?;
+        if !first.is_applied() || !second.is_applied() {
+            return Err("内容变化必须被接受".into());
+        }
+        if graph.own_epoch() != 2 {
+            return Err(format!("版本号应为 2，实测 {}", graph.own_epoch()));
+        }
+        if !matches!(same_again, DeclareOutcome::Unchanged { .. }) {
+            return Err("内容相同的重发不该推进版本".into());
+        }
+        Ok("断言：两次内容变更 → 版本 1→2；第三次内容相同 → Unchanged 且版本仍为 2".into())
+    }));
+    checks.push(verdict("1.1.7.history_is_content_addressed", || {
+        let alice = AgentKeys::from_seed(&[52; 32]);
+        let owner = alice.did();
+        let mut graph = AgentCapabilityGraph::new(owner.clone(), CapGraphConfig::default());
+        graph
+            .declare(&alice, vec![sample_capability()?], 0)
+            .map_err(show)?;
+        let declaration =
+            Declaration::new(owner.clone(), 1, 0, vec![sample_capability()?]).map_err(show)?;
+        let expected = declaration.capabilities_fingerprint().map_err(show)?;
+        let recorded = graph
+            .history()
+            .hash_of(&owner, 1)
+            .map(str::to_string)
+            .ok_or("历史里没有 v1 记录")?;
+        if recorded != expected {
+            return Err("历史哈希与声明指纹不一致".into());
+        }
+        Ok("断言：历史记录里的 hash == Declaration::fingerprint()（内容寻址，不可伪造）".into())
+    }));
+    checks.push(verdict("1.1.7.history_survives_cache_expiry", || {
+        let owner = AgentKeys::from_seed(&[53; 32]);
+        let peer = AgentKeys::from_seed(&[54; 32]);
+        let mut graph = AgentCapabilityGraph::new(
+            owner.did(),
+            CapGraphConfig {
+                cache_ttl_ticks: 5,
+                ..CapGraphConfig::default()
+            },
+        );
+        let version_three_a = Declaration::new(peer.did(), 3, 0, vec![sample_capability()?])
+            .map_err(show)?
+            .sign(&peer)
+            .map_err(show)?;
+        graph.apply(&version_three_a, 100);
+        // TTL 过后缓存里已经没有这条记录了。
+        let _ = graph.expire_neighbors(1_000);
+        // 同一个版本号但内容不同 → 仍然必须判 conflict（靠历史，不靠缓存）。
+        let version_three_b = Declaration::new(
+            peer.did(),
+            3,
+            0,
+            vec![sample_capability()?.with_price(Credits(77))],
+        )
+        .map_err(show)?
+        .sign(&peer)
+        .map_err(show)?;
+        let conflict = graph.apply(&version_three_b, 1_001);
+        // 比历史更旧的版本 → stale_epoch。
+        let version_two = Declaration::new(peer.did(), 2, 0, vec![sample_capability()?])
+            .map_err(show)?
+            .sign(&peer)
+            .map_err(show)?;
+        let stale = graph.apply(&version_two, 1_002);
+        if conflict.refusal() != Some(au4a_core::RefusalCode::Conflict) {
+            return Err(format!("缓存过期后未判 conflict：{:?}", conflict.to_value()));
+        }
+        if stale.refusal() != Some(au4a_core::RefusalCode::StaleEpoch) {
+            return Err(format!("缓存过期后未判 stale_epoch：{:?}", stale.to_value()));
+        }
+        Ok("断言：缓存过期后，同版本异内容仍判 conflict、更旧版本仍判 stale_epoch（历史兜底）".into())
+    }));
+    checks.push(verdict("1.1.7.history_is_bounded", || {
+        let alice = AgentKeys::from_seed(&[55; 32]);
+        let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
+        for price in 0..(HISTORY_CAPACITY as i64 + 5) {
+            let capability = sample_capability()?.with_price(Credits(price));
+            graph.declare(&alice, vec![capability], price as u64).map_err(show)?;
+        }
+        if graph.history().len() != HISTORY_CAPACITY {
+            return Err(format!("历史长度应为 {HISTORY_CAPACITY}，实测 {}", graph.history().len()));
+        }
+        if graph.own_epoch() != HISTORY_CAPACITY as u64 + 4 {
+            return Err(format!("版本号应为 {}，实测 {}", HISTORY_CAPACITY + 4, graph.own_epoch()));
+        }
+        Ok(format!(
+            "断言：{} 次内容变更后历史长度为 {HISTORY_CAPACITY}（有界），版本号为 {}",
+            HISTORY_CAPACITY + 5,
+            graph.own_epoch()
+        ))
+    }));
+    checks
+}
+
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
     Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
@@ -730,6 +850,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(checks_v114());
     checks.extend(checks_v115());
     checks.extend(checks_v116());
+    checks.extend(checks_v117());
     checks
 }
 
@@ -741,7 +862,7 @@ pub fn results_json() -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5", "v1.1.6"],
+        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5", "v1.1.6", "v1.1.7"],
         "checks": checks.len(),
         "checks_passed": passed,
         "schema": {
@@ -755,15 +876,30 @@ pub fn results_json() -> CoreResult<Value> {
     }))
 }
 
-/// v1.1.3 的自有流程：五个 Agent 各自签声明并**通过 PMB 广播**，alice 收下邻居通告。
+/// 端到端自有流程：五个 Agent 各自签声明并**通过 PMB 广播**，alice 收下邻居通告、
+/// 查询索引、规划流水线，并演示版本化与无路径结论。
 pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     let agents = demo_agents()?;
     let newly_registered = ensure_registered(kernel, &agents)?;
     let alice = &agents[0];
 
+    // v1.1.7：自有能力用自动递增版本的入口声明（内容变则版本 +1）。
     let mut graph = AgentCapabilityGraph::new(alice.keys.did(), CapGraphConfig::default());
-    let own = Declaration::new(alice.keys.did(), 1, 0, alice.capabilities.clone())?.sign(&alice.keys)?;
-    let own_outcome = graph.apply(&own, 0);
+    let own_outcome = graph.declare(&alice.keys, alice.capabilities.clone(), 0)?;
+    let bumped = graph.declare(
+        &alice.keys,
+        vec![Capability::new(SkillId::new("summarize.zh")?, Credits(6))
+            .with_formats(&["text/plain"], &["text/plain"])?
+            .with_latency(200, 600)],
+        1,
+    )?;
+    let idempotent = graph.declare(
+        &alice.keys,
+        vec![Capability::new(SkillId::new("summarize.zh")?, Credits(6))
+            .with_formats(&["text/plain"], &["text/plain"])?
+            .with_latency(200, 600)],
+        2,
+    )?;
 
     // 每个邻居把自己的完整声明作为广播通告送进 PMB。ts 用固定值，保证可重放。
     let mut sent = 0usize;
@@ -858,6 +994,16 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     let pipeline_price = pipeline.as_ref().map(|p| p.total_price.get()).unwrap_or(0);
 
     let rejected = usize::from(!own_outcome.is_applied());
+
+    // v1.1.7 版本化演示：陈旧通告（epoch 0 < 已知 1）必须被拒，且不经过内核（不污染共享拒绝记录）。
+    let stale = graph.apply(
+        &Declaration::new(agents[2].keys.did(), 0, 0, agents[2].capabilities.clone())?
+            .sign(&agents[2].keys)?,
+        2,
+    );
+    let stale_rejected = stale.refusal() == Some(au4a_core::RefusalCode::StaleEpoch);
+    let idempotent_ignored = matches!(idempotent, DeclareOutcome::Unchanged { .. });
+    let version_summary = graph.version_summary();
     let no_path_code = reversed_outcome
         .refusal_code()
         .map(|c| c.as_str().to_string())
@@ -865,14 +1011,17 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "v1.1.6 路径规划：流水线 {pipeline_agents:?} 总价 {pipeline_price}；反向请求无路径（{no_path_code}）"
+            "v1.1.7 版本化：alice v{}（+{} 次变更，历史 {} 条）、陈旧通告被拒={stale_rejected}；流水线 {pipeline_agents:?} 总价 {pipeline_price}；反向请求无路径（{no_path_code}）",
+            graph.own_epoch(),
+            graph.history().bumps(),
+            graph.history().len()
         ),
     );
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "version": "v1.1.6",
+        "version": "v1.1.7",
         "agents_in_kernel": kernel.agent_count(),
         "newly_registered": newly_registered,
         "announcements_sent": sent,
@@ -880,6 +1029,10 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         "pump": pump_report.to_value(),
         "tampered_rejected": tampered_rejected,
         "graph": graph.to_value(),
+        "versions": version_summary,
+        "version_bump_applied": bumped.is_applied(),
+        "idempotent_ignored": idempotent_ignored,
+        "stale_rejected": stale_rejected,
         "queries": [
             {"skill": "translate.en-zh", "best": best_translate, "result": translate_hits.to_value()},
             {"skill": "sentiment.analyze", "best": best_sentiment, "result": sentiment_hits.to_value()},

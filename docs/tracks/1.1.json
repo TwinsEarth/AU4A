@@ -221,17 +221,39 @@
       "version": "v1.1.7",
       "title": "版本化",
       "goal": "能力变更自动递增版本，能识别陈旧通告与同版本异内容冲突",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/version.rs: VersionRecord + VersionHistory（append-only、有界 256、按 Agent 可查、hash_of 内容寻址）",
+        "src/declaration.rs: Declaration::capabilities_fingerprint()（只对能力集合取指纹）",
+        "src/graph.rs: declare() 自动递增 + history()/last_version_of()/version_summary() + 历史兜底的陈旧/冲突判定",
+        "tests/versioning.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn AgentCapabilityGraph::declare(&mut self, keys: &AgentKeys, capabilities: Vec<Capability>, now: u64) -> CoreResult<DeclareOutcome>",
+        "pub fn AgentCapabilityGraph::history(&self) -> &VersionHistory",
+        "pub fn AgentCapabilityGraph::last_version_of(&self, did: &Did) -> Option<u64>",
+        "pub fn AgentCapabilityGraph::version_summary(&self) -> Value",
+        "pub fn Declaration::capabilities_fingerprint(&self) -> CoreResult<String>",
+        "pub const HISTORY_CAPACITY: usize = 256"
+      ],
+      "acceptance": [
+        "三次内容变更 → 版本 1→2→3、历史 3 条、bumps==3；每条历史哈希 == 该版能力集合指纹",
+        "内容不变的重发 → Unchanged 且版本不推进、历史不新增",
+        "非 owner 调用 declare → Err(InvalidSignature)，版本保持 0",
+        "缓存存活时 stale_epoch / conflict / 递增接受三条路径均成立",
+        "缓存过期后同版本异内容仍 conflict、更旧版本仍 stale_epoch（历史兜底）、更高版本接受",
+        "历史有界：写入 HISTORY_CAPACITY+7 次后 len()==256，版本号涨到 263",
+        "version_summary() 报告自有版本、邻居版本映射、历史条数、递增次数",
+        "广播：v1→v2 均 applied；重放 v1 被 pump 判 stale_epoch 且非恶意码，图停在 v2",
+        "scenario: version_bump_applied/idempotent_ignored/stale_rejected 均为 true，versions.own==2、bumps==6"
+      ],
       "evidence": {
-        "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 113,
+        "tests_total": 113,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 53 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + planner 9 + query_index 8 + versioning 9 = 113，0 failed，0 warning。语义变更：v1.1.4 的「缓存过期=当作没听过」被 v1.1.7 的「历史兜底版本判定」取代（同版本异内容过期后仍 conflict）。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.8",
