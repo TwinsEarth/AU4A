@@ -15,11 +15,13 @@
 //! * **双方签名**：状态机每一次转换都必须由双方签署（或由双签合约的条款授权），
 //!   单方签名不成立。
 
+pub mod contract;
 pub mod journal;
 pub mod msg;
 pub mod rounds;
 pub mod state;
 
+pub use contract::{Anchor, Contract, ANCHOR_EVENT};
 pub use journal::{Journal, JOURNAL_VERSION};
 pub use msg::{kinds, BreachKind, NegotiationMsg, Terms, ALL_KINDS};
 pub use rounds::{Negotiation, Offer, Rejection, DEFAULT_MAX_ROUNDS};
@@ -258,6 +260,42 @@ fn rounds_reject_check() -> CoreResult<String> {
     Ok("5 次 REJECT 后轮数仍为 0，随后 1 次 COUNTER 才消耗 1 轮".to_string())
 }
 
+fn contract_dual_signature_check() -> CoreResult<String> {
+    let a = au4a_core::AgentKeys::from_seed(&[0x9F; 32]);
+    let b = au4a_core::AgentKeys::from_seed(&[0xA0; 32]);
+    let terms = Terms::new("summarize.zh", Credits(120), 40, EvidenceGrade::Verified)?;
+    let mut contract = Contract::draft(&a, &b.did(), &terms, "selfcheck-contract", 1)?;
+    if contract.verify() != Err(au4a_core::CoreError::NotSealed) {
+        return Err(au4a_core::CoreError::NotSealed);
+    }
+    contract.sign(&a)?;
+    if contract.verify() != Err(au4a_core::CoreError::NotSealed) {
+        return Err(au4a_core::CoreError::NotSealed);
+    }
+    contract.sign(&b)?;
+    contract.verify()?;
+    if !contract.is_dual_signed() || contract.hash.len() != 64 {
+        return Err(au4a_core::CoreError::InvalidSignature);
+    }
+
+    // 签署后改一个条款字段，哈希与签名双双失效。
+    let mut tampered = contract.clone();
+    tampered.terms.price = Credits(1);
+    if tampered.verify() != Err(au4a_core::CoreError::InvalidSignature) {
+        return Err(au4a_core::CoreError::InvalidSignature);
+    }
+    // 锚点可离线复核。
+    let anchor = contract.anchor(&a, 2)?;
+    contract.verify_anchor()?;
+    if anchor.contract_hash != contract.hash {
+        return Err(au4a_core::CoreError::InvalidSignature);
+    }
+    Ok(format!(
+        "合约 {}：单签被拒，双签成立，改价即废，锚点可复核",
+        au4a_core::short_id(&contract.hash)
+    ))
+}
+
 fn journal_roundtrip_check() -> CoreResult<String> {
     let a = au4a_core::AgentKeys::from_seed(&[0x39; 32]);
     let b = au4a_core::AgentKeys::from_seed(&[0x4A; 32]);
@@ -304,6 +342,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         check("journal.roundtrip", journal_roundtrip_check()),
         check("rounds.cap", rounds_cap_check()),
         check("rounds.reject_free", rounds_reject_check()),
+        check("contract.dual_signature", contract_dual_signature_check()),
     ]
 }
 
@@ -349,6 +388,9 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &responder,
         Terms::new("summarize.zh", Credits(95), 42, EvidenceGrade::Verified)?,
     )?;
+    // 应答方接受提议方的 95，然后双方签订合约（双方签名 + 锚定哈希）。
+    negotiation.accept(kernel, &responder, &proposer)?;
+    let contract = negotiation.sign_contract(kernel, &proposer, &responder)?;
 
     let delivered = kernel.drain();
     let mut transcript: Vec<Value> = Vec::new();
@@ -372,12 +414,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         format!("{TRACK}.scenario").as_str(),
         format!(
-            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；{} → {}（{} 条双签记录，{} 轮报价）；归档 {} 字节，重放{}",
+            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；{} → {}（{} 条双签记录，{} 轮报价）；合约 {} 双签并锚定；归档 {} 字节，重放{}",
             transcript.len(),
             Phase::Idle.as_str(),
             negotiation.phase().as_str(),
             negotiation.machine().seq(),
             negotiation.rounds_used(),
+            au4a_core::short_id(&contract.hash),
             archived.len(),
             if byte_exact { "逐字节一致" } else { "不一致" }
         ),
@@ -401,7 +444,9 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "journal_bytes": archived.len(),
         "replay_byte_exact": byte_exact,
         "replay_digest": replay_digest,
-        "steps": 4,
+        "contract": contract.summary(),
+        "contract_anchored": contract.verify_anchor().is_ok(),
+        "steps": 5,
     }))
 }
 

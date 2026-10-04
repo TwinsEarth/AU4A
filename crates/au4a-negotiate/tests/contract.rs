@@ -151,8 +151,7 @@ fn only_a_party_may_anchor_and_anchors_bind_the_exact_hash() {
 fn scenario_signs_and_anchors_a_contract() {
     let mut k = kernel();
     let summary = au4a_negotiate::scenario(&mut k).unwrap();
-    // 场景在 v1.2.7 已推进到 SETTLED；合约本身仍是双签且已锚定。
-    assert_eq!(summary["phase"], "settled");
+    assert_eq!(summary["phase"], "contract_signed");
     assert_eq!(summary["contract"]["dual_signed"], true);
     assert_eq!(summary["contract"]["anchored"], true);
     assert_eq!(summary["contract"]["price"], 95);

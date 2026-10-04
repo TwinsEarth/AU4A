@@ -134,22 +134,28 @@
       "goal": "合约哈希 = 规范 JSON 的 SHA-256，双方签名才成立，可锚定",
       "deliverables": ["src/contract.rs: Contract/ContractSignature/Anchor"],
       "interfaces": [
-        "pub struct Contract",
-        "Contract::draft/sign/verify/hash/anchor"
+        "pub struct Contract { id, hash, proposer, responder, terms, negotiation, created_at, signatures, anchor }",
+        "Contract::draft/sign/verify/compute_hash/encode/decode/anchor/verify_anchor/is_dual_signed",
+        "pub struct Anchor + Anchor::verify",
+        "impl DualSigned for Contract",
+        "Negotiation::sign_contract(&mut Kernel,&AgentKeys,&AgentKeys) -> CoreResult<Contract>"
       ],
       "acceptance": [
-        "单方签名 verify 失败；双方签名成立",
-        "签署后篡改条款 → verify 失败",
-        "合约哈希可复算且与锚点一致"
+        "合约哈希 = canonical_hash(规范 JSON 条款)，64 位小写 hex；条款/会话/时间任一变化哈希全变",
+        "单方签名 → not_sealed；重复签名 → invalid_signature；第三方签名 → unknown_agent",
+        "签署后改价格/期限/哈希/编号/签名/当事人 → invalid_signature",
+        "合约 encode→decode 逐字节定点，decode 会重验哈希与双方签名（篡改文本被拒）",
+        "只有已签署的当事人能锚定；锚点被改 at/哈希 → invalid_signature",
+        "签合约需 ACCEPTED 相位；双方各发一条 CONTRACT_SIGN，锚点事件进只读进度流"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 65,
+        "tests_total": 65,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：40 单元 + 6 tests/contract.rs + 4 tests/journal.rs + 6 tests/messages.rs + 4 tests/rounds.rs + 5 tests/state_machine.rs 全绿、0 warning（日志 1.2-v1.2.5.log）。哈希用冻结基元 canonical_hash（SHA-256 of AU4A-CJ），锚点写入 kernel 进度流并可离线复核。修复记录：一处测试助手用 Terms::new(0) 触发 ZeroAmount 导致 unwrap panic，改为直接构造零价条款后复跑全绿。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.6",
