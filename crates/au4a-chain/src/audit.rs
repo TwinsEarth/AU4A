@@ -196,7 +196,7 @@ fn attacks_on_the_testnet() -> Result<Vec<AttackOutcome>, String> {
     .map_err(|e| e.to_string())?;
     net.accept(&tx).map_err(|r| r.detail)?;
 
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(8);
     out.push(expect_refusal(
         "replay_same_tx",
         net.accept(&tx),
@@ -365,7 +365,7 @@ fn attacks_on_reputation() -> Result<Vec<AttackOutcome>, String> {
     let mut trust = ReputationBridge::new();
     let event = ChainReputationEvent::new(&did(8), ReputationEventKind::Feedback, 10_000, 9)
         .map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(8);
     out.push(expect_refusal(
         "non_final_event_into_reputation",
         trust.apply_event(&fresh, &event),
@@ -417,7 +417,7 @@ fn attack_x402_double_payment() -> Result<AttackOutcome, String> {
 /// 只要有一条 `blocked == false`（或准备阶段出错），[`crate::self_check`] 的
 /// `audit.attack_suite` 就会失败。库代码不 panic：准备失败会变成 `setup_error` 结果。
 pub fn attack_suite() -> Vec<AttackOutcome> {
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(8);
     push_results(&mut out, attacks_on_the_testnet(), "attacks_on_the_testnet");
     push_one(&mut out, attack_rgb_double_spend(), "rgb_seal_double_spend");
     push_one(

@@ -382,7 +382,7 @@ impl Erc8004Adapter {
             net.record_refusal(refusal.clone());
             return Err(refusal);
         }
-        if self.identities.get(&agent_id).is_none() {
+        if !self.identities.contains_key(&agent_id) {
             let refusal = ChainRefusal::new(
                 "erc8004.validate",
                 RefusalCode::Conflict,

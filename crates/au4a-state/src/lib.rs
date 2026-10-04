@@ -120,7 +120,7 @@ pub fn sample_state() -> CoreResult<Vec<StateBlock>> {
 ///
 /// 这里的每一条都是**真实断言**：跑一段代码，看结果，再决定 passed。
 pub fn self_check() -> Vec<SelfCheck> {
-    let mut checks = Vec::new();
+    let mut checks = Vec::with_capacity(24); // 自检项数量固定，预分配避免反复扩容
 
     // 1) 内容寻址：插入序不影响 root。
     checks.push(check_root_is_order_independent());

@@ -229,11 +229,11 @@ fn the_split_always_adds_up_and_stays_within_one_micro_credit_of_the_ideal() {
         let parts = 2 + rng.below(4) as usize;
         let mut weights = vec![0i64; parts];
         let mut left = 10_000i64;
-        for k in 0..parts - 1 {
+        for (k, slot) in weights.iter_mut().enumerate().take(parts - 1) {
             let room = (left / (parts - k) as i64) + 1;
             let w = rng.below(room.max(1) as u64) as i64;
-            weights[k] = w.min(left);
-            left -= weights[k];
+            *slot = w.min(left);
+            left -= *slot;
         }
         weights[parts - 1] = left;
         let total = Credits((rng.below(10_000) + 1) as i64);

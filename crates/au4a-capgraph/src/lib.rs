@@ -265,7 +265,7 @@ fn checks_v113() -> Vec<SelfCheck> {
         .map_err(show)?;
         env.body["declaration"]["declaration"]["capabilities"][0]["price_per_unit"] = json!(0);
         match parse_announcement(&env) {
-            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => Ok(
+            Err((au4a_core::RefusalCode::Unauthorized, _)) => Ok(
                 "断言：改动 body 后信封验签失败，判 unauthorized（一次即恶意，不可重试）".into(),
             ),
             other => Err(format!("篡改未被判 unauthorized：{other:?}")),
@@ -284,7 +284,7 @@ fn checks_v113() -> Vec<SelfCheck> {
             .seal(&b)
             .map_err(show)?;
         match parse_announcement(&env) {
-            Err((code, _)) if code == au4a_core::RefusalCode::Unauthorized => Ok(
+            Err((au4a_core::RefusalCode::Unauthorized, _)) => Ok(
                 "断言：B 的信封携带 A 的合法声明 → 两层签名都对但身份错配，判 unauthorized".into(),
             ),
             other => Err(format!("身份错配未被拒：{other:?}")),

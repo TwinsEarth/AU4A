@@ -98,6 +98,9 @@ pub struct Experience {
 
 impl Experience {
     /// 构造并规范化：先排序去重协作者，再校验。非法输入返回 [`CoreError::InvalidKind`]。
+    // 参数与 spec 定义的 Experience 字段一一对应（task_id/type/context/action/outcome/reward/timestamp/peers）。
+    // 为了迁就 lint 计数而引入 builder 只会让「结构体字段 ↔ 构造参数」的对应关系变模糊。
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         task_id: &str,
         task_type: &str,

@@ -447,6 +447,9 @@ fn first_format(set: &std::collections::BTreeSet<FormatId>) -> FormatId {
 
 /// 规划主入口。返回 [`PlanOutcome`]，不返回 `Err`：
 /// 「没有可行流水线」是业务结论，不是程序错误。
+/// 一条能力路径：由 (步骤序号, 提供者下标, 能力下标) 三元组构成。
+pub type Path = Vec<(usize, usize, usize)>;
+
 pub fn plan(
     graph: &mut AgentCapabilityGraph,
     request: &PipelineRequest,
@@ -561,7 +564,7 @@ fn search_labels(
     candidates: &[StepCandidates],
     request: &PipelineRequest,
     cost: &PlanCost,
-) -> (SearchStats, Option<Vec<(usize, usize, usize)>>) {
+) -> (SearchStats, Option<Path>) {
     let steps = candidates.len();
     let mut stats = SearchStats {
         candidates: candidates.iter().map(Vec::len).sum(),
@@ -690,7 +693,7 @@ fn search_labels(
     let Some((goal_slot, goal_index)) = best else {
         return (stats, None);
     };
-    let mut chain: Vec<(usize, usize, usize)> = Vec::new();
+    let mut chain: Path = Vec::new();
     let mut cursor = Some((steps - 1, goal_slot, goal_index));
     while let Some((step, slot, index)) = cursor {
         chain.push((step, slot, index));
