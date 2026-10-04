@@ -66,6 +66,38 @@
         "notes": "本机 Windows 实测，cargo exit 0、0 warning；日志 _forangent\\logs\\1.4-v1.4.2.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.3",
+      "title": "自动兑换",
+      "goal": "系统积分 ↔ BTC/ETH 兑换路由决策表（金额/时效/费用阈值）+ 账务预留；类型层封死「链上已成功」的表达，真实执行留待 v1.8。",
+      "deliverables": [
+        "src/fx.rs: Venue / Urgency / RouteAction / DecisionReason / ChainExecution / IntentStatus / RouteTable / ExchangeRequest / RoutePlan / ExchangeIntent / ExchangeBook / route / fee_for / escrow_for_route / cancel_intent / apply_internal",
+        "src/lib.rs: scenario 三条路由决策（内部/缓办/上链）+ 预留前过余额策略；self_check fx.decision_table 与 fx.no_fake_chain"
+      ],
+      "interfaces": [
+        "pub fn route(request: &ExchangeRequest, table: &RouteTable) -> CoreResult<RoutePlan>",
+        "pub fn escrow_for_route(ledger: &mut Ledger, plan: &RoutePlan, at: u64) -> CoreResult<ExchangeIntent>",
+        "pub fn cancel_intent(ledger: &mut Ledger, intent: &ExchangeIntent) -> CoreResult<Credits>",
+        "pub fn apply_internal(ledger: &mut Ledger, plan: &RoutePlan, to: &Did) -> CoreResult<Credits>",
+        "pub enum ChainExecution { PendingV18, NotApplicable, NotRequested } // 无 Executed；executed() 恒 false"
+      ],
+      "acceptance": [
+        "199 → keep_internal/below_onchain_minimum（费用 0、到账 199）；1000 → route_onchain 走 ETH 费用 8、到账 992",
+        "偏好 BTC 时覆盖更便宜的 ETH（费用 12、到账 988）；费率相同按场所名升序 → BTC",
+        "剩余 19 < 所需 20 → defer/deadline_too_tight；费率 800bp > 阈值 150bp → defer/fee_above_threshold",
+        "缓办计划调用 escrow_for_route 返回 InvalidKind 且账本不变",
+        "预留 2000 → 可用 8000/锁定 2000 且守恒；意图状态 awaiting_chain_execution、on_chain_success() == false",
+        "ChainExecution::ALL 无 executed、IntentStatus::ALL.len() == 1；撤回预留后余额复原且守恒"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-economy)",
+        "tests_passed": 34,
+        "tests_total": 34,
+        "grade": "verified",
+        "notes": "决策与账务本机实测；链上执行未做（属 v1.8），类型层无法表达链上成功；日志 _forangent\\logs\\1.4-v1.4.3.log"
+      },
+      "status": "done"
     }
   ]
 }

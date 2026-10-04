@@ -15,6 +15,7 @@
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 
 pub mod balance;
+pub mod fx;
 pub mod pricing;
 
 use au4a_core::{AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, Ledger, RefusalCode, SelfCheck};
@@ -22,6 +23,10 @@ use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
 pub use balance::{AccountDelta, BalanceManager, BalancePolicy, BalanceReport, SpendVerdict};
+pub use fx::{
+    ChainExecution, DecisionReason, ExchangeBook, ExchangeIntent, ExchangeRequest, IntentStatus,
+    RouteAction, RoutePlan, RouteTable, Urgency, Venue,
+};
 pub use pricing::{unit_price, PriceComponents, PriceInputs, PriceKnobs, PriceQuote};
 
 /// 轨道号。
@@ -177,6 +182,96 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("fx.decision_table", || {
+        let table = fx::RouteTable::DEFAULT;
+        let ask = |amount: i64, slack: u64| fx::ExchangeRequest {
+            from: agent(9).did(),
+            amount: Credits(amount),
+            urgency: fx::Urgency::Standard,
+            slack_ticks: slack,
+            preferred: None,
+        };
+        let small = fx::route(&ask(150, 100), &table).map_err(|e| e.to_string())?;
+        let tight = fx::route(&ask(400, 12), &table).map_err(|e| e.to_string())?;
+        let ok = fx::route(&ask(400, 30), &table).map_err(|e| e.to_string())?;
+        if small.action != fx::RouteAction::KeepInternal
+            || small.reason != fx::DecisionReason::BelowOnchainMinimum
+        {
+            return Err(format!(
+                "小额应内部结算，实际 {}/{}",
+                small.action.as_str(),
+                small.reason.as_str()
+            ));
+        }
+        if tight.action != fx::RouteAction::Defer
+            || tight.reason != fx::DecisionReason::DeadlineTooTight
+        {
+            return Err(format!(
+                "时效不足应缓办，实际 {}/{}",
+                tight.action.as_str(),
+                tight.reason.as_str()
+            ));
+        }
+        if ok.action != fx::RouteAction::RouteOnchain
+            || ok.venue != fx::Venue::Ethereum
+            || ok.fee != Credits(3)
+            || ok.net != Credits(397)
+        {
+            return Err(format!(
+                "可执行路由应走 ETH（3bp 费用），实际 {}/{} fee={} net={}",
+                ok.action.as_str(),
+                ok.venue.as_str(),
+                ok.fee,
+                ok.net
+            ));
+        }
+        Ok(format!(
+            "150 → {}（{}）；400/剩余 12 → {}（{}）；400/剩余 30 → {} 走 {} 费用 {} 到账 {}",
+            small.action.as_str(),
+            small.reason.as_str(),
+            tight.action.as_str(),
+            tight.reason.as_str(),
+            ok.action.as_str(),
+            ok.venue.as_str(),
+            ok.fee,
+            ok.net
+        ))
+    }));
+
+    checks.push(check("fx.no_fake_chain", || {
+        let who = agent(10).did();
+        let mut ledger = Ledger::new();
+        ledger.mint(&who, Credits(10_000)).map_err(|e| e.to_string())?;
+        let plan = fx::route(
+            &fx::ExchangeRequest {
+                from: who.clone(),
+                amount: Credits(1_000),
+                urgency: fx::Urgency::Standard,
+                slack_ticks: 100,
+                preferred: None,
+            },
+            &fx::RouteTable::DEFAULT,
+        )
+        .map_err(|e| e.to_string())?;
+        let intent = fx::escrow_for_route(&mut ledger, &plan, 1).map_err(|e| e.to_string())?;
+        if intent.on_chain_success() || intent.chain_execution.executed() {
+            return Err("兑换意图错误地声称链上成功".to_string());
+        }
+        let names: Vec<&str> = fx::ChainExecution::ALL.iter().map(|c| c.as_str()).collect();
+        if names.contains(&"executed") || fx::IntentStatus::ALL.len() != 1 {
+            return Err("类型层出现了「已上链」的表达".to_string());
+        }
+        let back = fx::cancel_intent(&mut ledger, &intent).map_err(|e| e.to_string())?;
+        ledger
+            .check_conservation()
+            .map_err(|e| format!("守恒断言失败：{e}"))?;
+        Ok(format!(
+            "预留 {back} 并撤回，状态 {}，链上执行 {}（真实执行属 v1.8），全程守恒",
+            intent.status.as_str(),
+            intent.chain_execution.as_str()
+        ))
+    }));
+
     checks
 }
 
@@ -196,7 +291,7 @@ pub fn results_json() -> CoreResult<Value> {
         "checks_total": checks.len(),
         "checks_passed": passed,
         "all_passed": au4a_core::all_passed(&checks),
-        "modules": ["balance", "pricing"],
+        "modules": ["balance", "pricing", "fx"],
         "invariants": [
             "Σ可用 + Σ锁定 + 罚没 == 发行",
             "整数微积分与基点运算，规范 JSON 禁浮点",
@@ -255,7 +350,7 @@ fn parse_announcement(env: &Envelope) -> Option<Announcement> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：余额管理 + 自主定价与发现（v1.4.2）"),
+        format!("{TITLE} {RANGE}：余额管理 + 自主定价 + 兑换路由决策（v1.4.3）"),
     );
 
     let seller_keys = agent(41);
@@ -393,6 +488,46 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let locked = book.autostake(kernel.ledger_mut(), &seller, Credits(1_000))?;
     kernel.emit("economy.staked", format!("卖方自主锁定 {locked} 微积分质押"));
 
+    // 自主兑换路由决策：金额阈值 / 时效 / 费用三个条件决定是否上链。
+    // 本轨道只做决策与账务预留——**绝不伪造链上成功**（真实执行属 v1.8）。
+    let table = fx::RouteTable::DEFAULT;
+    let ask = |amount: i64, slack: u64| fx::ExchangeRequest {
+        from: seller.clone(),
+        amount: Credits(amount),
+        urgency: fx::Urgency::Standard,
+        slack_ticks: slack,
+        preferred: None,
+    };
+    let small = fx::route(&ask(150, 40), &table)?;
+    let tight = fx::route(&ask(400, 12), &table)?;
+    let executable = fx::route(&ask(400, 30), &table)?;
+    let mut exchange = fx::ExchangeBook::new();
+    if executable.action == fx::RouteAction::RouteOnchain {
+        // 预留前先过 Agent 自己的余额策略：兑换也是支出。
+        if !book.check(kernel.ledger(), &seller, executable.amount())?.allowed() {
+            return Err(CoreError::InsufficientFunds);
+        }
+        let at = kernel.tick();
+        let intent = fx::escrow_for_route(kernel.ledger_mut(), &executable, at)?;
+        exchange.record(intent);
+    }
+    kernel.emit(
+        "economy.exchange",
+        format!(
+            "兑换路由：{}（{}）/ {}（{}）/ {}（{}），链上成功报告 = false",
+            small.action.as_str(),
+            small.reason.as_str(),
+            tight.action.as_str(),
+            tight.reason.as_str(),
+            executable.action.as_str(),
+            executable.reason.as_str()
+        ),
+    );
+    // 只有一条链上路由被预留：缓办与内部结算都不允许留下账务痕迹。
+    if exchange.pending() != 1 {
+        return Err(CoreError::InvalidKind);
+    }
+
     // 守恒断言 + 余额变动投影。
     balance::assert_conserved(kernel.ledger())?;
     let after = kernel.ledger().view();
@@ -413,7 +548,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.4.2 余额管理 + 自主定价与发现",
+        "scenario": "v1.4.3 余额管理 + 自主定价 + 兑换路由决策",
         "agents": [row(&seller)?, row(&buyer)?, row(&rival)?],
         "pricing": {
             "knobs": PriceKnobs::DEFAULT,
@@ -421,6 +556,16 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "discovered": discovered.len(),
             "chosen": chosen.provider,
             "chosen_unit_price": price,
+        },
+        "exchange": {
+            "table": table,
+            "decisions": [
+                { "amount": 150, "action": small.action.as_str(), "venue": small.venue.as_str(), "reason": small.reason.as_str(), "fee": small.fee, "net": small.net, "chain_execution": small.chain_execution.as_str() },
+                { "amount": 400, "action": tight.action.as_str(), "venue": tight.venue.as_str(), "reason": tight.reason.as_str(), "fee": tight.fee, "net": tight.net, "chain_execution": tight.chain_execution.as_str() },
+                { "amount": 400, "action": executable.action.as_str(), "venue": executable.venue.as_str(), "reason": executable.reason.as_str(), "fee": executable.fee, "net": executable.net, "chain_execution": executable.chain_execution.as_str() },
+            ],
+            "book": exchange.to_json(),
+            "chain_executed": false,
         },
         "settled": [{ "from": buyer.as_str(), "to": seller.as_str(), "amount": price, "gate": "ledger-direct" }],
         "refusals": [{ "code": RefusalCode::PolicyDenied.as_str(), "verdict": verdict.as_str(), "amount": overreach }],
@@ -458,6 +603,27 @@ mod tests {
         assert_eq!(a["pricing"]["chosen_unit_price"], json!(408));
         assert_eq!(a["settled"][0]["amount"], json!(408));
         assert_eq!(a["refusals"][0]["verdict"], json!("below_reserve"));
+        // 兑换路由决策：小额内部、时效不足缓办、可执行则走 ETH（费率 3、到账 397）。
+        assert_eq!(a["exchange"]["decisions"][0]["action"], json!("keep_internal"));
+        assert_eq!(
+            a["exchange"]["decisions"][0]["reason"],
+            json!("below_onchain_minimum")
+        );
+        assert_eq!(a["exchange"]["decisions"][1]["action"], json!("defer"));
+        assert_eq!(
+            a["exchange"]["decisions"][1]["reason"],
+            json!("deadline_too_tight")
+        );
+        assert_eq!(a["exchange"]["decisions"][2]["action"], json!("route_onchain"));
+        assert_eq!(a["exchange"]["decisions"][2]["venue"], json!("eth"));
+        assert_eq!(a["exchange"]["decisions"][2]["fee"], json!(3));
+        assert_eq!(a["exchange"]["decisions"][2]["net"], json!(397));
+        assert_eq!(a["exchange"]["chain_executed"], json!(false));
+        assert_eq!(a["exchange"]["book"]["pending"], json!(1));
+        assert_eq!(
+            a["exchange"]["book"]["intents"][0]["status"],
+            json!("awaiting_chain_execution")
+        );
         assert_eq!(a["conservation"]["ok"], json!(true));
         assert!(first.ledger().check_conservation().is_ok());
         assert!(second.ledger().check_conservation().is_ok());
