@@ -24,6 +24,7 @@
 pub mod claims;
 pub mod committee;
 pub mod election;
+pub mod emergency;
 pub mod execution;
 pub mod human;
 pub mod invariants;
@@ -37,6 +38,9 @@ pub use committee::{Committee, CommitteeKind, Member, COMMITTEE_COUNT};
 pub use election::{
     Candidate, ElectionBallot, ElectionConfig, ElectionOutcome, Elected, IgnoredBallot, Ineligible,
     ScoreRow,
+};
+pub use emergency::{
+    EmergencyApproval, EmergencyConfirmation, EmergencyDirective, EmergencyStatus,
 };
 pub use execution::{ExecutionEffect, ExecutionReceipt};
 pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
@@ -78,6 +82,8 @@ pub struct CouncilConfig {
     pub min_stake: Credits,
     /// 动议标题长度上限。
     pub max_title_len: usize,
+    /// 紧急指令的确认窗口（逻辑刻度）：超过则自动作废并回滚策略。
+    pub emergency_confirm_window: u64,
 }
 
 impl Default for CouncilConfig {
@@ -86,6 +92,7 @@ impl Default for CouncilConfig {
             election: ElectionConfig::default(),
             min_stake: Credits(10),
             max_title_len: 128,
+            emergency_confirm_window: 500,
         }
     }
 }
@@ -123,6 +130,7 @@ pub struct Council {
     policies: BTreeMap<String, i64>,
     executions: BTreeMap<String, ExecutionReceipt>,
     vetoes: BTreeMap<String, Veto>,
+    emergency: BTreeMap<String, EmergencyDirective>,
     events: Vec<CouncilEvent>,
 }
 
@@ -143,6 +151,7 @@ impl Council {
             policies: BTreeMap::new(),
             executions: BTreeMap::new(),
             vetoes: BTreeMap::new(),
+            emergency: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -763,6 +772,65 @@ impl Council {
         veto::apply(self, kernel, veto)
     }
 
+    /// 删除一条策略（紧急指令回滚时使用：回到「此前没有这条策略」）。
+    pub(crate) fn remove_policy(&mut self, key: &str) -> bool {
+        self.policies.remove(key).is_some()
+    }
+
+    /// 保存一条紧急指令。
+    pub(crate) fn store_emergency(&mut self, directive: EmergencyDirective) {
+        self.emergency.insert(directive.id.clone(), directive);
+    }
+
+    /// 更新一条紧急指令的状态与确认结果，返回更新后的指令。
+    pub(crate) fn finish_emergency(
+        &mut self,
+        directive_id: &str,
+        status: EmergencyStatus,
+        confirmation: EmergencyConfirmation,
+    ) -> CoreResult<EmergencyDirective> {
+        match self.emergency.get_mut(directive_id) {
+            Some(directive) => {
+                directive.status = status;
+                directive.confirmation = Some(confirmation);
+                Ok(directive.clone())
+            }
+            None => Err(CoreError::UnknownAgent),
+        }
+    }
+
+    /// 读一条紧急指令。
+    pub fn emergency(&self, directive_id: &str) -> Option<&EmergencyDirective> {
+        self.emergency.get(directive_id)
+    }
+
+    /// 全部紧急指令（按 id 升序）。
+    pub fn emergency_directives(&self) -> impl Iterator<Item = &EmergencyDirective> {
+        self.emergency.values()
+    }
+
+    /// 安全委员会下发紧急指令（**即时生效**，事后必须由治理确认）。
+    pub fn issue_emergency(
+        &mut self,
+        kernel: &mut Kernel,
+        issuer: &AgentIdentity,
+        key: &str,
+        value: i64,
+        reason: &str,
+    ) -> CoreResult<EmergencyDirective> {
+        emergency::issue(self, kernel, issuer, key, value, reason)
+    }
+
+    /// 事后确认（或否决、或超期作废）一条紧急指令。
+    pub fn confirm_emergency(
+        &mut self,
+        kernel: &mut Kernel,
+        directive_id: &str,
+        approvals: &[EmergencyApproval],
+    ) -> CoreResult<EmergencyDirective> {
+        emergency::confirm(self, kernel, directive_id, approvals)
+    }
+
     /// 治理层自检（v1.7.2 覆盖选举、席位与动议；后续版本追加表决、否决、审计）。
     pub fn checks(&self) -> Vec<SelfCheck> {
         let mut checks = Vec::new();
@@ -989,6 +1057,35 @@ impl Council {
         } else {
             SelfCheck::fail(TRACK, "council.ongov.no_false_chain", "存在声称真实链上执行的对象")
         });
+
+        // 紧急通道不变式：只有安全委员会能下发；已终结的指令必须有确认记录且策略与状态一致。
+        let directives: Vec<&EmergencyDirective> = self.emergency.values().collect();
+        let channel_ok = directives.iter().all(|d| d.committee == CommitteeKind::Security);
+        checks.push(if channel_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.emergency.security_only",
+                format!("{} 条紧急指令全部由安全委员会下发", directives.len()),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.emergency.security_only", "存在非安全委员会下发的紧急指令")
+        });
+        let resolved_ok = directives.iter().all(|d| {
+            if d.status.is_final() {
+                d.confirmation.is_some() && emergency::policy_matches_status(self, d)
+            } else {
+                d.confirmation.is_none() || d.confirmation.as_ref().map(|c| !c.rolled_back).unwrap_or(false)
+            }
+        });
+        checks.push(if resolved_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.emergency.resolved",
+                format!("{} 条紧急指令的确认记录与策略值一致（否决/超期必回滚）", directives.len()),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.emergency.resolved", "存在确认记录缺失或未回滚的紧急指令")
+        });
         checks
     }
 }
@@ -1160,6 +1257,7 @@ struct VetoRun {
     proposals_after: usize,
     execute_refused: bool,
     action_unchanged: bool,
+    emergency_confirmed: bool,
 }
 
 fn build_vetoed() -> CoreResult<VetoRun> {
@@ -1201,6 +1299,37 @@ fn build_vetoed() -> CoreResult<VetoRun> {
         .map(|p| p.action == proposal.action && p.title == proposal.title)
         .unwrap_or(false);
 
+    // 紧急通道也要被自检真实覆盖：安全委员会即时下发 + 全体在任委员事后确认。
+    let mut emergency_confirmed = false;
+    let security_member = council
+        .committee(CommitteeKind::Security)
+        .and_then(|c| c.members.first())
+        .map(|m| m.did.clone());
+    if let Some(issuer) = agents.iter().find(|k| Some(&k.did()) == security_member.as_ref()) {
+        let security_identity = AgentIdentity::from_keys(issuer);
+        let directive = council.issue_emergency(
+            &mut kernel,
+            &security_identity,
+            "emergency_drill",
+            1,
+            "自检用：验证紧急通道的即时生效与事后确认",
+        )?;
+        let approvers: Vec<Did> = council
+            .committees()
+            .flat_map(|c| c.member_dids())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut approvals = Vec::new();
+        for did in &approvers {
+            if let Some(keys) = keys_for(&agents, did) {
+                approvals.push(EmergencyApproval::cast(keys, &directive.id, true)?);
+            }
+        }
+        let confirmed = council.confirm_emergency(&mut kernel, &directive.id, &approvals)?;
+        emergency_confirmed = confirmed.status == EmergencyStatus::Confirmed;
+    }
+
     Ok(VetoRun {
         council,
         veto,
@@ -1209,6 +1338,7 @@ fn build_vetoed() -> CoreResult<VetoRun> {
         proposals_after,
         execute_refused,
         action_unchanged,
+        emergency_confirmed,
     })
 }
 
@@ -1401,6 +1531,15 @@ pub fn self_check() -> Vec<SelfCheck> {
             } else {
                 SelfCheck::fail(TRACK, "council.veto.read_only", "人类否决越界或理由未公开")
             });
+            checks.push(if v.emergency_confirmed {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.emergency.confirmed",
+                    "紧急通道演练：安全委员会即时下发策略（0 票时已生效）→ 全体在任委员签名确认 → confirmed（策略保留）",
+                )
+            } else {
+                SelfCheck::fail(TRACK, "council.emergency.confirmed", "紧急通道演练未走到 confirmed")
+            });
             checks.extend(v.council.checks());
         }
         Err(err) => checks.push(SelfCheck::fail(TRACK, "council.veto.blocks_only", err.to_string())),
@@ -1567,7 +1706,15 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         Action::SetPolicy { key: String::from("cpu_proto_settle_cap"), value: 250 },
     )?;
     let proposal = council.propose(kernel, &identity, draft)?;
-    // 表决：受理委员会按 BFT-lite 法定人数出结论。
+    // 表决第 1 轮：一名委员先投赞成、再改投反对 —— 模棱两可，整轮作废。
+    let first_round = council.open_round(kernel, &proposal.id)?;
+    let yes = Vote::cast(proposer, &proposal.id, first_round.round, Choice::Yes)?;
+    council.cast_vote(kernel, yes)?;
+    let flip = Vote::cast(proposer, &proposal.id, first_round.round, Choice::No)?;
+    let ambiguity_rejected = council.cast_vote(kernel, flip).is_err();
+    let voided = council.round(&proposal.id, first_round.round);
+    let ambiguity_outcome = voided.map(|r| r.outcome.as_str().to_string()).unwrap_or_default();
+    // 表决第 2 轮：重开后按 BFT-lite 法定人数出结论。
     let round = vote_yes_all(kernel, &mut council, &agents, &proposal.id)?;
     // 执行：通过的决议落成真实状态变更。
     let receipt = council.execute(kernel, &identity, &proposal.id)?;
@@ -1595,6 +1742,40 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     // 被阻断的动议不能被任何 Agent 执行。
     let execute_after_veto = council.execute(kernel, &identity, &second.id);
     let view = human.observe(&council);
+
+    // 紧急通道：安全委员会即时下发策略；随后由治理（全体在任委员签名）事后确认。
+    let security_member = council
+        .committee(CommitteeKind::Security)
+        .and_then(|c| c.members.first())
+        .map(|m| m.did.clone());
+    let security_issuer = agents
+        .iter()
+        .find(|k| Some(&k.did()) == security_member.as_ref())
+        .ok_or(CoreError::UnknownAgent)?;
+    let security_identity = AgentIdentity::from_keys(security_issuer);
+    let directive = council.issue_emergency(
+        kernel,
+        &security_identity,
+        "emergency_freeze",
+        1,
+        "检测到异常结算速率，先冻结再报请确认",
+    )?;
+    let applied_immediately = council.policy("emergency_freeze") == Some(1);
+    // 事后确认票：全体在任委员（跨委员会去重）各一票。
+    let mut approvers: Vec<Did> = council
+        .committees()
+        .flat_map(|c| c.member_dids())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    approvers.sort();
+    let mut approvals = Vec::new();
+    for did in &approvers {
+        if let Some(keys) = keys_for(&agents, did) {
+            approvals.push(EmergencyApproval::cast(keys, &directive.id, true)?);
+        }
+    }
+    let confirmed = council.confirm_emergency(kernel, &directive.id, &approvals)?;
 
     let committees: Vec<Value> = council
         .committees()
@@ -1700,6 +1881,30 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "proposals": view.proposals.len(),
             "vetoes": view.vetoes.len(),
             "events": view.events,
+        },
+        "ambiguity": {
+            "round": first_round.round,
+            "outcome": ambiguity_outcome,
+            "second_vote_rejected": ambiguity_rejected,
+            "rounds_total": council.rounds().count(),
+        },
+        "emergency": {
+            "id": directive.id,
+            "committee": directive.committee.as_str(),
+            "issued_by": directive.issued_by.as_str(),
+            "key": directive.key,
+            "value": directive.value,
+            "reason": directive.reason,
+            "applied_immediately": applied_immediately,
+            "confirmation": {
+                "status": confirmed.status.as_str(),
+                "approvals": confirmed.confirmation.as_ref().map(|c| c.approvals).unwrap_or(0),
+                "rejections": confirmed.confirmation.as_ref().map(|c| c.rejections).unwrap_or(0),
+                "n": confirmed.confirmation.as_ref().map(|c| c.n).unwrap_or(0),
+                "quorum": confirmed.confirmation.as_ref().map(|c| c.quorum).unwrap_or(0),
+                "rolled_back": confirmed.confirmation.as_ref().map(|c| c.rolled_back).unwrap_or(false),
+            },
+            "policy_kept": council.policy("emergency_freeze") == Some(1),
         },
         "governor_tokens": project_all(&council)?.iter().map(|t| t.to_json()).collect::<Vec<_>>(),
         "events": council.events().len(),

@@ -56,7 +56,7 @@ fn all_crate_sources() -> String {
 #[test]
 fn the_claim_table_is_self_consistent() {
     assert!(claims_are_well_formed(), "能力清单自身不自洽");
-    assert_eq!(CLAIMS.len(), 15);
+    assert_eq!(CLAIMS.len(), 17);
     let text = summary();
     assert!(text.contains("0 unverified"), "{text}");
 }
@@ -130,7 +130,7 @@ fn the_track_metadata_is_machine_readable_and_graded() {
     assert_eq!(value["range"], "v1.7.1 → v1.7.10");
 
     let versions = value["versions"].as_array().expect("versions 数组");
-    assert!(versions.len() >= 8, "已完成的版本必须都写进元数据");
+    assert!(versions.len() >= 9, "已完成的版本必须都写进元数据");
     let mut expected = Vec::new();
     for (i, row) in versions.iter().enumerate() {
         let version = row["version"].as_str().unwrap_or_default();
@@ -153,7 +153,7 @@ fn the_track_metadata_is_machine_readable_and_graded() {
 fn the_markdown_doc_covers_every_version_section() {
     let path = repo_root().join("docs").join("tracks").join("1.7.md");
     let text = fs::read_to_string(&path).unwrap_or_else(|err| panic!("读不到 {}: {err}", path.display()));
-    for i in 1..=8 {
+    for i in 1..=9 {
         let heading = format!("## v1.7.{i} ");
         assert!(text.contains(&heading), "缺少小节 {heading}");
     }

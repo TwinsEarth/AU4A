@@ -282,6 +282,42 @@
         "notes": "EXIT=0；单元 26 + claims 6 + election 8 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning；文档成为通过条件（缺小节即红）"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.9",
+      "title": "示例",
+      "goal": "可运行示例 governance_demo + 安全委员会紧急通道（即时生效、事后治理确认、否决/超期回滚）+ scenario 补齐双签作废",
+      "deliverables": [
+        "src/emergency.rs: EmergencyStatus / EmergencyApproval / EmergencyConfirmation / EmergencyDirective / issue / confirm / rollback",
+        "src/lib.rs: CouncilConfig::emergency_confirm_window、issue_emergency / confirm_emergency / emergency(_directives)、自检 council.emergency.security_only 与 council.emergency.resolved",
+        "examples/governance_demo.rs: 可运行示例（scenario/自检/结果/清单/重放）",
+        "tests/emergency.rs: 7 个集成测试",
+        "scenario: 双签作废一轮→重开通过；紧急指令即时生效→事后确认"
+      ],
+      "interfaces": [
+        "pub enum EmergencyStatus { Active, Confirmed, Rejected, Expired }",
+        "pub struct EmergencyDirective { id, committee, issued_by, key, value, reason, issued_at, confirm_deadline, previous_value, status, confirmation }",
+        "pub fn Council::issue_emergency(&mut self, &mut Kernel, &AgentIdentity, &str, i64, &str) -> CoreResult<EmergencyDirective>",
+        "pub fn Council::confirm_emergency(&mut self, &mut Kernel, &str, &[EmergencyApproval]) -> CoreResult<EmergencyDirective>",
+        "examples/governance_demo.rs"
+      ],
+      "acceptance": [
+        "只有安全委员会可下发（其他委员会 → unauthorized，零状态变更）",
+        "指令即时生效（0 票时策略已变）；票数不足保持 active；达 quorum → confirmed",
+        "被治理否决 → rejected 且策略回滚到先前值",
+        "超过确认窗口 → expired 且回滚（此前无该策略则删除）",
+        "确认票篡改/非委员/重复确认分别被拒",
+        "scenario 全流程：刷票无效→双签作废(2 轮)→通过→执行→人类阻断→紧急确认",
+        "示例源码可运行且不读文件/不开网络/不读墙钟"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 106,
+        "tests_total": 106,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 26 + claims 6 + election 8 + emergency 7 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，示例由 cargo test 编译保证可构建，本 crate 0 warning"
+      },
+      "status": "done"
     }
   ]
 }

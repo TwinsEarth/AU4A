@@ -48,7 +48,7 @@ impl Claim {
 }
 
 /// 轨道 1.7 的能力清单（单一事实来源：文档与自检都引用它）。
-pub const CLAIMS: [Claim; 15] = [
+pub const CLAIMS: [Claim; 17] = [
     Claim {
         id: "election.weighted",
         capability: "委员会席位由信誉×在线时长加权选举产生，高信誉长期在线者当选",
@@ -169,6 +169,22 @@ pub const CLAIMS: [Claim; 15] = [
         grade: EvidenceGrade::Verified,
         note: "tests/claims.rs 会扫描 tests/ 与 src/ 源码核对测试名",
     },
+    Claim {
+        id: "emergency.security_channel",
+        capability: "安全委员会紧急通道可即时下发策略，事后必须由全体在任委员签名确认（否决/超期则回滚）",
+        interface: "Council::issue_emergency / confirm_emergency / EmergencyDirective",
+        test: "the_scenario_runs_the_full_flow_including_emergency",
+        grade: EvidenceGrade::Verified,
+        note: "只有安全委员会可下发（其他委员会 → unauthorized）；确认窗口用逻辑刻度",
+    },
+    Claim {
+        id: "example.runnable",
+        capability: "可运行示例 governance_demo：跑完整治理流程并打印自检、清单与重放结果",
+        interface: "examples/governance_demo.rs",
+        test: "the_example_source_is_a_real_runnable_program",
+        grade: EvidenceGrade::Verified,
+        note: "不读文件、不开网络、不读墙钟；由 cargo test 编译保证可构建",
+    },
 ];
 
 /// 清单自洽：id 唯一、测试名非空、等级与说明匹配。
@@ -215,7 +231,7 @@ mod tests {
     #[test]
     fn the_claim_table_is_well_formed() {
         assert!(claims_are_well_formed());
-        assert_eq!(CLAIMS.len(), 15);
+        assert_eq!(CLAIMS.len(), 17);
         // 不允许出现 unverified：做不到的能力不写进清单。
         assert!(CLAIMS.iter().all(|c| c.grade != EvidenceGrade::Unverified));
         let summary = summary();
@@ -238,11 +254,11 @@ mod tests {
     #[test]
     fn claims_json_is_machine_readable() {
         let value = claims_json();
-        assert_eq!(value["total"], 15);
+        assert_eq!(value["total"], 17);
         assert_eq!(value["unverified"], 0);
         assert_eq!(
             value["verified"].as_u64().unwrap_or(0) + value["cpu_proto"].as_u64().unwrap_or(0),
-            15
+            17
         );
         let first = &value["claims"][0];
         assert!(first["id"].is_string());
