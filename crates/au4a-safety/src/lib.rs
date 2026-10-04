@@ -14,6 +14,7 @@
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）；
 //! 与 `au4a-council` 的协作只走**数据契约**（可序列化 JSON），不互相依赖 crate。
 
+pub mod appeal;
 pub mod case;
 pub mod chain;
 pub mod config;
@@ -26,6 +27,7 @@ use au4a_core::{CoreError, CoreResult, Credits, Did, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+pub use appeal::Appeal;
 pub use case::{Case, CaseStatus, ViolationKind, ViolationReport};
 pub use chain::{
     chain_head, verify_chain, ChainBreak, ChainVerdict, SafetyEvent, SafetyEventKind, GENESIS_PREV,
@@ -46,7 +48,7 @@ pub const TITLE: &str = "Safety API 安全 API";
 /// 版本区间。
 pub const RANGE: &str = "v1.5.1 → v1.5.10";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.5.2";
+pub const CURRENT: &str = "v1.5.3";
 
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_safety";
@@ -82,14 +84,24 @@ pub fn self_check() -> Vec<SelfCheck> {
         Err(_) => SelfCheck::fail(TRACK, "chain.recomputable", "scenario 未产生事件链"),
     });
 
-    // 无罪不罚：一次独立的举报实验，账本快照必须逐字段相等。
+    // 无罪不罚：一次独立的「举报 + 申诉」实验，账本快照必须逐字段相等。
     checks.push(match no_penalty_probe() {
         Ok(()) => SelfCheck::pass(
             TRACK,
             "report.moves_nothing",
-            "未确认举报前后账本快照与 AgentCard 逐字段相等（余额/信誉不动）",
+            "未确认举报与申诉前后账本快照、AgentCard 逐字段相等（余额/信誉不动）",
         ),
         Err(err) => SelfCheck::fail(TRACK, "report.moves_nothing", err.to_string()),
+    });
+
+    // 申诉权不可代理：第三方代签必须失败。
+    checks.push(match third_party_appeal_probe() {
+        Ok(()) => SelfCheck::pass(
+            TRACK,
+            "appeal.subject_only",
+            "第三方代签申诉返回 invalid_signature，状态仍为 reported",
+        ),
+        Err(err) => SelfCheck::fail(TRACK, "appeal.subject_only", err.to_string()),
     });
 
     // 证据闸门：伪造摘要必须被拒，且不留下案件与事件。
@@ -184,7 +196,7 @@ fn replay_reported_chain(value: &Value) -> CoreResult<(usize, String)> {
     Ok((verdict.len, verdict.head))
 }
 
-/// 独立实验：举报一个 Agent，账本与名片必须逐字段不变。
+/// 独立实验：举报 + 申诉都不改账本、不改名片。
 fn no_penalty_probe() -> CoreResult<()> {
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
     let office_keys = role_keys(setup::ROLE_SERVICE);
@@ -218,6 +230,24 @@ fn no_penalty_probe() -> CoreResult<()> {
     if office.status_of(&report.id) != Some(CaseStatus::Reported) {
         return Err(CoreError::InvalidKind);
     }
+
+    // 被举报方申诉：只提交证据、推状态、写链。
+    let appeal_payloads = vec![json!({"probe": "appeal", "reason": "receipt exists", "ok": true})];
+    let appeal_refs = vec![EvidenceRef::commit(
+        EvidenceKind::Witness,
+        &appeal_payloads[0],
+    )?];
+    let appeal = office.appeal(
+        &mut kernel,
+        &subject,
+        &report.id,
+        appeal_refs,
+        &appeal_payloads,
+    )?;
+    if office.status_of(&appeal.case) != Some(CaseStatus::Appealed) {
+        return Err(CoreError::InvalidKind);
+    }
+
     if ledger_snapshot(&kernel, &participants) != before {
         return Err(CoreError::Overflow);
     }
@@ -225,6 +255,49 @@ fn no_penalty_probe() -> CoreResult<()> {
         return Err(CoreError::InvalidSignature);
     }
     kernel.ledger().check_conservation()
+}
+
+/// 独立实验：第三方代签的申诉必须被拒（签名属于主体，不能代理）。
+fn third_party_appeal_probe() -> CoreResult<()> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config, office_keys)?;
+
+    let payload = json!({"probe": "third-party"});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &payload)?;
+    let report = office.report(
+        &mut kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::Spam,
+        reference,
+        &payload,
+    )?;
+    let outcome = office.appeal(
+        &mut kernel,
+        &reporter,
+        &report.id,
+        vec![EvidenceRef::commit(EvidenceKind::Witness, &payload)?],
+        &[payload],
+    );
+    if outcome != Err(CoreError::InvalidSignature)
+        || office.status_of(&report.id) != Some(CaseStatus::Reported)
+        || office.appeal_count() != 0
+    {
+        return Err(CoreError::InvalidSignature);
+    }
+    Ok(())
 }
 
 /// 独立实验：伪造证据必须被拒且不留痕迹。
@@ -320,16 +393,33 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &evidence_payload,
     )?;
 
+    // 3) 申诉：被处罚方（案件主体）提交证据。只推状态、只写链，不动账本。
+    let appeal_payloads = vec![json!({"task": "deliver-1", "receipt": "signed-by-receiver", "ok": true})];
+    let appeal_references = vec![EvidenceRef::commit(
+        EvidenceKind::Witness,
+        &appeal_payloads[0],
+    )?];
+    let appeal = office.appeal(
+        kernel,
+        &subject,
+        &report.id,
+        appeal_references,
+        &appeal_payloads,
+    )?;
+
+    // 从举报到申诉，账本与名片必须逐字段不变（无罪不罚 + 申诉不改账）。
     let after = ledger_snapshot(kernel, &participants);
     let fingerprint_after = ledger_fingerprint(kernel, &participants)?;
     let ledger_untouched = before == after
         && fingerprint_before == fingerprint_after
         && kernel.card(&subject.did()).cloned() == subject_card_before;
-    if !ledger_untouched {
+    if !ledger_untouched
+        || office.status_of(&report.id) != Some(CaseStatus::Appealed)
+    {
         return Err(CoreError::Overflow);
     }
 
-    // 3) 伪造证据：必须被拒，且不留案件、不留事件。
+    // 4) 伪造证据：必须被拒，且不留案件、不留事件。
     let forged_payload = json!({"task": "deliver-1", "delivered": true, "deadline": 40});
     let forged_reference = EvidenceRef::commit(EvidenceKind::Transcript, &forged_payload)?;
     let cases_before_forgery = office.case_count();
@@ -386,6 +476,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "violation": report.violation.as_str(),
             "reporter": report.reporter.as_str(),
             "subject": report.subject.as_str(),
+            "appeals": office.case(&report.id).map(|c| c.appeals.len()),
+        },
+        "appeal": {
+            "id": appeal.id,
+            "appellant": appeal.appellant.as_str(),
+            "evidence": appeal.evidence_count(),
+            "third_party_refused": true,
         },
         "chain": {
             "len": verdict.len,

@@ -196,6 +196,8 @@ pub struct Case {
     pub evidence: EvidenceRef,
     pub opened_at: u64,
     pub status: CaseStatus,
+    /// 已受理的申诉 id（按提交顺序）。
+    pub appeals: Vec<String>,
 }
 
 impl Case {
@@ -208,6 +210,7 @@ impl Case {
             evidence: report.evidence.clone(),
             opened_at: report.at,
             status: CaseStatus::Reported,
+            appeals: Vec::new(),
         }
     }
 

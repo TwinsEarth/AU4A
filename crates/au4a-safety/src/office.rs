@@ -13,6 +13,7 @@ use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Did, RefusalCo
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+use crate::appeal::Appeal;
 use crate::case::{Case, CaseStatus, ViolationKind, ViolationReport};
 use crate::chain::{chain_head, verify_chain, ChainVerdict, SafetyEvent, SafetyEventKind};
 use crate::config::SafetyConfig;
@@ -24,6 +25,7 @@ pub struct SafetyOffice {
     service: AgentKeys,
     events: Vec<SafetyEvent>,
     cases: BTreeMap<String, Case>,
+    appeals: BTreeMap<String, Appeal>,
 }
 
 impl SafetyOffice {
@@ -38,6 +40,7 @@ impl SafetyOffice {
             service,
             events: Vec::new(),
             cases: BTreeMap::new(),
+            appeals: BTreeMap::new(),
         })
     }
 
@@ -192,6 +195,106 @@ impl SafetyOffice {
     /// 案件的处理状态（未确认 == `reported`）。
     pub fn status_of(&self, case_id: &str) -> Option<CaseStatus> {
         self.cases.get(case_id).map(|c| c.status)
+    }
+
+    pub fn appeal_by_id(&self, id: &str) -> Option<&Appeal> {
+        self.appeals.get(id)
+    }
+
+    pub fn appeal_count(&self) -> usize {
+        self.appeals.len()
+    }
+
+    /// 某案件的申诉（按提交顺序）。
+    pub fn appeals_of(&self, case_id: &str) -> Vec<&Appeal> {
+        self.cases
+            .get(case_id)
+            .map(|case| {
+                case.appeals
+                    .iter()
+                    .filter_map(|id| self.appeals.get(id))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// 受理一次申诉。**只有案件主体本人**能申诉；申诉只提交证据、推状态、写链，
+    /// 不触碰账本——罚没与归还永远只发生在裁决路径上。
+    ///
+    /// 申诉权不被终局性剥夺：已 `arbitrated` 的案件收到新证据后回到 `appealed`，
+    /// 由下一次裁决重新处理。
+    pub fn appeal(
+        &mut self,
+        kernel: &mut Kernel,
+        keys: &AgentKeys,
+        case_id: &str,
+        evidence: Vec<EvidenceRef>,
+        payloads: &[Value],
+    ) -> CoreResult<Appeal> {
+        let appellant = keys.did();
+
+        let subject = match self.cases.get(case_id) {
+            Some(case) => case.subject.clone(),
+            None => {
+                kernel.refuse(
+                    &appellant,
+                    RefusalCode::StaleEpoch,
+                    "appeal references an unknown case",
+                );
+                return Err(CoreError::UnknownAgent);
+            }
+        };
+        if appellant != subject {
+            kernel.refuse(
+                &appellant,
+                RefusalCode::Unauthorized,
+                "only the case subject may appeal; a third party cannot sign for them",
+            );
+            return Err(CoreError::InvalidSignature);
+        }
+        if evidence.is_empty() || evidence.len() != payloads.len() {
+            kernel.refuse(
+                &appellant,
+                RefusalCode::PolicyDenied,
+                "appeal evidence is missing or its payloads do not line up",
+            );
+            return Err(CoreError::InvalidSignature);
+        }
+        for (reference, payload) in evidence.iter().zip(payloads.iter()) {
+            if payload.is_null() || reference.verify(payload).is_err() {
+                kernel.refuse(
+                    &appellant,
+                    RefusalCode::PolicyDenied,
+                    "appeal evidence digest does not match its payload",
+                );
+                return Err(CoreError::InvalidSignature);
+            }
+        }
+
+        let at = kernel.tick();
+        let appeal =
+            Appeal::new(case_id.to_string(), appellant.clone(), evidence, at).sign(keys)?;
+        appeal.verify()?;
+
+        if let Some(case) = self.cases.get_mut(case_id) {
+            case.status = CaseStatus::Appealed;
+            case.appeals.push(appeal.id.clone());
+        }
+        self.appeals.insert(appeal.id.clone(), appeal.clone());
+        self.append(
+            kernel,
+            SafetyEventKind::Appealed,
+            json!({"case": case_id, "appeal": appeal.to_json()?}),
+        )?;
+        kernel.emit(
+            &format!("{}.appealed", crate::TRACK),
+            format!(
+                "案件 {} 收到申诉（证据 {} 条）",
+                au4a_core::short_id(case_id),
+                appeal.evidence_count()
+            ),
+        );
+        Ok(appeal)
     }
 }
 
@@ -538,5 +641,178 @@ mod tests {
             ledger_fingerprint(&w.kernel, &w.participants).unwrap(),
             ledger_fingerprint(&w.kernel, &reversed).unwrap()
         );
+    }
+
+    // ---- v1.5.3 申诉 ----
+
+    fn appeal_evidence(tag: &str) -> (Vec<EvidenceRef>, Vec<Value>) {
+        let payloads = vec![
+            json!({"tag": tag, "kind": "delivery-receipt", "delivered": true}),
+            json!({"tag": tag, "kind": "witness-statement", "witness": "peer"}),
+        ];
+        let references = payloads
+            .iter()
+            .map(|p| EvidenceRef::commit(EvidenceKind::Witness, p).unwrap())
+            .collect();
+        (references, payloads)
+    }
+
+    fn open_case(w: &mut World, tag: &str) -> String {
+        let (reference, payload) = evidence(tag);
+        w.office
+            .report(
+                &mut w.kernel,
+                &w.reporter,
+                &w.subject.did(),
+                ViolationKind::NonDelivery,
+                reference,
+                &payload,
+            )
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn the_subject_can_appeal_and_the_case_becomes_appealed() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "appeal-1");
+        let (references, payloads) = appeal_evidence("appeal-1");
+        let appeal = w
+            .office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+
+        assert_eq!(appeal.appellant, w.subject.did());
+        assert_eq!(appeal.case, case_id);
+        assert_eq!(appeal.evidence_count(), 2);
+        appeal.verify().unwrap();
+
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Appealed));
+        assert_eq!(
+            w.office.case(&case_id).unwrap().appeals,
+            vec![appeal.id.clone()]
+        );
+        assert_eq!(w.office.appeal_count(), 1);
+        assert_eq!(w.office.event_count(), 2);
+        assert_eq!(w.office.events()[1].kind, SafetyEventKind::Appealed);
+        assert!(w.office.verify_chain().ok);
+    }
+
+    #[test]
+    fn an_appeal_moves_no_ledger_entry_and_no_card() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "appeal-2");
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+        let fingerprint_before = ledger_fingerprint(&w.kernel, &w.participants).unwrap();
+        let subject_card_before = w.kernel.card(&w.subject.did()).cloned();
+
+        let (references, payloads) = appeal_evidence("appeal-2");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        assert_eq!(
+            ledger_fingerprint(&w.kernel, &w.participants).unwrap(),
+            fingerprint_before
+        );
+        assert_eq!(w.kernel.card(&w.subject.did()).cloned(), subject_card_before);
+        assert_eq!(w.kernel.ledger().slashed(), Credits::ZERO);
+        w.kernel.ledger().check_conservation().unwrap();
+    }
+
+    #[test]
+    fn a_third_party_cannot_appeal_on_behalf_of_the_subject() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "appeal-3");
+        let (references, payloads) = appeal_evidence("appeal-3");
+        // 举报人替被举报人「代为申诉」：签名不是主体的，密码学上就不成立。
+        assert_eq!(
+            w.office
+                .appeal(&mut w.kernel, &w.reporter, &case_id, references, &payloads),
+            Err(CoreError::InvalidSignature)
+        );
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Reported));
+        assert_eq!(w.office.appeal_count(), 0);
+        assert_eq!(w.office.event_count(), 1);
+        let (_, refusal) = &w.kernel.refusals()[0];
+        assert_eq!(refusal.code, RefusalCode::Unauthorized);
+    }
+
+    #[test]
+    fn an_appeal_for_an_unknown_case_is_refused() {
+        let mut w = world();
+        let (references, payloads) = appeal_evidence("appeal-4");
+        assert_eq!(
+            w.office
+                .appeal(&mut w.kernel, &w.subject, "no-such-case", references, &payloads),
+            Err(CoreError::UnknownAgent)
+        );
+        let (_, refusal) = &w.kernel.refusals()[0];
+        assert_eq!(refusal.code, RefusalCode::StaleEpoch);
+        assert_eq!(w.office.event_count(), 0);
+    }
+
+    #[test]
+    fn forged_appeal_evidence_is_refused_without_state_change() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "appeal-5");
+        let (references, _) = appeal_evidence("appeal-5");
+        let other_payloads = vec![json!({"tag": "appeal-5", "forged": true})];
+        assert_eq!(
+            w.office
+                .appeal(&mut w.kernel, &w.subject, &case_id, references, &other_payloads),
+            Err(CoreError::InvalidSignature)
+        );
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Reported));
+        assert_eq!(w.office.appeal_count(), 0);
+        assert_eq!(w.office.event_count(), 1);
+        let (_, refusal) = &w.kernel.refusals()[0];
+        assert_eq!(refusal.code, RefusalCode::PolicyDenied);
+    }
+
+    #[test]
+    fn an_appeal_without_evidence_or_with_mismatched_payloads_is_refused() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "appeal-6");
+        assert_eq!(
+            w.office
+                .appeal(&mut w.kernel, &w.subject, &case_id, Vec::new(), &[]),
+            Err(CoreError::InvalidSignature)
+        );
+        let (references, payloads) = appeal_evidence("appeal-6");
+        assert_eq!(
+            w.office
+                .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads[..1]),
+            Err(CoreError::InvalidSignature)
+        );
+        assert_eq!(w.office.appeal_count(), 0);
+    }
+
+    #[test]
+    fn appeals_are_repeatable_with_new_evidence() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "appeal-7");
+        let mut ids = Vec::new();
+        for tag in ["appeal-7-a", "appeal-7-b"] {
+            let (references, payloads) = appeal_evidence(tag);
+            let appeal = w
+                .office
+                .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+                .unwrap();
+            ids.push(appeal.id);
+        }
+        // 终局性属于裁决，不属于申诉人：新证据可以再次申诉。
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Appealed));
+        assert_eq!(w.office.case(&case_id).unwrap().appeals, ids);
+        let indexed: Vec<String> = w
+            .office
+            .appeals_of(&case_id)
+            .iter()
+            .map(|a| a.id.clone())
+            .collect();
+        assert_eq!(indexed, w.office.case(&case_id).unwrap().appeals);
+        assert_eq!(w.office.event_count(), 3);
+        assert!(w.office.verify_chain().ok);
     }
 }

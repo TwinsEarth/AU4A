@@ -84,18 +84,20 @@
         "pub fn SafetyOffice::appeal(&mut self, kernel, keys, case_id, evidence) -> CoreResult<Appeal>"
       ],
       "acceptance": [
-        "第三方代签的申诉被拒（签名必须由案件主体出具）",
-        "未知案件被拒；申诉成功后状态为 appealed",
-        "申诉前后账本逐字段不变"
+        "第三方代签的申诉被拒（InvalidSignature + unauthorized），状态仍为 reported",
+        "未知案件被拒（UnknownAgent + stale_epoch）；空证据或载荷数不匹配被拒",
+        "申诉前后账本快照与 AgentCard 逐字段不变（slashed == 0）",
+        "主体申诉后状态 appealed、Case.appeals 按顺序记录、事件链 2 条且完好",
+        "新证据可再次申诉（申诉权不被终局性剥夺）"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.2 全绿后开工"
+        "tests_passed": 56,
+        "tests_total": 56,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.3.log；累计 56 个测试"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.4",
