@@ -42,6 +42,42 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 18 passed / host_kernel.rs 9 passed，0 failed，0 warning，exit 0。投递为内核内存队列语义（真实签名与验签），真实 P2P 传输不在本版声称范围。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.2",
+      "title": "Agent 自治层骨架",
+      "goal": "把「Agent 是主体」落成代码：纯函数决策器 + 真驱动内核的执行器，决策输入无人类通道、意图集合无「等待批准」",
+      "deliverables": [
+        "src/autonomy.rs: AutonomyPolicy / Intent / IntentKind / AgentContext / AutonomyLayer / AutonomyState / AutonomyTurn / classify_error",
+        "src/lib.rs: 接线自治层，scenario() 新增 autonomy 阶段（真实跑两个 turn）",
+        "tests/autonomy.rs: 4 个集成测试（自主闭环、退避vs自停、同种子同日志、日志完备）"
+      ],
+      "interfaces": [
+        "pub enum IntentKind { Announce, Offer, Progress, Settle, Decline, Defer, Suspend, Idle }",
+        "pub enum Intent",
+        "pub struct AgentContext",
+        "pub struct AutonomyPolicy",
+        "pub struct AutonomyLayer",
+        "impl AutonomyLayer { new / did / policy / state / journal / join / context / turn }",
+        "pub fn classify_error(err: &CoreError) -> RefusalCode"
+      ],
+      "acceptance": [
+        "AutonomyLayer::join 自注册后 turn 产生验签通过的广播信封，全程无人工调用",
+        "AgentContext 的 JSON 键与 IntentKind::ALL 名称均不含 human/approv/operator",
+        "plan() 对相同输入结果相等；心跳边界之前只 Idle、到点才 Announce",
+        "竞争性拒绝 -> defer_until=at+3 且 escalation != Quarantine；伪造信封 -> 下一回合 plan==[Suspend]、sent==0、halted==true 且为终态",
+        "未声明能力 -> Decline{unsupported}；amount<=0 -> Decline{malformed}；声明能力 -> Offer{1% 整数基点}",
+        "同种子两个内核跑 6 回合：AutonomyTurn/AutonomyState/注册表指纹全等",
+        "journal.len() == intents_planned，且既有 acted 也有纯决定记录"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 42,
+        "tests_total": 42,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 29 + tests/autonomy.rs 4 + tests/host_kernel.rs 9 = 42 passed，0 failed，0 warning，exit 0。协商接受语义属 au4a-negotiate（1.2），跨节点传输仍为内核内存队列。"
+      },
+      "status": "done"
     }
   ]
 }

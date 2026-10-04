@@ -17,9 +17,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub mod audit;
+pub mod autonomy;
 pub mod registry;
 
 pub use audit::{audit_kernel, AuditFinding, HostAudit};
+pub use autonomy::{
+    classify_error, AgentContext, AutonomyLayer, AutonomyPolicy, AutonomyState, AutonomyTurn,
+    Intent, IntentKind, IntentRecord,
+};
 pub use registry::{AgentRegistry, RegistrySnapshot};
 
 /// 内核配置。人类可以设定初始资源与安全底线，但不能设定「谁做什么」。
@@ -608,7 +613,36 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         refused_unverified += 1;
     }
 
-    // 5. 审计 + 只读观察。
+    // 5. 自治层：host 的运行时自己决定下一步（通告 + 回应 settler 的报价请求），
+    //    第二次 turn 因为心跳未到而空转——决策完全由 Agent 自己做，没有任何人工输入。
+    let settler_keys = track_keys(3);
+    let offer_req = Envelope::new(
+        settler_keys.did(),
+        Some(host.did.clone()),
+        "negotiate.offer",
+        kernel.now() + 1,
+        None,
+        json!({"skill": "kernel.host", "note": "autonomy scenario"}),
+    )?
+    .seal(&settler_keys)?;
+    kernel.send(&offer_req)?;
+
+    let mut host_runtime = AutonomyLayer::new(track_keys(1), AutonomyPolicy::default());
+    let first_turn = host_runtime.turn(kernel)?;
+    let second_turn = host_runtime.turn(kernel)?;
+    let planned_first: Vec<&str> = first_turn.planned.iter().map(|k| k.as_str()).collect();
+    let planned_second: Vec<&str> = second_turn.planned.iter().map(|k| k.as_str()).collect();
+    let autonomy = json!({
+        "planned_first": planned_first,
+        "sent_first": first_turn.sent,
+        "planned_second": planned_second,
+        "sent_second": second_turn.sent,
+        "journal": host_runtime.journal().len(),
+        "announcements": host_runtime.state().announcements,
+        "halted": host_runtime.state().halted,
+    });
+
+    // 6. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -617,12 +651,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": {"host": host.display, "observer": observer.display, "settler": settler.display},
-        "steps": ["register", "announce", "deliver", "settle", "audit", "observe"],
+        "steps": ["register", "announce", "deliver", "settle", "autonomy", "audit", "observe"],
         "announced": announced,
         "drained": drained,
         "settled_verified": settled_verified,
         "settled_cpu_proto": settled_cpu_proto,
         "refused_unverified": refused_unverified,
+        "autonomy": autonomy,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,
         "audit": audit.to_json(),
