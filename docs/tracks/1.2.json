@@ -230,21 +230,26 @@
       "version": "v1.2.8",
       "title": "测试",
       "goal": "综合集成测试：正常/拒绝/不变式三条线覆盖全轨道能力",
-      "deliverables": ["tests/negotiate.rs"],
+      "deliverables": [
+        "tests/negotiate.rs: 正常路径 ×2 / 拒绝矩阵 ×2 / 不变式 ×2 / 源码守卫 ×2",
+        "（无新公共 API，只加断言）"
+      ],
       "interfaces": ["（测试文件，无新公共 API）"],
       "acceptance": [
-        "正常路径：多轮→达成→双签→执行→结算",
-        "拒绝路径：非法转换/超轮数/单方签名/篡改/无合约违约",
-        "不变式：账本守恒、重放逐字节一致、转换全部双签"
+        "正常路径：多轮→达成→双签→执行→结算，账本逐账户数值断言",
+        "拒绝矩阵：非法转换/超轮数/自问自答/第三方/无合约违约/当事人仲裁/单仲裁员，全部有类型化 Err 且相位不推进",
+        "不变式：63 种转换穷举（10 合法）、每条记录双签或条款授权、账本守恒、归档定点、同种子逐字节一致",
+        "源码守卫：读 src/*.rs 并断言库代码无 unwrap/expect/panic!/todo!/unimplemented!",
+        "宿主输入（空串/非 hex/超长/越界轮次/垃圾归档）只返回 Err，不 panic"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 101,
+        "tests_total": 101,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：53 单元 + 8 tests/negotiate.rs + 8 tests/arbitration.rs + 7 tests/breach.rs + 6 tests/contract.rs + 4 tests/journal.rs + 6 tests/messages.rs + 4 tests/rounds.rs + 5 tests/state_machine.rs 全绿、0 warning（日志 1.2-v1.2.8.log）。其中 library_code_never_panics 真实读取 8 个 src 模块并断言库代码零 panic 出口。修复记录：1 处余额期望值算错（客户可用 950-135=815），修正后全绿。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.9",
