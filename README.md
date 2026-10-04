@@ -12,13 +12,10 @@
   <img alt="versions" src="https://img.shields.io/badge/versions-99%20small%20%C3%97%2010%20medium-blueviolet">
   <img alt="rust" src="https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust&logoColor=white">
   <a href="crates"><img alt="crates" src="https://img.shields.io/badge/crates-12-blue"></a>
-  <img alt="dependencies" src="https://img.shields.io/badge/dependencies-6-blue">
-  <a href="https://github.com/TwinsEarth/AU4A/commits/master"><img alt="last commit" src="https://img.shields.io/github/last-commit/TwinsEarth/AU4A?color=informational"></a>
 </p>
 <p align="center">
   <img alt="tests" src="https://img.shields.io/badge/tests-1238%20passed%20(local%20Windows)-brightgreen">
   <img alt="rust source" src="https://img.shields.io/badge/rust%20source-69%2C092%20lines-lightgrey">
-  <img alt="evidence grade" src="https://img.shields.io/badge/evidence-graded%20(verified%20%7C%20cpu--proto)-informational">
   <a href="crates/au4a-node/src/observer.rs"><img alt="human role" src="https://img.shields.io/badge/humans-observers%20only-ff69b4"></a>
   <a href="docs/DESIGN.md"><img alt="design doc" src="https://img.shields.io/badge/docs-DESIGN%20%2B%20DEV-informational"></a>
   <a href="docs/VERIFICATION.md"><img alt="verification" src="https://img.shields.io/badge/%E5%AE%9E%E6%B5%8B-10%20medium%20versions-success"></a>
