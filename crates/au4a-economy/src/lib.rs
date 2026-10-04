@@ -3,75 +3,24 @@
 //! 经济自主：Agent 自己管理余额、自己定价、自己质押、自己参与争议仲裁、自己决定兑换路由，
 //! 收益归属资源提供者（人类只收收益、不决策），监控是只读投影。
 //!
-//! # 三条贯穿全轨道的规则
+//! 三条贯穿全轨道的规则：
 //!
 //! 1. **一切账务走 [`au4a_core::Ledger`]**，每个写路径末尾断言
 //!    `Σ可用 + Σ锁定 + 罚没 == 发行`（[`au4a_core::Ledger::check_conservation`]）。
-//!    质押簿另有不变式：它声称的锁定量**永远不超过**账本实际锁定量
-//!    （[`stake::StakeBook::assert_consistent`]）。
 //! 2. **一切金额与比率是整数**（微积分 / 基点），规范 JSON 拒绝浮点，因此结果可复现。
 //! 3. **证据分级是结算闸门**：[`au4a_core::EvidenceGrade::Unverified`] 永远不可结算，
-//!    链上执行属于 v1.8，本轨道只做**路由决策与账务**，绝不伪造链上成功
-//!    （[`fx::ChainExecution`] 在类型层面没有「已执行」变体）。
-//!
-//! # 模块地图
-//!
-//! | 版本 | 模块 | 职责 |
-//! |---|---|---|
-//! | v1.4.1 | [`balance`] | 余额管理：运营底线 / 目标质押比例 / 单笔支出上限 |
-//! | v1.4.2 | [`pricing`] | 自主定价：信誉 / 稀缺度 / 负载的整数基点函数 |
-//! | v1.4.3 | [`fx`] | 兑换路由决策表 + 在途预留（真实链上执行属 v1.8） |
-//! | v1.4.4 | [`stake`] | 质押 / 解质押 / 冷静期 / 罚没同步 |
-//! | v1.4.5 | [`arbitration`] | 自主立案 / 投票 / 裁决 / 申诉（罚没上限 = 锁定余额） |
-//! | v1.4.6 | [`settlement`] | 结算路由 + 最大余数法分成 + 收益归属资源提供者 |
-//! | v1.4.7 | `tests/` | 跨模块性质测试与端到端测试（87 个断言） |
-//! | v1.4.8 | 本文件 + `README.md` | 文档与证据汇总 |
-//! | v1.4.9 | `examples/economy_tour.rs` | 可运行示例（九步走） |
-//! | v1.4.10 | [`monitor`] | 只读收益面板数据源（与节点 `/api/revenue` 字段对齐的超集） |
-//!
-//! # 最短上手路径
-//!
-//! ```text
-//! let mut kernel = au4a_kernel::Kernel::new(Default::default());
-//! let panel = au4a_economy::scenario(&mut kernel)?;      // 端到端跑一遍（可复现）
-//! let checks = au4a_economy::self_check();                // 节点 verify 聚合它
-//! let results = au4a_economy::results_json()?;            // 只读产物摘要
-//! let revenue = au4a_economy::monitor::revenue_panel(&kernel, &book, &panel)?; // 人类只看收益
-//! ```
+//!    链上执行属于 v1.8，本轨道只做**路由决策与账务**，绝不伪造链上成功。
 //!
 //! 轨道内**串行**开发：每个小版本落地一个职责，并留下自检与证据。
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 
-pub mod arbitration;
 pub mod balance;
-pub mod fx;
-pub mod monitor;
-pub mod pricing;
-pub mod settlement;
-pub mod stake;
 
-use au4a_core::{
-    AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, EvidenceGrade, Ledger, RefusalCode,
-    SelfCheck,
-};
+use au4a_core::{AgentKeys, CoreError, CoreResult, Credits, Did, Ledger, RefusalCode, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
-pub use arbitration::{
-    is_admissible, Appeal, ArbitrationTerms, Court, Dispute, DisputeState, PenaltyCap, Ruling, Vote,
-};
 pub use balance::{AccountDelta, BalanceManager, BalancePolicy, BalanceReport, SpendVerdict};
-pub use fx::{
-    ChainExecution, DecisionReason, ExchangeBook, ExchangeIntent, ExchangeRequest, IntentStatus,
-    RouteAction, RoutePlan, RouteTable, Urgency, Venue,
-};
-pub use monitor::{ledger_totals, monitor_json, revenue_panel, LedgerTotals, RevenuePanel, RevenueRow};
-pub use pricing::{unit_price, PriceComponents, PriceInputs, PriceKnobs, PriceQuote};
-pub use settlement::{
-    Beneficiary, BeneficiaryKind, DecisionRights, ProviderRole, Receipt, RevenueBook, RevenueShare,
-    SettlementDecision, SettlementOutcome, SettlementPolicy, SettlementRequest, SettlementRoute,
-};
-pub use stake::{StakeBook, StakePosition, StakeTerms, Unbonding};
 
 /// 轨道号。
 pub const TRACK: &str = "1.4";
@@ -81,9 +30,6 @@ pub const TITLE: &str = "Economic Autonomy 经济自主";
 pub const RANGE: &str = "v1.4.1 → v1.4.10";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_economy";
-
-/// 报价公告的消息类型（后续轨道可扩展，冻结基元不因此改动）。
-pub const PRICE_KIND: &str = "economy.price";
 
 /// 场景/自检用的确定性身份种子（同一个种子永远给出同一把密钥与同一个 DID）。
 fn agent(seed: u8) -> AgentKeys {
@@ -162,341 +108,6 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
-    checks.push(check("pricing.reproducible", || {
-        let inputs = PriceInputs {
-            base_price: Credits(1_000_000),
-            reputation_bp: 8_000,
-            scarcity_bp: 2_000,
-            load_bp: 4_000,
-        };
-        let a = pricing::quote(&inputs, &PriceKnobs::DEFAULT).map_err(|e| e.to_string())?;
-        let b = pricing::quote(&inputs, &PriceKnobs::DEFAULT).map_err(|e| e.to_string())?;
-        if a != b || a.fingerprint().map_err(|e| e.to_string())? != b.fingerprint().map_err(|e| e.to_string())? {
-            return Err("同一输入给出了不同报价".to_string());
-        }
-        if a.multiplier_bp != 11_000 || a.unit_price != Credits(1_100_000) {
-            return Err(format!(
-                "钉住的数值不符：multiplier={} price={}",
-                a.multiplier_bp, a.unit_price
-            ));
-        }
-        Ok(format!(
-            "信誉 8000 / 稀缺 2000 / 负载 4000 → 乘数 {}bp、单价 {}，两次报价与内容哈希一致",
-            a.multiplier_bp, a.unit_price
-        ))
-    }));
-
-    checks.push(check("pricing.monotonicity", || {
-        let knobs = PriceKnobs::DEFAULT;
-        let base = Credits(1_000_000);
-        let mut load_prev = pricing::unit_price(&PriceInputs::idle(base), &knobs).map_err(|e| e.to_string())?;
-        let mut rep_prev = load_prev;
-        for bp in (0..=10_000i64).step_by(250) {
-            let with_load = pricing::unit_price(
-                &PriceInputs {
-                    base_price: base,
-                    reputation_bp: 0,
-                    scarcity_bp: 0,
-                    load_bp: bp,
-                },
-                &knobs,
-            )
-            .map_err(|e| e.to_string())?;
-            if with_load < load_prev {
-                return Err(format!("负载 {bp} 时价格下降：{load_prev} → {with_load}"));
-            }
-            load_prev = with_load;
-            let with_rep = pricing::unit_price(
-                &PriceInputs {
-                    base_price: base,
-                    reputation_bp: bp,
-                    scarcity_bp: 0,
-                    load_bp: 0,
-                },
-                &knobs,
-            )
-            .map_err(|e| e.to_string())?;
-            if with_rep > rep_prev {
-                return Err(format!("信誉 {bp} 时价格上升：{rep_prev} → {with_rep}"));
-            }
-            rep_prev = with_rep;
-        }
-        Ok(format!(
-            "负载 0→10000 单调不降（{load_prev} 为满载价），信誉 0→10000 单调不增（{rep_prev} 为满信誉价）"
-        ))
-    }));
-
-    checks.push(check("fx.decision_table", || {
-        let table = fx::RouteTable::DEFAULT;
-        let ask = |amount: i64, slack: u64| fx::ExchangeRequest {
-            from: agent(9).did(),
-            amount: Credits(amount),
-            urgency: fx::Urgency::Standard,
-            slack_ticks: slack,
-            preferred: None,
-        };
-        let small = fx::route(&ask(150, 100), &table).map_err(|e| e.to_string())?;
-        let tight = fx::route(&ask(400, 12), &table).map_err(|e| e.to_string())?;
-        let ok = fx::route(&ask(400, 30), &table).map_err(|e| e.to_string())?;
-        if small.action != fx::RouteAction::KeepInternal
-            || small.reason != fx::DecisionReason::BelowOnchainMinimum
-        {
-            return Err(format!(
-                "小额应内部结算，实际 {}/{}",
-                small.action.as_str(),
-                small.reason.as_str()
-            ));
-        }
-        if tight.action != fx::RouteAction::Defer
-            || tight.reason != fx::DecisionReason::DeadlineTooTight
-        {
-            return Err(format!(
-                "时效不足应缓办，实际 {}/{}",
-                tight.action.as_str(),
-                tight.reason.as_str()
-            ));
-        }
-        if ok.action != fx::RouteAction::RouteOnchain
-            || ok.venue != fx::Venue::Ethereum
-            || ok.fee != Credits(3)
-            || ok.net != Credits(397)
-        {
-            return Err(format!(
-                "可执行路由应走 ETH（3bp 费用），实际 {}/{} fee={} net={}",
-                ok.action.as_str(),
-                ok.venue.as_str(),
-                ok.fee,
-                ok.net
-            ));
-        }
-        Ok(format!(
-            "150 → {}（{}）；400/剩余 12 → {}（{}）；400/剩余 30 → {} 走 {} 费用 {} 到账 {}",
-            small.action.as_str(),
-            small.reason.as_str(),
-            tight.action.as_str(),
-            tight.reason.as_str(),
-            ok.action.as_str(),
-            ok.venue.as_str(),
-            ok.fee,
-            ok.net
-        ))
-    }));
-
-    checks.push(check("fx.no_fake_chain", || {
-        let who = agent(10).did();
-        let mut ledger = Ledger::new();
-        ledger.mint(&who, Credits(10_000)).map_err(|e| e.to_string())?;
-        let plan = fx::route(
-            &fx::ExchangeRequest {
-                from: who.clone(),
-                amount: Credits(1_000),
-                urgency: fx::Urgency::Standard,
-                slack_ticks: 100,
-                preferred: None,
-            },
-            &fx::RouteTable::DEFAULT,
-        )
-        .map_err(|e| e.to_string())?;
-        let intent = fx::escrow_for_route(&mut ledger, &plan, 1).map_err(|e| e.to_string())?;
-        if intent.on_chain_success() || intent.chain_execution.executed() {
-            return Err("兑换意图错误地声称链上成功".to_string());
-        }
-        let names: Vec<&str> = fx::ChainExecution::ALL.iter().map(|c| c.as_str()).collect();
-        if names.contains(&"executed") || fx::IntentStatus::ALL.len() != 1 {
-            return Err("类型层出现了「已上链」的表达".to_string());
-        }
-        let back = fx::cancel_intent(&mut ledger, &intent).map_err(|e| e.to_string())?;
-        ledger
-            .check_conservation()
-            .map_err(|e| format!("守恒断言失败：{e}"))?;
-        Ok(format!(
-            "预留 {back} 并撤回，状态 {}，链上执行 {}（真实执行属 v1.8），全程守恒",
-            intent.status.as_str(),
-            intent.chain_execution.as_str()
-        ))
-    }));
-
-    checks.push(check("stake.self_custody", || {
-        let who = agent(11).did();
-        let mut ledger = Ledger::new();
-        ledger.mint(&who, Credits(1_000)).map_err(|e| e.to_string())?;
-        let terms = StakeTerms::DEFAULT;
-        let mut book = StakeBook::new();
-        book.stake(&mut ledger, &terms, &who, Credits(300))
-            .map_err(|e| format!("自主质押被拒绝：{e}"))?;
-        // 解质押 100（≥ 准入线 10），冷静期 3 个时间片。
-        let entry = book
-            .request_unstake(&terms, &who, Credits(100), 20)
-            .map_err(|e| format!("解质押被拒绝：{e}"))?;
-        let early = book
-            .release_matured(&mut ledger, &who, entry.release_at - 1)
-            .map_err(|e| e.to_string())?;
-        if early != Credits::ZERO {
-            return Err(format!("冷静期未满却释放了 {early}"));
-        }
-        let released = book
-            .release_matured(&mut ledger, &who, entry.release_at)
-            .map_err(|e| e.to_string())?;
-        book.assert_consistent(&ledger).map_err(|e| e.to_string())?;
-        Ok(format!(
-            "质押 300 → 解质押 100（{} 到点）→ 提前释放 0、到点释放 {released}；锁定 {} 可用 {}",
-            entry.release_at,
-            ledger.balance(&who).locked,
-            ledger.balance(&who).available
-        ))
-    }));
-
-    checks.push(check("arbitration.penalty_cap", || {
-        let claimant = agent(12).did();
-        let respondent = agent(13).did();
-        let mut ledger = Ledger::new();
-        ledger.mint(&respondent, Credits(10_000)).map_err(|e| e.to_string())?;
-        ledger.lock(&respondent, Credits(50)).map_err(|e| e.to_string())?;
-        let terms = ArbitrationTerms::DEFAULT;
-        let mut court = Court::new();
-        let dispute = court
-            .open(&claimant, &respondent, Credits(1_000_000), EvidenceGrade::Verified, 1)
-            .map_err(|e| format!("立案被拒绝：{e}"))?;
-        court.vote(&dispute.id, &agent(14).did(), true, 9_000).map_err(|e| e.to_string())?;
-        court.vote(&dispute.id, &agent(15).did(), true, 1_000).map_err(|e| e.to_string())?;
-        let first = court
-            .rule(&mut ledger, &dispute.id, &terms, 2)
-            .map_err(|e| format!("裁决被拒绝：{e}"))?;
-        if first.slashed != Credits(50) || first.cap != PenaltyCap::LockedBalance {
-            return Err(format!(
-                "罚没未被锁定余额截断：slashed={} cap={}",
-                first.slashed,
-                first.cap.as_str()
-            ));
-        }
-        // 申诉后重开投票：驳回也不会把销毁的罚没退回来。
-        court
-            .appeal(&dispute.id, &respondent, "new evidence", &terms, 3)
-            .map_err(|e| format!("申诉被拒绝：{e}"))?;
-        court.vote(&dispute.id, &agent(14).did(), false, 9_000).map_err(|e| e.to_string())?;
-        court.vote(&dispute.id, &agent(15).did(), false, 1_000).map_err(|e| e.to_string())?;
-        let second = court
-            .rule(&mut ledger, &dispute.id, &terms, 4)
-            .map_err(|e| e.to_string())?;
-        ledger.check_conservation().map_err(|e| format!("守恒断言失败：{e}"))?;
-        if second.slashed != Credits::ZERO || second.slashed_total != Credits(50) {
-            return Err(format!(
-                "驳回后罚没总额应保持 50，实际本次 {} 累计 {}",
-                second.slashed, second.slashed_total
-            ));
-        }
-        Ok(format!(
-            "索赔 1000000、锁定 50 → 罚没 {}（{}），申诉重裁后累计仍为 {}，守恒成立",
-            first.slashed,
-            first.cap.as_str(),
-            second.slashed_total
-        ))
-    }));
-
-    checks.push(check("settlement.evidence_gate", || {
-        let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
-        let a = agent(16);
-        let b = agent(17);
-        ensure_registered(&mut kernel, &a, "gate.a", &["x"], Credits(10)).map_err(|e| e.to_string())?;
-        ensure_registered(&mut kernel, &b, "gate.b", &["y"], Credits(10)).map_err(|e| e.to_string())?;
-        if settlement::settle_direct(&mut kernel, &a.did(), &b.did(), Credits(10), EvidenceGrade::Unverified).is_ok() {
-            return Err("Unverified 证据竟然完成了结算".to_string());
-        }
-        let request = settlement::SettlementRequest {
-            payer: a.did(),
-            payee: b.did(),
-            total: Credits(10),
-            evidence: EvidenceGrade::Unverified,
-            dispute_open: false,
-            at: 1,
-        };
-        let decision = settlement::route(&request, &settlement::SettlementPolicy::DEFAULT)
-            .map_err(|e| e.to_string())?;
-        if decision.route != settlement::SettlementRoute::Withheld {
-            return Err(format!("Unverified 应被拒付，实际 {}", decision.route.as_str()));
-        }
-        // Verified 可以结算。
-        settlement::settle_direct(&mut kernel, &a.did(), &b.did(), Credits(10), EvidenceGrade::Verified)
-            .map_err(|e| format!("Verified 结算被拒绝：{e}"))?;
-        kernel
-            .ledger()
-            .check_conservation()
-            .map_err(|e| format!("守恒断言失败：{e}"))?;
-        Ok(format!(
-            "Unverified → {}（{}），账本未动；Verified → 10 微积分结算成功，守恒成立",
-            decision.route.as_str(),
-            decision.reason
-        ))
-    }));
-
-    checks.push(check("settlement.split_exact", || {
-        let parts = settlement::split_weights(Credits(10), &[3_333, 3_333, 3_334])
-            .map_err(|e| e.to_string())?;
-        let sum: i64 = parts.iter().map(|c| c.get()).sum();
-        if sum != 10 || parts != vec![Credits(3), Credits(3), Credits(4)] {
-            return Err(format!("最大余数法拆分错误：{parts:?}（合计 {sum}）"));
-        }
-        if settlement::split_weights(Credits(100), &[5_000, 4_999]).is_ok() {
-            return Err("权重之和不是 10000bp 却被接受".to_string());
-        }
-        let human = settlement::Beneficiary::human_operator(agent(18).did());
-        if human.may_decide() || human.decision_rights() != settlement::DecisionRights::IncomeOnly {
-            return Err("人类操作者竟然有决策权".to_string());
-        }
-        Ok(format!(
-            "10 按 3333/3333/3334 拆成 {:?}（合计 {sum}）；权重不等 10000bp 被拒；人类操作者决策权 = {:?}",
-            parts.iter().map(|c| c.get()).collect::<Vec<_>>(),
-            human.decision_rights()
-        ))
-    }));
-
-    checks.push(check("monitor.read_only", || {
-        let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
-        let a = agent(19);
-        let b = agent(20);
-        let da = ensure_registered(&mut kernel, &a, "monitor.a", &["compute"], Credits(10))
-            .map_err(|e| e.to_string())?;
-        let db = ensure_registered(&mut kernel, &b, "monitor.b", &["buy"], Credits(10))
-            .map_err(|e| e.to_string())?;
-        kernel
-            .settle(&db, &da, Credits(30), EvidenceGrade::Verified)
-            .map_err(|e| format!("结算被拒绝：{e}"))?;
-        let mut revenue = RevenueBook::new();
-        revenue.record_receipt(Receipt {
-            beneficiary: da.as_str().to_string(),
-            amount: Credits(30),
-            share_bp: 10_000,
-            role: ProviderRole::Compute,
-            kind: BeneficiaryKind::Agent,
-            at: 1,
-        });
-        let before = kernel.ledger().view();
-        let panel_checks = monitor::monitor_checks(&kernel, &revenue);
-        let value = monitor::revenue_panel(&kernel, &revenue, &json!({"self_check": true}))
-            .map_err(|e| e.to_string())?;
-        if !au4a_core::all_passed(&panel_checks) {
-            return Err(format!("监控自检未全绿：{panel_checks:?}"));
-        }
-        if kernel.ledger().view() != before {
-            return Err("只读面板改动了账本".to_string());
-        }
-        if value["read_only"] != json!(true)
-            || value["ledger"]["conservation_ok"] != json!(true)
-            || value["total_earned"] != json!(30)
-        {
-            return Err(format!("面板字段不符：{value}"));
-        }
-        Ok(format!(
-            "只读面板：账户 {} 个、注册 Agent {} 个、发行 {}、罚没 {}、收益 {}、守恒 = {}，账本在读取前后逐字段不变",
-            value["ledger"]["account_count"],
-            value["agents"],
-            value["ledger"]["minted"],
-            value["ledger"]["slashed"],
-            value["total_earned"],
-            value["ledger"]["conservation_ok"]
-        ))
-    }));
-
     checks
 }
 
@@ -516,7 +127,7 @@ pub fn results_json() -> CoreResult<Value> {
         "checks_total": checks.len(),
         "checks_passed": passed,
         "all_passed": au4a_core::all_passed(&checks),
-        "modules": ["balance", "pricing", "fx", "stake", "arbitration", "settlement", "monitor"],
+        "modules": ["balance"],
         "invariants": [
             "Σ可用 + Σ锁定 + 罚没 == 发行",
             "整数微积分与基点运算，规范 JSON 禁浮点",
@@ -546,43 +157,6 @@ fn ensure_registered(
     }
 }
 
-/// 为演示主体补足工作余额（创世额度只发一次，重复调用场景时需要补足）。
-///
-/// 这是**网络规则**（创世发放），不是收益、也不是结算：补足量会如实写进场景 JSON 的
-/// `topups` 字段，隐藏不了任何东西。补足后立刻断言守恒。
-fn ensure_working_balance(kernel: &mut Kernel, who: &Did, target: Credits) -> CoreResult<Credits> {
-    let available = kernel.ledger().balance(who).available;
-    if available >= target {
-        return Ok(Credits::ZERO);
-    }
-    let shortfall = target.checked_sub(available)?;
-    kernel.ledger_mut().mint(who, shortfall)?;
-    kernel.ledger().check_conservation()?;
-    Ok(shortfall)
-}
-
-/// 一条公告（场景里 Agent 广播的自有报价）。
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Announcement {
-    provider: String,
-    skill: String,
-    unit_price: i64,
-    multiplier_bp: i64,
-}
-
-/// 校验并解析公告；不是本轨道的消息、验签失败或字段缺失一律忽略（不 panic）。
-fn parse_announcement(env: &Envelope) -> Option<Announcement> {
-    if env.kind.as_str() != PRICE_KIND || env.verify().is_err() {
-        return None;
-    }
-    Some(Announcement {
-        provider: env.body.get("provider")?.as_str()?.to_string(),
-        skill: env.body.get("skill")?.as_str()?.to_string(),
-        unit_price: env.body.get("unit_price")?.as_i64()?,
-        multiplier_bp: env.body.get("multiplier_bp")?.as_i64()?,
-    })
-}
-
 /// 端到端自有流程：用共享内核跑一遍本轨道的能力，返回 JSON 摘要。
 ///
 /// 契约（不可改）：不 panic、不读文件、不开网络、不读墙钟；同样的输入给同样的输出。
@@ -590,12 +164,11 @@ fn parse_announcement(env: &Envelope) -> Option<Announcement> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：经济自主全流程 + 只读收益面板（v1.4.10）"),
+        format!("{TITLE} {RANGE}：余额管理（v1.4.1）"),
     );
 
     let seller_keys = agent(41);
     let buyer_keys = agent(42);
-    let rival_keys = agent(43);
     let seller = ensure_registered(
         kernel,
         &seller_keys,
@@ -610,18 +183,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &["consume.translation"],
         Credits(100),
     )?;
-    let rival = ensure_registered(
-        kernel,
-        &rival_keys,
-        "economy.rival",
-        &["translate.en-zh"],
-        Credits(100),
-    )?;
-    kernel.emit("economy.registered", "3 个 Agent 自证身份并自带质押完成注册");
-
-    // 演示主体需要一笔工作余额：首次运行时创世额度已经够用，重复运行时补足（如实上报）。
-    let seller_topup = ensure_working_balance(kernel, &seller, Credits(900))?;
-    let buyer_topup = ensure_working_balance(kernel, &buyer, Credits(900))?;
+    kernel.emit("economy.registered", "2 个 Agent 自证身份并自带质押完成注册");
 
     // 每个 Agent 自己申报策略——没有任何外部设定入口。
     let mut book = BalanceManager::new();
@@ -632,87 +194,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     };
     book.declare(&seller, policy)?;
     book.declare(&buyer, policy)?;
-    book.declare(&rival, policy)?;
-
-    // 自主定价：两个供给方各自用自己的信誉 / 稀缺度 / 负载算出报价，然后广播。
-    let skill = "translate.en-zh";
-    let states: [(u8, &AgentKeys, &Did, i64, i64, i64); 2] = [
-        (41, &seller_keys, &seller, 8_500, 3_000, 2_000),
-        (43, &rival_keys, &rival, 4_000, 9_000, 8_000),
-    ];
-    let mut quotes_json = Vec::new();
-    for (seed, keys, did, reputation_bp, scarcity_bp, load_bp) in states {
-        let inputs = PriceInputs {
-            base_price: Credits(400),
-            reputation_bp,
-            scarcity_bp,
-            load_bp,
-        };
-        let quote = pricing::quote(&inputs, &PriceKnobs::DEFAULT)?;
-        let envelope = Envelope::new(
-            did.clone(),
-            None,
-            PRICE_KIND,
-            kernel.tick(),
-            None,
-            json!({
-                "provider": did.as_str(),
-                "skill": skill,
-                "unit_price": quote.unit_price,
-                "multiplier_bp": quote.multiplier_bp,
-                "components": quote.components,
-                "reputation_bp": reputation_bp,
-                "scarcity_bp": scarcity_bp,
-                "load_bp": load_bp,
-                "fingerprint": quote.fingerprint()?,
-            }),
-        )?
-        .seal(keys)?;
-        kernel.send(&envelope)?;
-        kernel.emit(
-            "economy.priced",
-            format!(
-                "种子 {seed} 的 Agent 自主定价 {}（乘数 {}bp）并广播",
-                quote.unit_price, quote.multiplier_bp
-            ),
-        );
-        quotes_json.push(json!({
-            "provider": did.as_str(),
-            "skill": skill,
-            "unit_price": quote.unit_price,
-            "multiplier_bp": quote.multiplier_bp,
-            "components": quote.components,
-            "fingerprint": quote.fingerprint()?,
-        }));
-    }
-
-    // 发现彼此：买方取回报价公告、验签、按整数单价排序挑选最便宜的供给方。
-    let mut discovered: Vec<Announcement> = kernel
-        .drain()
-        .iter()
-        .filter_map(parse_announcement)
-        .filter(|a| a.skill == skill)
-        .collect();
-    discovered.sort_by(|a, b| {
-        (a.unit_price, a.provider.as_str()).cmp(&(b.unit_price, b.provider.as_str()))
-    });
-    let chosen = discovered.first().ok_or(CoreError::UnknownAgent)?;
-    let price = Credits(chosen.unit_price);
-    kernel.emit(
-        "economy.discovered",
-        format!(
-            "买方发现 {} 条报价，选中 {}（单价 {}）",
-            discovered.len(),
-            au4a_core::short_id(&chosen.provider),
-            price
-        ),
-    );
 
     let before = kernel.ledger().view();
+    let price = Credits(300);
     let buyer_left = book.spend(kernel.ledger_mut(), &buyer, &seller, price)?;
     kernel.emit(
         "economy.paid",
-        format!("买方按成交价自主支付 {price} 微积分，剩余可用额度 {buyer_left}"),
+        format!("买方自主支付 {price} 微积分，剩余可用额度 {buyer_left}"),
     );
 
     // 被拒绝的一步：穿过运营底线的支出必须被挡住，并留下类型化拒绝记录。
@@ -728,262 +216,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     );
     kernel.emit("economy.refused", format!("{}：{}", verdict.as_str(), overreach));
 
-    // 自主补足质押：不穿过底线，也不超过预算；已经达标时 ZeroAmount 表示「无需补足」。
-    let locked = match book.autostake(kernel.ledger_mut(), &seller, Credits(1_000)) {
-        Ok(amount) => amount,
-        Err(CoreError::ZeroAmount) => Credits::ZERO,
-        Err(err) => return Err(err),
-    };
+    // 自主补足质押：不穿过底线，也不超过预算。
+    let locked = book.autostake(kernel.ledger_mut(), &seller, Credits(1_000))?;
     kernel.emit("economy.staked", format!("卖方自主锁定 {locked} 微积分质押"));
-
-    // 自主兑换路由决策：金额阈值 / 时效 / 费用三个条件决定是否上链。
-    // 本轨道只做决策与账务预留——**绝不伪造链上成功**（真实执行属 v1.8）。
-    let table = fx::RouteTable::DEFAULT;
-    let ask = |amount: i64, slack: u64| fx::ExchangeRequest {
-        from: seller.clone(),
-        amount: Credits(amount),
-        urgency: fx::Urgency::Standard,
-        slack_ticks: slack,
-        preferred: None,
-    };
-    let small = fx::route(&ask(150, 40), &table)?;
-    let tight = fx::route(&ask(400, 12), &table)?;
-    let executable = fx::route(&ask(400, 30), &table)?;
-    let mut exchange = fx::ExchangeBook::new();
-    if executable.action == fx::RouteAction::RouteOnchain {
-        // 预留前先过 Agent 自己的余额策略：兑换也是支出。
-        if !book.check(kernel.ledger(), &seller, executable.amount())?.allowed() {
-            return Err(CoreError::InsufficientFunds);
-        }
-        let at = kernel.tick();
-        let intent = fx::escrow_for_route(kernel.ledger_mut(), &executable, at)?;
-        exchange.record(intent);
-    }
-    kernel.emit(
-        "economy.exchange",
-        format!(
-            "兑换路由：{}（{}）/ {}（{}）/ {}（{}），链上成功报告 = false",
-            small.action.as_str(),
-            small.reason.as_str(),
-            tight.action.as_str(),
-            tight.reason.as_str(),
-            executable.action.as_str(),
-            executable.reason.as_str()
-        ),
-    );
-    // 只有一条链上路由被预留：缓办与内部结算都不允许留下账务痕迹。
-    if exchange.pending() != 1 {
-        return Err(CoreError::InvalidKind);
-    }
-
-    // 自主质押管理：认领注册时自带的质押 → 自主解质押 → 冷静期到点后释放。
-    let terms = StakeTerms::DEFAULT;
-    let mut stakes = StakeBook::new();
-    stakes.adopt(kernel.ledger(), &terms, &seller, Credits(100))?;
-    let unbond = stakes.request_unstake(&terms, &seller, Credits(40), kernel.now())?;
-    kernel.emit(
-        "economy.unstake_requested",
-        format!(
-            "卖方自主解质押 {}，冷静期至 {}（t={}）",
-            unbond.amount, unbond.release_at, unbond.requested_at
-        ),
-    );
-    // 没有头寸的 Agent 不能解质押：类型化拒绝留痕。
-    let stranger_verdict = stakes.request_unstake(&terms, &buyer, Credits(10), kernel.now());
-    if stranger_verdict.is_ok() {
-        return Err(CoreError::InvalidKind);
-    }
-    kernel.refuse(
-        &buyer,
-        RefusalCode::PolicyDenied,
-        "unstake without a stake position",
-    );
-    // 冷静期按**逻辑时钟**推进，不读墙钟。
-    for _ in 0..terms.cooldown_ticks {
-        kernel.tick();
-    }
-    let matured_at = kernel.now();
-    let released = stakes.release_matured(kernel.ledger_mut(), &seller, matured_at)?;
-    stakes.assert_consistent(kernel.ledger())?;
-    kernel.emit(
-        "economy.unstaked",
-        format!("冷静期到点，释放 {released} 回可用；质押簿与账本一致"),
-    );
-
-    // 自治仲裁：买方对对手方立案 → 两位非当事人 Agent 自主投票 → 罚没被锁定余额截断
-    // → 败方申诉 → 重开投票 → 第二次裁决驳回（已销毁的罚没不可退回）。
-    let arbiter_keys = agent(44);
-    let arbiter = ensure_registered(
-        kernel,
-        &arbiter_keys,
-        "economy.arbiter",
-        &["arbitrate.economy"],
-        Credits(100),
-    )?;
-    let mut court = Court::new();
-    let terms_arb = ArbitrationTerms::DEFAULT;
-    let gate = court.open(
-        &buyer,
-        &rival,
-        Credits(300),
-        EvidenceGrade::Unverified,
-        kernel.now(),
-    );
-    if gate.is_ok() {
-        return Err(CoreError::InvalidKind);
-    }
-    kernel.refuse(
-        &buyer,
-        RefusalCode::PolicyDenied,
-        "unverified evidence cannot open a dispute",
-    );
-    let dispute = court.open(
-        &buyer,
-        &rival,
-        Credits(300),
-        EvidenceGrade::Verified,
-        kernel.now(),
-    )?;
-    court.vote(&dispute.id, &seller, true, 7_000)?;
-    court.vote(&dispute.id, &arbiter, true, 3_000)?;
-    let ruled_at = kernel.now();
-    let first_ruling = court.rule(kernel.ledger_mut(), &dispute.id, &terms_arb, ruled_at)?;
-    kernel.emit(
-        "economy.ruled",
-        format!(
-            "首裁：支持 {}bp，罚没 {}（上限来源 {}）",
-            first_ruling.uphold_bp,
-            first_ruling.slashed,
-            first_ruling.cap.as_str()
-        ),
-    );
-    let appeal_at = kernel.now();
-    let appeal = court.appeal(&dispute.id, &rival, "new evidence submitted", &terms_arb, appeal_at)?;
-    court.vote(&dispute.id, &seller, false, 7_000)?;
-    court.vote(&dispute.id, &arbiter, false, 3_000)?;
-    let second_at = kernel.now();
-    let second_ruling = court.rule(kernel.ledger_mut(), &dispute.id, &terms_arb, second_at)?;
-    court.close(&dispute.id)?;
-    kernel.emit(
-        "economy.appealed",
-        format!(
-            "申诉后重裁：支持 {}，本次罚没 {}，累计 {}（销毁不可逆）",
-            second_ruling.upheld, second_ruling.slashed, second_ruling.slashed_total
-        ),
-    );
-
-    // 结算路由 + 收益归属：拒付（证据不可结算）→ 托管（收款方有未结争议）→ 分成直接结算。
-    let mut revenue = RevenueBook::new();
-    let share_of = |who: &Did, bp: i64, role: ProviderRole, kind: BeneficiaryKind| RevenueShare {
-        beneficiary: who.clone(),
-        share_bp: bp,
-        role,
-        kind,
-    };
-    // 1) Unverified 证据：路由 withheld，绝不结算（内核证据闸门 + 路由决策双重把关）。
-    let withheld_req = SettlementRequest {
-        payer: buyer.clone(),
-        payee: seller.clone(),
-        total: Credits(50),
-        evidence: EvidenceGrade::Unverified,
-        dispute_open: false,
-        at: kernel.now(),
-    };
-    let withheld = settlement::pay_split(
-        kernel,
-        &withheld_req,
-        &[share_of(&seller, 10_000, ProviderRole::Skill, BeneficiaryKind::Agent)],
-        &SettlementPolicy::DEFAULT,
-    )?;
-    if !matches!(withheld, SettlementOutcome::Withheld(_)) {
-        return Err(CoreError::InvalidKind);
-    }
-    // 2) 收款方有未结争议 → 托管：先锁定，争议未结时退回付款方（所有权不变）。
-    let open_case = court.open(&buyer, &seller, Credits(50), EvidenceGrade::Verified, kernel.now())?;
-    let escrow_req = SettlementRequest {
-        payer: buyer.clone(),
-        payee: seller.clone(),
-        total: Credits(100),
-        evidence: EvidenceGrade::Verified,
-        dispute_open: true,
-        at: kernel.now(),
-    };
-    let escrowed = settlement::pay_split(
-        kernel,
-        &escrow_req,
-        &[share_of(&seller, 10_000, ProviderRole::Skill, BeneficiaryKind::Agent)],
-        &SettlementPolicy::DEFAULT,
-    )?;
-    if !matches!(escrowed, SettlementOutcome::Escrowed(_)) {
-        return Err(CoreError::InvalidKind);
-    }
-    let escrow_at = kernel.now();
-    let escrowed_amount = settlement::execute_escrow(kernel.ledger_mut(), &buyer, Credits(100))?;
-    revenue.record_escrow(settlement::EscrowRecord {
-        payer: buyer.as_str().to_string(),
-        amount: escrowed_amount,
-        at: escrow_at,
-        closed: false,
-    });
-    let refunded = settlement::refund_escrow(kernel.ledger_mut(), &buyer, Credits(100))?;
-    revenue.close_last_escrow();
-    kernel.emit(
-        "economy.escrow",
-        format!("托管 {escrowed_amount} 后因争议未结退回 {refunded}（所有权未变）"),
-    );
-    // 3) 分成直接结算：买方支付 200 → 算力提供者 7000bp（140）、人类操作者的数据资源 3000bp（60）。
-    let owner_keys = agent(45);
-    let owner = owner_keys.did(); // 人类操作者：只收收益，不注册为 Agent、不参与任何决策
-    let split_req = SettlementRequest {
-        payer: buyer.clone(),
-        payee: rival.clone(),
-        total: Credits(200),
-        evidence: EvidenceGrade::Verified,
-        dispute_open: false,
-        at: kernel.now(),
-    };
-    let shares = vec![
-        share_of(&rival, 7_000, ProviderRole::Compute, BeneficiaryKind::Agent),
-        share_of(&owner, 3_000, ProviderRole::Data, BeneficiaryKind::HumanOperator),
-    ];
-    // 分成也是支出：先过买方自己的余额策略。
-    if !book.check(kernel.ledger(), &buyer, Credits(200))?.allowed() {
-        return Err(CoreError::InsufficientFunds);
-    }
-    let outcome = settlement::pay_split(kernel, &split_req, &shares, &SettlementPolicy::DEFAULT)?;
-    let receipts = match &outcome {
-        SettlementOutcome::Paid(receipts) => {
-            for r in receipts {
-                revenue.record_receipt(r.clone());
-            }
-            receipts.clone()
-        }
-        _ => return Err(CoreError::InvalidKind),
-    };
-    let human = Beneficiary::human_operator(owner.clone());
-    if human.may_decide() {
-        return Err(CoreError::InvalidKind);
-    }
-    kernel.emit(
-        "economy.settled",
-        format!(
-            "分成结算 200 → {} 笔凭证；人类操作者决策权 = {:?}（只收收益）",
-            receipts.len(),
-            human.decision_rights()
-        ),
-    );
 
     // 守恒断言 + 余额变动投影。
     balance::assert_conserved(kernel.ledger())?;
-    // 只读收益面板：人类只看收益，没有任何写路径。
-    let panel_context = json!({
-        "scenario": "v1.4.10 经济自主全流程",
-        "exchange": { "chain_executed": false, "pending": exchange.pending() },
-        "dispute": { "cases": court.total_cases(), "slashed": court.total_slashed()? },
-        "settlement": { "receipts": receipts.len() },
-        "pricing": { "chosen_unit_price": price },
-    });
-    let revenue_panel = monitor::revenue_panel(kernel, &revenue, &panel_context)?;
     let after = kernel.ledger().view();
     let row = |did: &Did| -> CoreResult<Value> {
         let key = did.as_str().to_string();
@@ -1002,65 +240,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.4.10 经济自主全流程 + 只读收益面板",
-        "topups": { "seller": seller_topup, "buyer": buyer_topup },
-        "agents": [row(&seller)?, row(&buyer)?, row(&rival)?, row(&arbiter)?, row(&owner)?],
-        "pricing": {
-            "knobs": PriceKnobs::DEFAULT,
-            "quotes": quotes_json,
-            "discovered": discovered.len(),
-            "chosen": chosen.provider,
-            "chosen_unit_price": price,
-        },
-        "exchange": {
-            "table": table,
-            "decisions": [
-                { "amount": 150, "action": small.action.as_str(), "venue": small.venue.as_str(), "reason": small.reason.as_str(), "fee": small.fee, "net": small.net, "chain_execution": small.chain_execution.as_str() },
-                { "amount": 400, "action": tight.action.as_str(), "venue": tight.venue.as_str(), "reason": tight.reason.as_str(), "fee": tight.fee, "net": tight.net, "chain_execution": tight.chain_execution.as_str() },
-                { "amount": 400, "action": executable.action.as_str(), "venue": executable.venue.as_str(), "reason": executable.reason.as_str(), "fee": executable.fee, "net": executable.net, "chain_execution": executable.chain_execution.as_str() },
-            ],
-            "book": exchange.to_json(),
-            "chain_executed": false,
-        },
-        "stake": {
-            "terms": terms,
-            "positions": stakes.to_json(),
-            "unbond_requested": unbond.amount,
-            "release_at": unbond.release_at,
-            "released": released,
-            "refused_stranger": true,
-            "consistent": true,
-        },
-        "dispute": {
-            "terms": terms_arb,
-            "case": court.case_json(&dispute.id)?,
-            "unverified_refused": true,
-            "first_ruling": first_ruling,
-            "appeal": appeal,
-            "second_ruling": second_ruling,
-            "court": court.to_json(),
-        },
-        "settlement": {
-            "policy": SettlementPolicy::DEFAULT,
-            "withheld": { "route": SettlementRoute::Withheld.as_str(), "reason": "evidence_unverified", "amount": 50 },
-            "escrow": { "amount": escrowed_amount, "refunded": refunded, "closed": true, "case": open_case.id },
-            "shares": shares,
-            "receipts": receipts,
-            "human_operator": {
-                "did": owner.as_str(),
-                "decision_rights": human.decision_rights(),
-                "may_decide": human.may_decide(),
-                "earned": revenue.earned(&owner)?,
-            },
-            "revenue": revenue.to_json(),
-        },
-        "revenue_panel": revenue_panel,
+        "scenario": "v1.4.1 余额管理",
+        "agents": [row(&seller)?, row(&buyer)?],
         "settled": [{ "from": buyer.as_str(), "to": seller.as_str(), "amount": price, "gate": "ledger-direct" }],
-        "refusals": [
-            { "code": RefusalCode::PolicyDenied.as_str(), "verdict": verdict.as_str(), "amount": overreach },
-            { "code": RefusalCode::PolicyDenied.as_str(), "verdict": "unstake_without_position", "amount": Credits(10) },
-            { "code": RefusalCode::PolicyDenied.as_str(), "verdict": "unverified_evidence", "amount": Credits(300) },
-        ],
+        "refusals": [{ "code": RefusalCode::PolicyDenied.as_str(), "verdict": verdict.as_str(), "amount": overreach }],
         "staked": locked,
         "conservation": {
             "ok": true,
@@ -1070,111 +253,4 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         },
         "events": kernel.observe().progress.len(),
     }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use au4a_kernel::KernelConfig;
-
-    /// 同一个空内核跑两次场景：规范 JSON 必须逐字节一致（可复现）。
-    #[test]
-    fn the_scenario_is_reproducible_and_its_prices_are_pinned() {
-        let mut first = Kernel::new(KernelConfig::default());
-        let a = scenario(&mut first).unwrap();
-        let mut second = Kernel::new(KernelConfig::default());
-        let b = scenario(&mut second).unwrap();
-        assert_eq!(
-            au4a_core::canonicalize(&a).unwrap(),
-            au4a_core::canonicalize(&b).unwrap()
-        );
-        // 卖方 408（信誉高、空闲），对手 636（信誉低、稀缺且满载）→ 买方选中卖方。
-        assert_eq!(a["pricing"]["discovered"], json!(2));
-        assert_eq!(a["pricing"]["quotes"][0]["unit_price"], json!(408));
-        assert_eq!(a["pricing"]["quotes"][1]["unit_price"], json!(636));
-        assert_eq!(a["pricing"]["chosen_unit_price"], json!(408));
-        assert_eq!(a["settled"][0]["amount"], json!(408));
-        assert_eq!(a["refusals"][0]["verdict"], json!("below_reserve"));
-        // 兑换路由决策：小额内部、时效不足缓办、可执行则走 ETH（费率 3、到账 397）。
-        assert_eq!(a["exchange"]["decisions"][0]["action"], json!("keep_internal"));
-        assert_eq!(
-            a["exchange"]["decisions"][0]["reason"],
-            json!("below_onchain_minimum")
-        );
-        assert_eq!(a["exchange"]["decisions"][1]["action"], json!("defer"));
-        assert_eq!(
-            a["exchange"]["decisions"][1]["reason"],
-            json!("deadline_too_tight")
-        );
-        assert_eq!(a["exchange"]["decisions"][2]["action"], json!("route_onchain"));
-        assert_eq!(a["exchange"]["decisions"][2]["venue"], json!("eth"));
-        assert_eq!(a["exchange"]["decisions"][2]["fee"], json!(3));
-        assert_eq!(a["exchange"]["decisions"][2]["net"], json!(397));
-        assert_eq!(a["exchange"]["chain_executed"], json!(false));
-        assert_eq!(a["exchange"]["book"]["pending"], json!(1));
-        assert_eq!(
-            a["exchange"]["book"]["intents"][0]["status"],
-            json!("awaiting_chain_execution")
-        );
-        assert_eq!(a["conservation"]["ok"], json!(true));
-        // 质押管理：认领 100 → 解质押 40 → 冷静期到点释放 40。
-        assert_eq!(a["stake"]["positions"]["positions"][0]["locked"], json!(60));
-        assert_eq!(a["stake"]["unbond_requested"], json!(40));
-        assert_eq!(a["stake"]["released"], json!(40));
-        assert_eq!(a["stake"]["refused_stranger"], json!(true));
-        assert_eq!(a["stake"]["consistent"], json!(true));
-        assert_eq!(a["refusals"][1]["verdict"], json!("unstake_without_position"));
-        // 仲裁：索赔 300、对手锁定 100 → 罚没被锁定余额截断为 100；申诉后重裁驳回，累计仍为 100。
-        assert_eq!(a["dispute"]["unverified_refused"], json!(true));
-        assert_eq!(a["dispute"]["first_ruling"]["upheld"], json!(true));
-        assert_eq!(a["dispute"]["first_ruling"]["slashed"], json!(100));
-        assert_eq!(a["dispute"]["first_ruling"]["cap"], json!("locked_balance"));
-        assert_eq!(a["dispute"]["appeal"]["round"], json!(1));
-        assert_eq!(a["dispute"]["second_ruling"]["upheld"], json!(false));
-        assert_eq!(a["dispute"]["second_ruling"]["slashed"], json!(0));
-        assert_eq!(a["dispute"]["second_ruling"]["slashed_total"], json!(100));
-        assert_eq!(a["dispute"]["case"]["state"], json!("closed"));
-        assert_eq!(a["dispute"]["court"]["total_slashed"], json!(100));
-        assert_eq!(a["refusals"][2]["verdict"], json!("unverified_evidence"));
-        // 结算路由与收益归属：拒付 50、托管 100 后退回、分成 200 → 140/60（人类操作者只收收益）。
-        assert_eq!(a["settlement"]["withheld"]["route"], json!("withheld"));
-        assert_eq!(a["settlement"]["escrow"]["amount"], json!(100));
-        assert_eq!(a["settlement"]["escrow"]["refunded"], json!(100));
-        assert_eq!(a["settlement"]["escrow"]["closed"], json!(true));
-        assert_eq!(a["settlement"]["receipts"][0]["amount"], json!(140));
-        assert_eq!(a["settlement"]["receipts"][0]["role"], json!("compute"));
-        assert_eq!(a["settlement"]["receipts"][1]["amount"], json!(60));
-        assert_eq!(a["settlement"]["receipts"][1]["kind"], json!("human_operator"));
-        assert_eq!(a["settlement"]["human_operator"]["may_decide"], json!(false));
-        assert_eq!(
-            a["settlement"]["human_operator"]["decision_rights"],
-            json!("income_only")
-        );
-        assert_eq!(a["settlement"]["human_operator"]["earned"], json!(60));
-        assert_eq!(a["settlement"]["revenue"]["receipt_count"], json!(2));
-        // 只读收益面板（v1.4.10）：账本总量 + 各账户可用/锁定/收益；人类操作者只收收益。
-        assert_eq!(a["revenue_panel"]["read_only"], json!(true));
-        assert_eq!(a["revenue_panel"]["ledger"]["conservation_ok"], json!(true));
-        assert_eq!(a["revenue_panel"]["ledger"]["account_count"], json!(5));
-        assert_eq!(a["revenue_panel"]["agents"], json!(4));
-        assert_eq!(a["revenue_panel"]["total_earned"], json!(200));
-        let owner_key = agent(45).did().as_str().to_string();
-        assert_eq!(
-            a["revenue_panel"]["ledger"]["accounts"][owner_key.as_str()]["kind"],
-            json!("human_operator")
-        );
-        assert_eq!(
-            a["revenue_panel"]["ledger"]["accounts"][owner_key.as_str()]["earned"],
-            json!(60)
-        );
-        assert_eq!(
-            a["revenue_panel"]["ledger"]["accounts"][owner_key.as_str()]["locked"],
-            json!(0)
-        );
-        assert_eq!(a["conservation"]["ok"], json!(true));
-        assert_eq!(a["conservation"]["slashed"], json!(100));
-        assert_eq!(a["conservation"]["ok"], json!(true));
-        assert!(first.ledger().check_conservation().is_ok());
-        assert!(second.ledger().check_conservation().is_ok());
-    }
 }
