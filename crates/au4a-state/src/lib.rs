@@ -18,6 +18,7 @@
 
 pub mod diff;
 pub mod integrity;
+pub mod perf;
 pub mod recovery;
 pub mod signed;
 pub mod snapshot;
@@ -32,6 +33,10 @@ pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
 pub use integrity::{
     audit_node, compare, compare_store, is_integrity_error, summarize, ConsistencyReport, Finding,
     FindingCode, NodeAudit, StoreReport, ZoneReport,
+};
+pub use perf::{
+    generation_write_estimate, materialize, measure_receive, measure_transfer, plan, resume_savings,
+    DigestCache, DeltaPlan, WorkCounter,
 };
 pub use recovery::{
     migrate, generation_prefix, CommitReceipt, ConfirmReceipt, FaultInjector, FaultPoint,
@@ -126,6 +131,10 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_udos_contract_roundtrip());
     // 15) v1.3.6：UDOS 对象被改后必须自证失败。
     checks.push(check_udos_contract_rejects_tampering());
+    // 16) v1.3.7：块摘要复用真的省下哈希，且不改变结果。
+    checks.push(check_digest_cache_reuse());
+    // 17) v1.3.7：续跑真的省下操作数（用确定性计数器证明，不用墙钟）。
+    checks.push(check_resume_saves_work());
 
     checks
 }
@@ -379,6 +388,120 @@ fn check_stale_base_refused() -> SelfCheck {
 
 fn short(s: &str) -> String {
     s.chars().take(16).collect()
+}
+
+fn check_digest_cache_reuse() -> SelfCheck {
+    let name = "perf.digest_cache_reuse";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(u64, u64, u64, bool, i64)> {
+        let mut cache = DigestCache::new();
+        let mut first = WorkCounter::new();
+        let a = cache.capture_raw(
+            &keys.did(),
+            "node-a",
+            1,
+            state_as_raw(sample_state()?),
+            &mut first,
+        )?;
+        let mut second = WorkCounter::new();
+        let b = cache.capture_raw(
+            &keys.did(),
+            "node-a",
+            1,
+            state_as_raw(sample_state()?),
+            &mut second,
+        )?;
+        // 改一块再捕获：只有那一块需要重新哈希。
+        let mut changed = state_as_raw(sample_state()?);
+        if let Some(first_block) = changed.first_mut() {
+            first_block.2 = json!({"changed": true});
+        }
+        let mut third = WorkCounter::new();
+        let c = cache.capture_raw(&keys.did(), "node-a", 2, changed, &mut third)?;
+        let same = a.root() == b.root() && a.verify().is_ok() && b.verify().is_ok();
+        Ok((
+            first.block_hashes,
+            second.block_hashes,
+            third.block_hashes,
+            same && c.verify().is_ok(),
+            second.reuse_ratio_bp(),
+        ))
+    })();
+    match result {
+        Ok((f, 0, 1, true, 10_000)) => SelfCheck::pass(
+            TRACK,
+            name,
+            format!("首轮 {f} 次哈希；次轮 0 次（复用率 100.00%）；改一块后仅 1 次哈希，root 不变"),
+        ),
+        Ok((f, s, t, ok, bp)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("首次={f} 二次={s} 改一块={t} 一致={ok} 复用率={bp}bp（期望 f/0/1/true/10000）"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("缓存核算失败: {e}")),
+    }
+}
+
+fn check_resume_saves_work() -> SelfCheck {
+    let name = "perf.resume_saves_work";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(u64, u64, u64, bool)> {
+        let did = keys.did();
+        let from = StateSnapshot::capture(&did, "node-a", 1, sample_state()?)?;
+        let to = StateSnapshot::capture(
+            &did,
+            "node-a",
+            2,
+            (0..20)
+                .map(|i| StateBlock::new(StateZone::Memory, format!("k{i:02}"), json!(i)))
+                .collect::<CoreResult<Vec<_>>>()?,
+        )?;
+        let delta = StateDelta::between(&from, &to)?;
+        let chunks = delta.chunked(4)?;
+        let na = NodeId::new("node-a")?;
+        let nb = NodeId::new("node-b")?;
+        let mut net = LocalNetwork::new(&[na.clone(), nb.clone()]);
+        let mut work = WorkCounter::new();
+
+        // 第一批 2 块送达；第二批全部在断线中丢失；然后从断点续跑。
+        send_chunks(&mut net, &na, &nb, &delta, 4, 0, 2)?;
+        let (session, accepted) = measure_receive(&mut net, &nb, None, &mut work)?;
+        let resumed_from = session.resume_from();
+        send_chunks(&mut net, &na, &nb, &delta, 4, 2, usize::MAX)?;
+        let lost = net.drop_pending(&nb)?;
+        let frames = measure_transfer(&mut net, &na, &nb, &delta, 4, resumed_from, &mut work)?;
+        let (session, _) = measure_receive(&mut net, &nb, Some(session), &mut work)?;
+        let complete = session.is_complete(chunks.len());
+        let rebuilt = session.assemble(chunks.len(), did)?;
+        let identical = rebuilt.apply_to(&from)?.content_root()? == to.content_root()?;
+        Ok((
+            work.ops_transferred,
+            work.ops_skipped,
+            (accepted + frames) as u64,
+            complete && identical && lost > 0,
+        ))
+    })();
+    match result {
+        Ok((transferred, skipped, frames, ok)) if skipped > 0 && ok => SelfCheck::pass(
+            TRACK,
+            name,
+            format!("续跑只传 {transferred} 个操作，省下 {skipped} 个；{frames} 帧送达后内容一致"),
+        ),
+        Ok((transferred, skipped, frames, ok)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("传输={transferred} 省下={skipped} 帧={frames} 一致={ok}"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("续跑核算失败: {e}")),
+    }
+}
+
+/// 把块拆成 `(zone, key, value)` 三元组，供缓存路径使用。
+fn state_as_raw(blocks: Vec<StateBlock>) -> Vec<(StateZone, String, serde_json::Value)> {
+    blocks
+        .into_iter()
+        .map(|b| (b.zone(), b.key().to_string(), b.value().clone()))
+        .collect()
 }
 
 fn check_udos_contract_roundtrip() -> SelfCheck {
@@ -958,6 +1081,28 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     udos_tampered["payload"]["blocks"][0]["value"] = json!({"tampered": true});
     let udos_tamper_refused = UdosObject::validate(&udos_tampered).is_err();
 
+    // 10) 性能核算：同一状态的二次捕获必须全部命中摘要缓存；续跑必须省下操作。
+    let mut cache = DigestCache::new();
+    let mut perf_first = WorkCounter::new();
+    let _ = cache.capture_raw(&did, "node-a", epoch, state_as_raw(sample_state()?), &mut perf_first)?;
+    let mut perf_second = WorkCounter::new();
+    let _ = cache.capture_raw(&did, "node-a", epoch, state_as_raw(sample_state()?), &mut perf_second)?;
+    let mut perf_work = WorkCounter::new();
+    let mut perf_net = LocalNetwork::new(&[na.clone(), nb.clone()]);
+    send_chunks(&mut perf_net, &na, &nb, &delta, 2, 0, 2)?;
+    let (perf_session, _) = measure_receive(&mut perf_net, &nb, None, &mut perf_work)?;
+    let _ = perf_net.drop_pending(&nb)?;
+    let _ = measure_transfer(
+        &mut perf_net,
+        &na,
+        &nb,
+        &delta,
+        2,
+        perf_session.resume_from(),
+        &mut perf_work,
+    )?;
+    let delta_plan = perf::plan(&before, &after)?;
+
     // 4) 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
     let mut tampered = before.to_value()?;
     if let Some(first) = tampered
@@ -1119,7 +1264,19 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             "evidence_grade": "verified",
             "note": "纯数据契约：不引入 UDOS 依赖、不联网、不调用 Python",
         },
-        "events": 6,
+        "perf": {
+            "first_capture_hashes": perf_first.block_hashes,
+            "second_capture_hashes": perf_second.block_hashes,
+            "hashes_reused": perf_second.hashes_reused,
+            "reuse_ratio_bp": perf_second.reuse_ratio_bp(),
+            "delta_plan": delta_plan.to_value(),
+            "ops_transferred": perf_work.ops_transferred,
+            "ops_skipped": perf_work.ops_skipped,
+            "counter": perf::summary(&perf_work),
+            "evidence_grade": "verified",
+            "note": "工作量以确定性计数器核算（哈希次数/操作数），不读墙钟；同样输入给同样数字",
+        },
+        "events": 7,
     }))
 }
 
@@ -1158,8 +1315,8 @@ mod tests {
     #[test]
     fn self_check_all_passed() {
         let checks = self_check();
-        assert!(au4a_core::all_passed(&checks));
-        assert_eq!(checks.len(), 15);
+        assert!(au4a_core::all_passed(&checks), "{checks:#?}");
+        assert_eq!(checks.len(), 17);
     }
 
     #[test]
@@ -1210,6 +1367,10 @@ mod tests {
             .unwrap_or_default()
             .starts_with("sha256:"));
         assert_eq!(a["udos"]["contract"]["no_dependency"], json!(true));
+        assert_eq!(a["perf"]["second_capture_hashes"], json!(0));
+        assert_eq!(a["perf"]["reuse_ratio_bp"], json!(10000));
+        assert!(a["perf"]["ops_skipped"].as_u64().unwrap_or(0) > 0);
+        assert_eq!(a["perf"]["counter"]["wall_clock_used"], json!(false));
         k1.ledger().check_conservation().unwrap();
     }
 

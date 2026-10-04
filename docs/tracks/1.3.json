@@ -228,18 +228,38 @@
     {
       "version": "v1.3.7",
       "title": "性能优化",
-      "goal": "块级哈希复用 + 增量续跑，用确定性计数器量化省下的工作量。",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "goal": "块级哈希复用 + 只物化变动块 + 增量续跑，用确定性计数器量化省下的工作量（不读墙钟）。",
+      "deliverables": [
+        "src/perf.rs: WorkCounter（8 个确定性计数器，无时间字段）/DigestCache/DeltaPlan/plan/materialize",
+        "src/perf.rs: resume_savings/measure_transfer/measure_receive/generation_write_estimate/summary",
+        "src/snapshot.rs: StateBlock::new_cached（仅缓存路径可用，crate 内可见）",
+        "tests/v137_perf.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub struct WorkCounter { block_hashes, hashes_reused, canon_encodings, root_hashes, blocks_materialized, store_writes, ops_transferred, ops_skipped }",
+        "pub fn WorkCounter::reuse_ratio_bp(&self) -> i64",
+        "pub fn DigestCache::capture_raw(agent, node, epoch, blocks, counter) -> CoreResult<StateSnapshot>",
+        "pub fn plan(from, to) -> CoreResult<DeltaPlan>",
+        "pub fn materialize(from, to, plan, counter) -> CoreResult<StateDelta>",
+        "pub fn resume_savings(total_ops, resumed_from_chunks, chunk_ops) -> (u64, u64)",
+        "pub fn measure_transfer(...) / measure_receive(...)"
+      ],
+      "acceptance": [
+        "同一状态二次捕获 0 次哈希（复用率 10000bp），root 与逐块内容不变",
+        "改一块只重算 1 次；同键不同值不会误命中缓存",
+        "plan 正确指出改/删/未变块；materialize 只物化变动块",
+        "续跑 ops_skipped > 0 且 ops_transferred < 全量，重装后内容根一致",
+        "计数器可重放；summary 明确 wall_clock_used=false",
+        "影子代写入如实标注完整物化（正确性优先于省写）"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-state",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 165,
+        "tests_total": 165,
+        "grade": "verified",
+        "notes": "lib 77 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 全绿 0 warning。全部为确定性计数，未使用墙钟/计时器。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.7.log"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.3.8",
