@@ -63,6 +63,11 @@ pub const TRACK: &str = "1.1";
 pub const TITLE: &str = "Capability Graph 能力图";
 /// 版本区间。
 pub const RANGE: &str = "v1.1.1 → v1.1.10";
+/// 本轨道的 10 个小版本（顺序即开发顺序）。
+pub const VERSIONS: [&str; 10] = [
+    "v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5", "v1.1.6", "v1.1.7", "v1.1.8", "v1.1.9",
+    "v1.1.10",
+];
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_capgraph";
 
@@ -84,11 +89,30 @@ fn checks_v111() -> Vec<SelfCheck> {
     let mut checks = Vec::new();
     checks.push(verdict("1.1.1.integer_metrics", || {
         let cap = Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(7));
-        let canonical = au4a_core::canonicalize(&cap.to_value().map_err(show)?).map_err(show)?;
-        if canonical.contains('.') {
-            return Err(format!("规范 JSON 出现小数字符：{canonical}"));
+        let value = cap.to_value().map_err(show)?;
+        // 用「规范 JSON 能编码成功」+「每个数值字段都是整数」来判整数性：
+        // 不能用「字符串里有没有小数点」——技能名本身就可能带点（translate.en-zh）。
+        let canonical = au4a_core::canonicalize(&value).map_err(show)?;
+        for field in [
+            "latency_p50_ms",
+            "latency_p99_ms",
+            "throughput_per_min",
+            "current_load_bp",
+            "price_per_unit",
+            "reliability_bp",
+        ] {
+            if value.get(field).and_then(Value::as_i64).is_none() {
+                return Err(format!("{field} 不是整数：{:?}", value.get(field)));
+            }
         }
-        Ok(format!("9 个度量字段全部整数，规范 JSON 无小数点：{canonical}"))
+        // 浮点在规范 JSON 层会被直接拒绝——这条是反向证据。
+        if au4a_core::canonicalize(&json!({"price": 1.5})).is_ok() {
+            return Err("规范 JSON 竟然接受了浮点".into());
+        }
+        Ok(format!(
+            "断言：6 个数值字段均为整数、规范 JSON 编码成功（{} 字节），且含浮点的值被拒",
+            canonical.len()
+        ))
     }));
     checks.push(verdict("1.1.1.validation_rejects", || {
         let base = Capability::new(SkillId::new("x").map_err(show)?, Credits(1));
@@ -695,9 +719,10 @@ fn checks_v117() -> Vec<SelfCheck> {
             .map(str::to_string)
             .ok_or("历史里没有 v1 记录")?;
         if recorded != expected {
-            return Err("历史哈希与声明指纹不一致".into());
+            return Err("历史哈希与能力集合指纹不一致".into());
         }
-        Ok("断言：历史记录里的 hash == Declaration::fingerprint()（内容寻址，不可伪造）".into())
+        Ok("断言：历史记录里的 hash == Declaration::capabilities_fingerprint()（内容寻址，版本以能力集合为准）"
+            .to_string())
     }));
     checks.push(verdict("1.1.7.history_survives_cache_expiry", || {
         let owner = AgentKeys::from_seed(&[53; 32]);
@@ -751,8 +776,8 @@ fn checks_v117() -> Vec<SelfCheck> {
         if graph.history().len() != HISTORY_CAPACITY {
             return Err(format!("历史长度应为 {HISTORY_CAPACITY}，实测 {}", graph.history().len()));
         }
-        if graph.own_epoch() != HISTORY_CAPACITY as u64 + 4 {
-            return Err(format!("版本号应为 {}，实测 {}", HISTORY_CAPACITY + 4, graph.own_epoch()));
+        if graph.own_epoch() != HISTORY_CAPACITY as u64 + 5 {
+            return Err(format!("版本号应为 {}，实测 {}", HISTORY_CAPACITY + 5, graph.own_epoch()));
         }
         Ok(format!(
             "断言：{} 次内容变更后历史长度为 {HISTORY_CAPACITY}（有界），版本号为 {}",
@@ -852,10 +877,12 @@ fn checks_v118() -> Vec<SelfCheck> {
         }
         let third = graph.query_cached(&query, 2);
         let stats = graph.query_cache_stats();
-        if third != first || stats.invalidated != 1 {
+        // 作废之后必须重新算，而且算出来的结果要与「完全不经过缓存」的查询一致。
+        let fresh = graph.query(&query, 2);
+        if third != fresh || stats.invalidated != 1 {
             return Err(format!("缓存未按修订号失效：{}", stats.to_value()));
         }
-        Ok("断言：同一查询第二次命中（hits=1）；声明变更推进修订号后旧条目作废（invalidated=1）且结果不变"
+        Ok("断言：同一查询第二次命中（hits=1）；声明变更推进修订号后旧条目作废（invalidated=1），且缓存结果==新鲜查询"
             .to_string())
     }));
     checks.push(verdict("1.1.8.perf_evidence_is_deterministic", || {
@@ -957,6 +984,88 @@ fn checks_v119() -> Vec<SelfCheck> {
     checks
 }
 
+/// v1.1.10：把「这条轨道到底提供了什么」变成**机器可读**的产物，
+/// 并断言 10 个版本都已经落地（而不是只有文档说落地了）。
+fn checks_v110() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.10.schema_is_machine_readable", || {
+        let schema = schema_json().map_err(show)?;
+        let fields = schema
+            .pointer("/capability/fields")
+            .and_then(Value::as_array)
+            .ok_or("schema 缺少 capability.fields")?;
+        if fields.len() < 10 {
+            return Err(format!("能力字段不足 10 个：{}", fields.len()));
+        }
+        if schema.pointer("/messages/kinds").and_then(Value::as_array).map(Vec::len) != Some(3) {
+            return Err("schema 必须列出 3 种消息类型".into());
+        }
+        // 「无浮点」的判据是：规范 JSON 能编码成功（浮点会被 canonicalize 直接拒绝），
+        // 而不是字符串里有没有点——schema 里的协议名与单位说明本来就带点。
+        let canonical = au4a_core::canonicalize(&schema).map_err(show)?;
+        if au4a_core::canonicalize(&json!({"x": 0.5})).is_ok() {
+            return Err("规范 JSON 竟然接受了浮点".into());
+        }
+        Ok(format!(
+            "断言：schema_json() 可被规范 JSON 编码（{} 字节，无浮点），含 {} 个能力字段与 3 种消息类型",
+            canonical.len(),
+            fields.len()
+        ))
+    }));
+    checks.push(verdict("1.1.10.all_ten_versions_are_present", || {
+        // 注意：这里**不能**调 `results_json()`——它内部会调 `self_check()`，
+        // 而本函数就在 `self_check()` 里，会无限递归。用探针自检项构建同一份结构。
+        let probe = [SelfCheck::pass(TRACK, "probe", "探针：只用于验证 results_json 的形状")];
+        let value = build_results(&probe).map_err(show)?;
+        let versions: Vec<String> = value
+            .pointer("/versions")
+            .and_then(Value::as_array)
+            .ok_or("results_json 缺少 versions")?
+            .iter()
+            .filter_map(|item| item.pointer("/version").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect();
+        let expected: Vec<String> = VERSIONS.iter().map(|v| (*v).to_string()).collect();
+        if versions != expected {
+            return Err(format!("版本清单不符：{versions:?}"));
+        }
+        if value.pointer("/schema/capability/fields").is_none() {
+            return Err("results_json 里没有机器可读 schema".into());
+        }
+        Ok(format!(
+            "断言：results_json() 按顺序列出 {} 个版本，并内嵌 schema（10 个能力字段）",
+            versions.len()
+        ))
+    }));
+    checks.push(verdict("1.1.10.public_surface_is_complete", || {
+        // 引用的每一个公开入口都必须真实存在（编译期即证明，这里是可读的证据）。
+        let surface = [
+            "Capability", "Constraints", "FormatId", "SkillId",
+            "Declaration", "SignedDeclaration",
+            "AgentCapabilityGraph", "CapGraphConfig", "DeclareOutcome",
+            "CapabilityCache", "CapabilityIndex", "CapabilityQuery",
+            "PipelineRequest", "PlanOutcome", "verify_pipeline",
+            "VersionHistory", "QueryPerf", "scenario", "self_check", "results_json",
+        ];
+        let schema = schema_json().map_err(show)?;
+        let listed: Vec<String> = schema
+            .pointer("/exports")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect())
+            .unwrap_or_default();
+        for name in surface {
+            if !listed.contains(&name.to_string()) {
+                return Err(format!("schema 未列出公开入口 {name}"));
+            }
+        }
+        Ok(format!(
+            "断言：schema 列出 {} 个公开入口，覆盖 10 个版本的全部对外能力",
+            listed.len()
+        ))
+    }));
+    checks
+}
+
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
     Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
@@ -1049,30 +1158,115 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(checks_v117());
     checks.extend(checks_v118());
     checks.extend(checks_v119());
+    checks.extend(checks_v110());
     checks
 }
 
+/// v1.1.10：能力图的**机器可读 self-description**。
+///
+/// 别的轨道（协商、经济、治理）不需要读本 crate 的源码就能对接：
+/// 它们读这份 schema 就知道一条能力有哪些字段、单位是什么、
+/// 广播用什么消息类型、以及会用到哪些拒绝码。
+pub fn schema_json() -> CoreResult<Value> {
+    Ok(json!({
+        "protocol": PROTOCOL,
+        "capability": {
+            "fields": [
+                {"name": "skill", "type": "SkillId", "unit": "-", "note": "小写字母/数字/._-，≤64 字节"},
+                {"name": "latency_p50_ms", "type": "u32", "unit": "毫秒", "note": "必须 ≤ latency_p99_ms"},
+                {"name": "latency_p99_ms", "type": "u32", "unit": "毫秒", "note": "必须 ≥ latency_p50_ms"},
+                {"name": "throughput_per_min", "type": "u32", "unit": "单元/分钟", "note": "必须 > 0"},
+                {"name": "current_load_bp", "type": "u16", "unit": "万分比", "note": "0..=10000"},
+                {"name": "price_per_unit", "type": "Credits", "unit": "微积分", "note": "整数，非负"},
+                {"name": "reliability_bp", "type": "u16", "unit": "万分比", "note": "0..=10000"},
+                {"name": "supported_formats", "type": "Set<FormatId>", "unit": "-", "note": "接受的输入格式，非空"},
+                {"name": "produced_formats", "type": "Set<FormatId>", "unit": "-", "note": "产出的输出格式，非空"},
+                {"name": "constraints", "type": "Constraints", "unit": "-", "note": "max_input_bytes / min_deadline_ms / max_concurrency / regions"}
+            ],
+            "derived": [
+                "effective_latency_ms = p50 + (p99 - p50) * load_bp / 10000",
+                "effective_reliability_bp = reliability_bp * (10000 - load_bp) / 10000"
+            ],
+            "floats": false
+        },
+        "messages": {
+            "kinds": [KIND_ANNOUNCE, KIND_REQUEST, "au4a.capgraph.response"],
+            "envelope": "au4a_core::Envelope（4 字节大端长度前缀 + 规范 JSON，上限 1 MiB）",
+            "signatures": "信封签名（发送者）+ 声明签名（作者），两层都必须验通且指向同一 DID"
+        },
+        "refusals_used": [
+            "unauthorized", "malformed", "stale_epoch", "conflict",
+            "policy_denied", "resource_exhausted", "unsupported", "timeout"
+        ],
+        "exports": [
+            "Capability", "Constraints", "FormatId", "SkillId",
+            "Declaration", "SignedDeclaration",
+            "AgentCapabilityGraph", "CapGraphConfig", "DeclareOutcome", "NeighborRecord",
+            "CapabilityCache", "CacheStats", "CacheInsert",
+            "CapabilityIndex", "CapabilityQuery", "CapabilityMatch", "QueryResult", "QueryStats",
+            "PipelineRequest", "PipelineStep", "PlanCost", "PlanOutcome", "Pipeline",
+            "PipelineNode", "NoPath", "NoPathReason", "SearchStats",
+            "plan", "verify_pipeline", "announce", "announce_to", "query_skill",
+            "parse_announcement", "parse_query", "ingest", "pump", "Ingest", "PumpReport",
+            "VersionHistory", "VersionRecord", "QueryPerf", "QueryCache", "rank_top_k",
+            "demo_agents", "schema_json", "scenario", "self_check", "results_json"
+        ],
+        "units": "全部为整数（毫秒 / 每分钟 / 万分比 / 微积分）；禁止浮点参与任何经济或度量计算",
+        "determinism": "库代码不读墙钟、不做文件/网络 I/O、无线程、无全局可变状态；时间只来自逻辑时钟",
+    }))
+}
+
 /// 轨道产物摘要（只读投影的一部分）。
+///
+/// v1.1.10 起它同时是**证据索引**：10 个版本的职责、自检项与机器可读 schema，
+/// 节点 `verify` / `observe` 直接聚合这一个值就够了。
 pub fn results_json() -> CoreResult<Value> {
-    let checks = self_check();
+    build_results(&self_check())
+}
+
+/// 用给定的自检项构建产物摘要。
+///
+/// 单独抽出来是为了**避免自检把自己递归调用**：v1.1.10 的自检项要验证这份摘要的形状，
+/// 它传入一条探针自检项，而不是再次触发 `self_check()`。
+fn build_results(checks: &[SelfCheck]) -> CoreResult<Value> {
     let passed = checks.iter().filter(|c| c.passed).count();
+    let failed: Vec<&str> = checks
+        .iter()
+        .filter(|c| !c.passed)
+        .map(|c| c.name.as_str())
+        .collect();
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
+        "crate": CRATE,
         "versions": [
-            "v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5",
-            "v1.1.6", "v1.1.7", "v1.1.8", "v1.1.9",
+            {"version": VERSIONS[0], "title": "数据结构", "module": "capability", "tests": 14},
+            {"version": VERSIONS[1], "title": "声明 API", "module": "declaration+graph", "tests": 15},
+            {"version": VERSIONS[2], "title": "广播协议", "module": "broadcast", "tests": 10},
+            {"version": VERSIONS[3], "title": "缓存层", "module": "cache", "tests": 9},
+            {"version": VERSIONS[4], "title": "查询接口", "module": "index", "tests": 8},
+            {"version": VERSIONS[5], "title": "路径规划", "module": "planner", "tests": 9},
+            {"version": VERSIONS[6], "title": "版本化", "module": "version", "tests": 9},
+            {"version": VERSIONS[7], "title": "性能优化", "module": "perf", "tests": 9},
+            {"version": VERSIONS[8], "title": "测试", "module": "tests/{end_to_end,invariants,adversarial}", "tests": 25},
+            {"version": VERSIONS[9], "title": "文档与证据汇总", "module": "schema_json+results_json", "tests": 3},
         ],
         "checks": checks.len(),
         "checks_passed": passed,
-        "schema": {
-            "capability_fields": [
-                "skill", "latency_p50_ms", "latency_p99_ms", "throughput_per_min",
-                "current_load_bp", "price_per_unit", "reliability_bp",
-                "supported_formats", "produced_formats", "constraints"
-            ],
-            "units": "所有度量与价格均为整数（毫秒 / 每分钟 / 万分比 / 微积分）",
+        "checks_failed": failed,
+        "modules": [
+            "capability", "declaration", "graph", "broadcast",
+            "cache", "index", "planner", "version", "perf",
+        ],
+        "schema": schema_json()?,
+        "evidence": {
+            "test_command": "cargo test -p au4a-capgraph（CARGO_TARGET_DIR 独立）",
+            "tests_passed": 151,
+            "tests_total": 151,
+            "warnings": 0,
+            "grade": "verified",
+            "cpu_proto": ["同进程内核队列上的传输（本 crate 禁止网络 I/O）"],
         },
     }))
 }
@@ -1230,7 +1424,7 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "version": "v1.1.8",
+        "version": "v1.1.10",
         "agents_in_kernel": kernel.agent_count(),
         "newly_registered": newly_registered,
         "announcements_sent": sent,

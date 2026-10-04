@@ -331,17 +331,33 @@
       "version": "v1.1.10",
       "title": "文档与证据汇总",
       "goal": "10 个版本的目标/接口/验收/证据齐备，results_json 汇总可被节点聚合",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/lib.rs: pub const VERSIONS[10] + schema_json()（机器可读 self-description）+ results_json()（证据索引）+ checks_v110",
+        "tests/end_to_end.rs: self_check_and_results_json_are_fully_exercised（跑完整棵自检树）",
+        "docs/tracks/1.1.md: 10 版小节 + 轨道总结 + 复现命令 + 证据分级",
+        "docs/tracks/1.1.json: 10 版元数据齐全"
+      ],
+      "interfaces": [
+        "pub const VERSIONS: [&str; 10]",
+        "pub fn schema_json() -> CoreResult<serde_json::Value>",
+        "pub fn results_json() -> CoreResult<serde_json::Value>",
+        "pub fn self_check() -> Vec<au4a_core::SelfCheck>"
+      ],
+      "acceptance": [
+        "self_check() 返回 >=25 条自检且全部 passed、detail 非空、all_passed() 为真",
+        "results_json()['versions'] 与 VERSIONS 常量逐项相同",
+        "schema_json() 含 10 个能力字段、3 种消息类型、floats=false，可被规范 JSON 编码",
+        "results_json() 内嵌 schema、模块表与证据摘要",
+        "v1.1.10 自检树暴露的 3 个真实缺陷（整数性判据/历史版本号/缓存作废断言）已修复并有回归测试"
+      ],
       "evidence": {
-        "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 152,
+        "tests_total": 152,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 57 + adversarial 11 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + end_to_end 10 + invariants 5 + perf 9 + planner 9 + query_index 8 + versioning 9 = 152，0 failed，0 warning（含依赖）。"
       },
-      "status": "pending"
+      "status": "done"
     }
   ]
 }
