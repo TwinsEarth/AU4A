@@ -23,6 +23,7 @@ pub mod signed;
 pub mod snapshot;
 pub mod store;
 pub mod transfer;
+pub mod udos;
 
 use au4a_core::{AgentKeys, CoreError, CoreResult, Did, SelfCheck};
 use serde_json::{json, Value};
@@ -49,6 +50,11 @@ pub use transfer::{
     decode_frame, encode_frame, pull_into_session, send_chunks, send_delta, AcceptOutcome,
     LocalNetwork, NetworkStats, NodeId, TransferReport, TransferSession, DEFAULT_CHUNK_OPS,
     MAX_FRAME,
+};
+pub use udos::{
+    bundle_fingerprint, contract_descriptor, context_to_transfer_bundle, delta_to_object,
+    digest_of, object_to_delta, object_to_snapshot, snapshot_to_object, transfer_bundle_to_blocks,
+    UdosObject, BUNDLE_FIELDS, SCHEMA as UDOS_SCHEMA,
 };
 
 /// 轨道号。
@@ -116,6 +122,10 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_consistency_clean());
     // 13) v1.3.5：损坏时必须被定位到区 + 键（缺失/多余/被改）。
     checks.push(check_consistency_locates_damage());
+    // 14) v1.3.6：UDOS 数据契约往返（对象自校验 + bundle 不动点）。
+    checks.push(check_udos_contract_roundtrip());
+    // 15) v1.3.6：UDOS 对象被改后必须自证失败。
+    checks.push(check_udos_contract_rejects_tampering());
 
     checks
 }
@@ -369,6 +379,90 @@ fn check_stale_base_refused() -> SelfCheck {
 
 fn short(s: &str) -> String {
     s.chars().take(16).collect()
+}
+
+fn check_udos_contract_roundtrip() -> SelfCheck {
+    let name = "udos.object_roundtrip";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(bool, bool, String, String, bool)> {
+        let snapshot = sample_snapshot(&keys.did())?;
+        let object = snapshot_to_object(&snapshot)?;
+        let validated = UdosObject::validate(&object)?;
+        let back = object_to_snapshot(&object)?;
+        let bundle = context_to_transfer_bundle(&snapshot)?;
+        let bundle_back = transfer_bundle_to_blocks(&bundle)?;
+        let rebuilt =
+            StateSnapshot::capture(&keys.did(), snapshot.source_node(), snapshot.epoch(), bundle_back)?;
+        let fixed_point = context_to_transfer_bundle(&rebuilt)? == bundle;
+        Ok((
+            validated.object_id == object["object_id"].as_str().unwrap_or_default(),
+            back.content_root()? == snapshot.content_root()?,
+            object["object_id"].as_str().unwrap_or_default().to_string(),
+            contract_descriptor()["digest"].as_str().unwrap_or_default().to_string(),
+            fixed_point,
+        ))
+    })();
+    match result {
+        Ok((self_addressing, same, object_id, digest, fixed_point))
+            if self_addressing && same && fixed_point && digest == "sha256" =>
+        {
+            SelfCheck::pass(
+                TRACK,
+                name,
+                format!("对象自校验通过（{object_id}），快照内容根不变，bundle 投影是不动点"),
+            )
+        }
+        Ok((a, b, _, d, f)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("自校验={a} 内容根不变={b} 不动点={f} digest={d}"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("UDOS 契约失败: {e}")),
+    }
+}
+
+fn check_udos_contract_rejects_tampering() -> SelfCheck {
+    let name = "udos.contract_rejects_tampering";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(bool, bool, bool, bool)> {
+        let snapshot = sample_snapshot(&keys.did())?;
+        let object = snapshot_to_object(&snapshot)?;
+        // 1) 改 payload：object_id 不再自洽。
+        let mut tampered = object.clone();
+        tampered["payload"]["blocks"][0]["value"] = json!({"tampered": true});
+        let payload_refused = UdosObject::validate(&tampered) == Err(CoreError::InvalidSignature);
+        // 2) 换 schema：版本闸门拒绝。
+        let mut wrong_schema = object.clone();
+        wrong_schema["schema"] = json!("udos.object/2");
+        let schema_refused = UdosObject::validate(&wrong_schema) == Err(CoreError::InvalidVersion);
+        // 3) 改 provenance.agent 冒充别人：还原时主体不符。
+        let mut impostor = object.clone();
+        impostor["provenance"]["agent"] = json!(AgentKeys::from_seed(&[0x99; 32]).did().as_str());
+        let impostor_refused = object_to_snapshot(&impostor) == Err(CoreError::InvalidDid);
+        // 4) 未知证据等级：拒绝。
+        let mut bad_grade = object;
+        bad_grade["grade"] = json!("looks-fine-to-me");
+        let grade_refused = UdosObject::validate(&bad_grade).is_err();
+        Ok((
+            payload_refused,
+            schema_refused,
+            impostor_refused,
+            grade_refused,
+        ))
+    })();
+    match result {
+        Ok((true, true, true, true)) => SelfCheck::pass(
+            TRACK,
+            name,
+            "改 payload / 换 schema / 冒充 agent / 未知等级 四条路径全部被拒",
+        ),
+        Ok((a, b, c, d)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("payload={a} schema={b} agent={c} grade={d}（期望全 true）"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("UDOS 拒绝路径失败: {e}")),
+    }
 }
 
 fn check_consistency_clean() -> SelfCheck {
@@ -847,6 +941,23 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     damaged.remove("live:context:goal")?;
     let damaged_report = compare_store(&damaged, "live:", &after)?;
 
+    // 9) UDOS 数据契约：把快照/差异导出成 UDOS 侧可独立验证的对象。
+    let udos_object = snapshot_to_object(&after)?;
+    let udos_validated = UdosObject::validate(&udos_object)?;
+    let udos_back = object_to_snapshot(&udos_object)?;
+    let udos_delta_object = delta_to_object(&delta)?;
+    let udos_bundle = context_to_transfer_bundle(&after)?;
+    let udos_fingerprint = bundle_fingerprint(&udos_bundle)?;
+    let udos_claim = udos::claim(
+        "state.migration.identical",
+        "迁移后目标内容根与源一致",
+        au4a_core::EvidenceGrade::Verified,
+        udos_validated.object_id.as_str(),
+    )?;
+    let mut udos_tampered = udos_object.clone();
+    udos_tampered["payload"]["blocks"][0]["value"] = json!({"tampered": true});
+    let udos_tamper_refused = UdosObject::validate(&udos_tampered).is_err();
+
     // 4) 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
     let mut tampered = before.to_value()?;
     if let Some(first) = tampered
@@ -992,7 +1103,23 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
                 "summary": summarize_store(&damaged_report),
             },
         },
-        "events": 5,
+        "udos": {
+            "schema": UDOS_SCHEMA,
+            "object_id": udos_validated.object_id,
+            "kind": udos_validated.kind,
+            "collection": udos_validated.collection,
+            "roundtrip_identical": udos_back.content_root()? == after.content_root()?,
+            "delta_object_id": udos_delta_object["object_id"],
+            "bundle_fingerprint": udos_fingerprint,
+            "bundle_fields": BUNDLE_FIELDS,
+            "claim_object_id": udos_claim["object_id"],
+            "claim_grade": udos_claim["grade"],
+            "tamper_refused": udos_tamper_refused,
+            "contract": contract_descriptor(),
+            "evidence_grade": "verified",
+            "note": "纯数据契约：不引入 UDOS 依赖、不联网、不调用 Python",
+        },
+        "events": 6,
     }))
 }
 
@@ -1032,7 +1159,7 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks));
-        assert_eq!(checks.len(), 13);
+        assert_eq!(checks.len(), 15);
     }
 
     #[test]
@@ -1076,6 +1203,13 @@ mod tests {
         assert_eq!(a["consistency"]["node_findings"], json!(0));
         assert_eq!(a["consistency"]["damage_detected"]["modified"], json!(1));
         assert_eq!(a["consistency"]["damage_detected"]["missing"], json!(1));
+        assert_eq!(a["udos"]["roundtrip_identical"], json!(true));
+        assert_eq!(a["udos"]["tamper_refused"], json!(true));
+        assert!(a["udos"]["object_id"]
+            .as_str()
+            .unwrap_or_default()
+            .starts_with("sha256:"));
+        assert_eq!(a["udos"]["contract"]["no_dependency"], json!(true));
         k1.ledger().check_conservation().unwrap();
     }
 
