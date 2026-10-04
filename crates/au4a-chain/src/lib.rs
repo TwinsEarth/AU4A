@@ -22,6 +22,7 @@
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 
 pub mod bridge;
+pub mod erc8004;
 pub mod rgb;
 pub mod taproot;
 pub mod testnet;
@@ -32,6 +33,10 @@ use serde_json::{json, Value};
 
 pub use bridge::{
     reconcile, BridgeBook, BridgeDirection, BridgeEvent, Reconciliation, BRIDGE_INCONSISTENCY_CODE,
+};
+pub use erc8004::{
+    reputation_weight_bp, summary_credits, Erc8004Adapter, Erc8004Outcome, Feedback, Identity,
+    ReputationSummary, Validation, ERC8004_REFUSALS, ERC8004_SUPPORTED,
 };
 pub use rgb::{RgbAdapter, RgbContract, RgbOutcome, Seal, TransferBundle, RGB_REFUSALS, RGB_SUPPORTED};
 pub use taproot::{
@@ -146,6 +151,53 @@ pub fn self_check() -> Vec<SelfCheck> {
         Ok(format!(
             "5 个叶子的 Merkle 根 {}：全部 5 条认证路径成立，伪造叶子不被接受",
             au4a_core::short_id(&root)
+        ))
+    }));
+
+    checks.push(check("erc8004.reputation_reads_back", || {
+        let mut net = Testnet::new(ChainId::EthLocal, 1);
+        let mut reg = Erc8004Adapter::new();
+        let mut ids = Vec::new();
+        for (seed, nonce) in [(21u8, 1u64), (22, 1), (23, 1)] {
+            let tx = ChainTx::new(ChainId::EthLocal, "erc8004.register", &did_of(seed), nonce, json!({}))
+                .map_err(|e| e.to_string())?;
+            reg.execute(&mut net, &tx).map_err(|r| r.detail.clone())?;
+            ids.push(reg.identity_of_did(&did_of(seed)).map(|i| i.agent_id.clone()).unwrap_or_default());
+        }
+        for (seed, score) in [(22u8, 9_000i64), (23, 7_000)] {
+            let tx = ChainTx::new(
+                ChainId::EthLocal,
+                "erc8004.give_feedback",
+                &did_of(seed),
+                2,
+                json!({ "agent_id": ids[0], "score_bp": score, "tag": "au4a" }),
+            )
+            .map_err(|e| e.to_string())?;
+            reg.execute(&mut net, &tx).map_err(|r| r.detail.clone())?;
+        }
+        let summary = reg.summary(&ids[0]).map_err(|e| e.to_string())?;
+        if summary.count != 2 || summary.average_bp != 8_000 || summary.distinct_clients != 2 {
+            return Err(format!("信誉摘要不符：{summary:?}"));
+        }
+        // 自评被按名字拒绝。
+        let selfish = ChainTx::new(
+            ChainId::EthLocal,
+            "erc8004.give_feedback",
+            &did_of(21),
+            2,
+            json!({ "agent_id": ids[0], "score_bp": 10_000 }),
+        )
+        .map_err(|e| e.to_string())?;
+        let refusal = reg.execute(&mut net, &selfish).unwrap_err();
+        if refusal.code != RefusalCode::PolicyDenied || refusal.op != "erc8004.self_feedback" {
+            return Err(format!("自评拒绝不正确：{refusal:?}"));
+        }
+        Ok(format!(
+            "2 条反馈（9000/7000）→ 平均 {}bp、独立客户 {}、权重 {}bp；自评按 {} 拒绝",
+            summary.average_bp,
+            summary.distinct_clients,
+            reputation_weight_bp(&summary),
+            refusal.code.as_str()
         ))
     }));
 
@@ -264,7 +316,7 @@ fn adapter_ok<T>(
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：RGB 密封转移 + 双轨守恒（v1.8.1，确定性测试网）"),
+        format!("{TITLE} {RANGE}：RGB + Taproot + ERC-8004（v1.8.3，确定性测试网）"),
     );
 
     let alice_keys = agent(81);
@@ -421,6 +473,57 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         ),
     );
 
+    // ETH 侧：ERC-8004 身份与信誉注册表（v1.8.3）。
+    let mut ethnet = Testnet::new(ChainId::EthLocal, 1);
+    let mut erc = Erc8004Adapter::new();
+    for (keys, nonce) in [(&alice_keys, 1u64), (&bob_keys, 1)] {
+        let tx = ChainTx::new(ChainId::EthLocal, "erc8004.register", &keys.did(), nonce, json!({}))?;
+        adapter_ok(&mut *kernel, &keys.did(), erc.execute(&mut ethnet, &tx))?;
+    }
+    let alice_id = erc
+        .identity_of_did(&alice)
+        .ok_or(CoreError::UnknownAgent)?
+        .agent_id
+        .clone();
+    let feedback_tx = ChainTx::new(
+        ChainId::EthLocal,
+        "erc8004.give_feedback",
+        &bob,
+        2,
+        json!({ "agent_id": alice_id, "score_bp": 8_500, "tag": "settlement" }),
+    )?;
+    adapter_ok(&mut *kernel, &bob, erc.execute(&mut ethnet, &feedback_tx))?;
+    let self_tx = ChainTx::new(
+        ChainId::EthLocal,
+        "erc8004.give_feedback",
+        &alice,
+        2,
+        json!({ "agent_id": alice_id, "score_bp": 10_000 }),
+    )?;
+    let self_result = erc.execute(&mut ethnet, &self_tx);
+    let self_code = match self_result {
+        Err(refusal) => {
+            kernel.refuse(
+                &alice,
+                refusal.code,
+                format!("{}: {}", refusal.op, refusal.detail),
+            );
+            refusal.code
+        }
+        Ok(_) => return Err(CoreError::InvalidKind),
+    };
+    let reputation = erc.summary(&alice_id)?;
+    kernel.emit(
+        "chain.erc8004",
+        format!(
+            "身份 {} 收到 1 条反馈：平均 {}bp、权重 {}bp；自评被拒（{}）",
+            au4a_core::short_id(&alice_id),
+            reputation.average_bp,
+            reputation_weight_bp(&reputation),
+            self_code.as_str()
+        ),
+    );
+
     // 双轨对账（fail-closed）：本地托管 == 链上表示 == RGB 流通量 == Taproot 锚定总量。
     let report = book.require_consistent(kernel.ledger())?;
     rgb.contract()?.check_supply_conservation()?;
@@ -438,7 +541,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.8.2 RGB 集成 + Taproot Assets 锚定（确定性测试网）",
+        "scenario": "v1.8.3 RGB + Taproot Assets + ERC-8004（确定性测试网）",
         "agents": [alice.as_str(), bob.as_str()],
         "bridge": {
             "out": bridged,
@@ -472,6 +575,15 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "verify": tap_verified.detail,
             "verified_count": taproot.verified_count(),
             "anchored_total": taproot.anchored_total()?,
+        },
+        "erc8004": {
+            "identities": erc.identity_count(),
+            "agent_id": alice_id,
+            "feedback_count": reputation.count,
+            "average_bp": reputation.average_bp,
+            "weight_bp": reputation_weight_bp(&reputation),
+            "self_feedback_code": self_code.as_str(),
+            "summary": reputation.to_json(),
         },
         "refusals": [
             { "op": early_refusal.op, "code": early_refusal.code.as_str(), "detail": early_refusal.detail },
@@ -520,6 +632,12 @@ mod tests {
         assert_eq!(a["taproot"]["leaves"], json!(2));
         assert_eq!(a["taproot"]["verified_count"], json!(1));
         assert_eq!(a["taproot"]["anchored_total"], json!(400));
+        // ERC-8004：2 个身份、1 条反馈 8500bp、权重 8500 × 2000 / 10000 = 1700bp，自评被 policy_denied 拒绝。
+        assert_eq!(a["erc8004"]["identities"], json!(2));
+        assert_eq!(a["erc8004"]["feedback_count"], json!(1));
+        assert_eq!(a["erc8004"]["average_bp"], json!(8_500));
+        assert_eq!(a["erc8004"]["weight_bp"], json!(1_700));
+        assert_eq!(a["erc8004"]["self_feedback_code"], json!("policy_denied"));
         // 锁定 = 注册质押 100 + 桥出托管 400 = 500。
         assert_eq!(a["conservation"]["locked"], json!(500));
         first.ledger().check_conservation().unwrap();

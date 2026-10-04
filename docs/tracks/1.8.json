@@ -71,6 +71,38 @@
         "notes": "无 BIP341 真实 tweak、无真实签名、无 BTC 节点；Merkle 与哈希为真实运算，其余是测试网语义；日志 _forangent\\logs\\1.8-v1.8.2.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.3",
+      "title": "ERC-8004",
+      "goal": "ETH 侧身份/声誉/验证注册表语义：DID 绑定身份不可转让、整数基点反馈（自评不计入）、验证背书、只读信誉摘要。",
+      "deliverables": [
+        "src/erc8004.rs: Identity / Feedback / Validation / ReputationSummary / Erc8004Adapter / reputation_weight_bp / summary_credits / ERC8004_SUPPORTED / ERC8004_REFUSALS",
+        "src/lib.rs: 自检 erc8004.reputation_reads_back + 场景 erc8004 段（身份注册、反馈、自评被拒、摘要）"
+      ],
+      "interfaces": [
+        "pub fn Erc8004Adapter::execute(&mut self, net: &mut Testnet, tx: &ChainTx) -> Result<Erc8004Outcome, ChainRefusal>",
+        "pub fn Erc8004Adapter::summary(&self, agent_id: &str) -> CoreResult<ReputationSummary>",
+        "pub fn reputation_weight_bp(summary: &ReputationSummary) -> i64",
+        "pub fn summary_credits(summary: &ReputationSummary) -> CoreResult<Credits>"
+      ],
+      "acceptance": [
+        "身份绑定 DID 且不可重复注册（重复 → Conflict）；agent_id = H(did‖nonce‖std)",
+        "9000/8000/7000 → 平均 8000bp（整数除法）、权重 4800bp；3333/3333/3334 → 平均 3333",
+        "自评 → policy_denied（op=erc8004.self_feedback）；未注册客户 → Unauthorized",
+        "同客户第二条有效反馈 → Conflict；撤销后计数归零并可重发；重复撤销 → Conflict",
+        "分数 10001/-1 → Malformed；未知身份 → Conflict；summary 未知身份 → UnknownAgent",
+        "5 个具名拒绝（transfer_identity/self_feedback/mint_unbounded/set_operator/load_remote_registry/未知）逐个断言 op 与 code",
+        "摘要两次读取相等且 JSON 无浮点（grade=cpu-proto）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-chain)",
+        "tests_passed": 41,
+        "tests_total": 41,
+        "grade": "cpu-proto",
+        "notes": "注册表语义原型：无真实合约、无事件日志、无 gas、无 EVM；日志 _forangent\\logs\\1.8-v1.8.3.log"
+      },
+      "status": "done"
     }
   ]
 }
