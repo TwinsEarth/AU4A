@@ -222,6 +222,33 @@
         "notes": "lib 65 + e2e_scenario 6 + economy_invariants 10；本 crate 0 warning；日志 _forangent\\logs\\1.4-v1.4.7.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.8",
+      "title": "文档",
+      "goal": "把 7 个版本的实现固化为可审计文档：版本索引、不可协商规则、错误码映射、证据分级与明确的未做清单。",
+      "deliverables": [
+        "crates/au4a-economy/README.md: 模块地图 / 决策表速查 / 错误码映射 / 证据分级 / 本地验证命令",
+        "docs/tracks/1.4.md: v1.4.8 汇总节（版本索引表 + 规则 + 错误码 + 证据 + 未做清单）",
+        "src/lib.rs: crate 级 rustdoc 增加模块地图与最短上手路径"
+      ],
+      "interfaces": [
+        "文档不改变任何 public API；仅新增 README.md 与 rustdoc 内容"
+      ],
+      "acceptance": [
+        "版本索引表逐版给出模块/关键 public 项/累计测试数，与代码和日志一致",
+        "错误码映射表覆盖 ZeroAmount/NegativeAmount/InvalidKind/InsufficientFunds/InsufficientStake/UnknownAgent/Overflow",
+        "证据分级表明确标注「真实链上执行属 v1.8，本轨道未做」，不把未做写成已实现",
+        "README 与 rustdoc 中的 v1.4.9/v1.4.10 条目明确标注为后续版本落地"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-economy)",
+        "tests_passed": 81,
+        "tests_total": 81,
+        "grade": "verified",
+        "notes": "文档版不新增代码路径；测试结果沿用 v1.4.7 全绿运行（日志 _forangent\\logs\\1.4-v1.4.7.log）"
+      },
+      "status": "done"
     }
   ]
 }

@@ -30,10 +30,10 @@ AU4A 的经济自主层：**Agent 自己管钱、自己定价、自己质押、�
 | v1.4.4 | `stake` | 质押 / 解质押 / 冷静期 / 罚没同步 | `StakeTerms`、`StakeBook`、`release_matured`、`absorb_slash` |
 | v1.4.5 | `arbitration` | 自主立案 / 投票 / 裁决 / 申诉（罚没上限 = 锁定余额） | `Court`、`ArbitrationTerms`、`Ruling`、`PenaltyCap` |
 | v1.4.6 | `settlement` | 结算路由 + 最大余数法分成 + 收益归属 | `route`、`split_weights`、`pay_split`、`RevenueBook`、`Beneficiary` |
-| v1.4.7 | `tests/` | 跨模块性质测试与端到端测试 | 87 个断言（lib 71 + e2e 6 + invariants 10） |
-| v1.4.8 | `README.md` + rustdoc | 文档与证据汇总 | 版本清单 / 错误码映射 / 证据分级 |
-| v1.4.9 | `examples/economy_tour.rs` | 可运行示例：九步走完经济自主 | `cargo run -p au4a-economy --example economy_tour` |
-| v1.4.10 | `monitor` | 只读收益面板数据源（节点 `/api/revenue` 的超集） | `revenue_panel`、`monitor_json`、`monitor_checks`、`LedgerTotals`、`RevenuePanel` |
+| v1.4.7 | `tests/` | 跨模块性质测试与端到端测试 | 81 个断言（lib 65 + e2e 6 + invariants 10） |
+| v1.4.8 | 本文件 | 文档与证据汇总 | 版本清单 / 错误码映射 / 证据分级（**本版落地**） |
+| v1.4.9 | `examples/economy_tour.rs` | 可运行示例：九步走完经济自主（**v1.4.9 落地**） | `cargo run -p au4a-economy --example economy_tour` |
+| v1.4.10 | `monitor` | 只读收益面板数据源（**v1.4.10 落地**） | `revenue_panel`、`monitor_json`、`LedgerTotals` |
 
 ## 决策表速查
 
@@ -76,38 +76,16 @@ unit_price    = max(base_price × multiplier_bp / 10000, 1)
 
 | 能力 | 等级 | 说明 |
 |---|---|---|
-| 余额 / 定价 / 质押 / 仲裁 / 分成 / 记账 | `verified` | 本机真实运行，87 个断言，走真实 `Ledger` 写路径 |
+| 余额 / 定价 / 质押 / 仲裁 / 分成 / 记账 | `verified` | 本机真实运行，81 个断言，走真实 `Ledger` 写路径 |
 | 兑换与结算**路由决策** | `verified` | 决策表 + 在途预留 + 拒付，全部有测试 |
-| 只读**收益面板**投影 | `verified` | `monitor` 两次投影逐字段相同、读取前后账本不变 |
 | **真实链上执行** | 未做（属 v1.8） | 本 crate 只登记 `AwaitingChainExecution` 意图，从不报告成功 |
 | 与外部交易所 / 预言机的价格 | 未做 | 报价完全由 Agent 自己的状态决定（信誉 / 稀缺 / 负载） |
-
-## 只读收益面板（v1.4.10）
-
-`monitor::revenue_panel(&kernel, &revenue_book, &context)` 返回一个 JSON 值，字段是节点
-`/api/revenue` 的**超集**（`minted` / `slashed` / `total` / `accounts.<did>.{available,locked}` 保持不变）：
-
-```text
-{
-  "read_only": true,
-  "agents": 4,
-  "ledger": { "minted", "slashed", "total", "available", "locked",
-              "accounts": { "<did>": { "available", "locked", "earned", "kind", "display" } },
-              "account_count", "conservation_ok" },
-  "total_earned": 200,
-  "rows": [ { "did", "display", "kind", "available", "locked", "earned" } ]
-}
-```
-
-收益只统计**真实到账凭证**：拒付（`withheld`）与托管（`escrowed`）都不算收入；罚没只体现在
-`slashed` 里，不流向任何人。所有入口都接 `&Kernel`/`&RevenueBook`，没有任何写路径——
-`monitor_checks()` 会真跑两次投影并断言逐字段相同、且账本在读取前后不变。
 
 ## 本地验证
 
 ```powershell
 $env:CARGO_TARGET_DIR = "E:\DS\_forangent\target\au4a-economy"
 cd E:\DS\agent-universeForAngent
-cargo test -p au4a-economy          # 87 个断言，0 failed、0 warning
-cargo run  -p au4a-economy --example economy_tour
+cargo test -p au4a-economy          # 81 个断言，0 failed、0 warning
+# v1.4.9 起：cargo run -p au4a-economy --example economy_tour
 ```
