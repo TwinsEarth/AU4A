@@ -157,7 +157,8 @@ fn tamper_and_stale_are_recorded_as_different_refusal_classes() {
 #[test]
 fn self_check_is_green_and_covers_signature_paths() {
     let checks = self_check();
-    assert_eq!(checks.len(), 9);
+    // 自检项只增不减：这一版至少要有 v1.3.3 的 9 条。
+    assert!(checks.len() >= 9, "{checks:?}");
     assert!(au4a_core::all_passed(&checks), "{checks:?}");
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"signature.tamper_refused"));

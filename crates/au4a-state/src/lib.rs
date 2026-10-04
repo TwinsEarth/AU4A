@@ -10,9 +10,12 @@
 //! （证据等级 `cpu-proto`：语义完整、可重放，但没有真实网络）。
 //! v1.3.3 让移动**可追责**：快照由 Agent 自己的 Ed25519 密钥签字，
 //! 验证分两层（签名有效 + 正是我要的那份），篡改与替换都必须被拒。
+//! v1.3.4 让移动**全有或全无**：目标节点用影子代 + 单点 head 切换做两阶段提交
+//! （prepare → commit → confirm），任何阶段失败都回滚，**不留部分状态**。
 //! 之后每一版都在同一 crate 内增量实现，公共 API 只增不改。
 
 pub mod diff;
+pub mod recovery;
 pub mod signed;
 pub mod snapshot;
 pub mod store;
@@ -22,6 +25,11 @@ use au4a_core::{AgentKeys, CoreError, CoreResult, Did, SelfCheck};
 use serde_json::{json, Value};
 
 pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
+pub use recovery::{
+    migrate, generation_prefix, CommitReceipt, ConfirmReceipt, FaultInjector, FaultPoint,
+    Migration, MigrationOutcome, MigrationPlan, MigrationReport, NodeStore, Phase, PrepareReceipt,
+    HEAD_KEY, INTENT_KEY,
+};
 pub use signed::{SignedSnapshot, SnapshotPolicy, VerifiedSnapshot, SIGNED_VERSION};
 pub use snapshot::{
     StateBlock, StateSnapshot, StateZone, MAX_BLOCKS, MAX_KEY_LEN, MAX_NODE_LEN, MAX_VALUE_LEN,
@@ -93,6 +101,10 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_signature_tamper_refused());
     // 9) v1.3.3：替别人签、用别人的状态冒充，都必须被拒。
     checks.push(check_signature_identity_bound());
+    // 10) v1.3.4：2PC 全链路成功，目标节点只有一份完整状态。
+    checks.push(check_two_phase_commit());
+    // 11) v1.3.4：任意阶段注入故障都必须回滚到 base，且不留孤儿代。
+    checks.push(check_rollback_leaves_no_partial_state());
 
     checks
 }
@@ -348,6 +360,132 @@ fn short(s: &str) -> String {
     s.chars().take(16).collect()
 }
 
+/// v1.3.4 的演练夹具：源状态 before、目标状态 after、差异、签名、计划、目标节点。
+struct Drill {
+    before: StateSnapshot,
+    after: StateSnapshot,
+    delta: StateDelta,
+    signed: SignedSnapshot,
+    plan: MigrationPlan,
+    node: NodeStore<MemoryStore>,
+}
+
+fn drill(keys: &AgentKeys, epoch: u64) -> CoreResult<Drill> {
+    let did = keys.did();
+    let before = StateSnapshot::capture(&did, "node-a", epoch, sample_state()?)?;
+    let after = StateSnapshot::capture(&did, "node-a", epoch, evolved_state()?)?;
+    let delta = StateDelta::between(&before, &after)?;
+    let signed = SignedSnapshot::sign(after.clone(), keys)?;
+    let plan = MigrationPlan::new(
+        &did,
+        &NodeId::new("node-a")?,
+        &NodeId::new("node-b")?,
+        before.content_root()?,
+        after.content_root()?,
+        delta.id()?,
+        epoch,
+    )?;
+    let mut node = NodeStore::open(NodeId::new("node-b")?, did, MemoryStore::new())?;
+    node.install(&before, true)?;
+    Ok(Drill {
+        before,
+        after,
+        delta,
+        signed,
+        plan,
+        node,
+    })
+}
+
+fn check_two_phase_commit() -> SelfCheck {
+    let name = "migration.two_phase_commit";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(bool, String, String, usize, bool)> {
+        let mut d = drill(&keys, 1)?;
+        let outcome = migrate(
+            &mut d.node,
+            d.plan.clone(),
+            &d.delta,
+            &d.signed,
+            &mut FaultInjector::none(),
+        )?;
+        let live = d.node.live_content_root()?;
+        let orphans = d.node.orphan_generations(d.node.head()?)?.len();
+        Ok((
+            outcome.is_confirmed(),
+            live,
+            d.after.content_root()?,
+            orphans,
+            d.node.intent()?.is_none(),
+        ))
+    })();
+    match result {
+        Ok((true, live, target, 0, true)) if live == target => SelfCheck::pass(
+            TRACK,
+            name,
+            format!("prepare→commit→confirm 成功，live={}，无孤儿代、无意图残留", short(&live)),
+        ),
+        Ok((confirmed, live, target, orphans, clean)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!(
+                "confirmed={confirmed} live==target={} orphans={orphans} intent_clean={clean}",
+                live == target
+            ),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("迁移失败: {e}")),
+    }
+}
+
+fn check_rollback_leaves_no_partial_state() -> SelfCheck {
+    let name = "migration.rollback_clean";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(usize, usize, bool)> {
+        let mut checked = 0usize;
+        let mut restored = 0usize;
+        let mut no_orphans = true;
+        for point in FaultPoint::ALL {
+            let mut d = drill(&keys, 1)?;
+            let base = d.before.content_root()?;
+            let outcome = migrate(
+                &mut d.node,
+                d.plan.clone(),
+                &d.delta,
+                &d.signed,
+                &mut FaultInjector::at(point),
+            )?;
+            if outcome.is_confirmed() {
+                return Err(CoreError::Encoding);
+            }
+            let live = d.node.live_content_root()?;
+            let head = d.node.head()?;
+            if !d.node.orphan_generations(head)?.is_empty() {
+                no_orphans = false;
+            }
+            checked += 1;
+            if live == base && d.node.intent()?.is_none() {
+                restored += 1;
+            }
+        }
+        Ok((checked, restored, no_orphans))
+    })();
+    match result {
+        Ok((checked, restored, true)) if checked == FaultPoint::ALL.len() && restored == checked => {
+            SelfCheck::pass(
+                TRACK,
+                name,
+                format!("{checked} 个注入点全部回滚到 base，孤儿代为 0"),
+            )
+        }
+        Ok((checked, restored, no_orphans)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("注入点 {checked}，回滚到位 {restored}，无孤儿代={no_orphans}"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("回滚演练失败: {e}")),
+    }
+}
+
 fn check_signature_tamper_refused() -> SelfCheck {
     let name = "signature.tamper_refused";
     let keys = track_agent();
@@ -565,6 +703,52 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         .verify_policy(&SnapshotPolicy::for_agent(did.clone()))
         .is_err();
 
+    // 6) 两阶段提交：目标节点先有 before（老快照），把 after 迁过去。
+    let plan = MigrationPlan::new(
+        &did,
+        &na,
+        &nb,
+        before.content_root()?,
+        after.content_root()?,
+        delta.id()?,
+        epoch,
+    )?;
+    let mut target_node = NodeStore::open(nb.clone(), did.clone(), MemoryStore::new())?;
+    target_node.install(&before, true)?;
+    let committed = migrate(
+        &mut target_node,
+        plan.clone(),
+        &delta,
+        &signed,
+        &mut FaultInjector::none(),
+    )?;
+    let committed_ok = committed.is_confirmed();
+    let target_live = target_node.live_content_root()?;
+    let orphans_after_commit = target_node.orphan_generations(target_node.head()?)?.len();
+
+    // 7) 故障注入：另开一个节点，prepare 之后炸掉 → 必须回滚到 before，不留部分状态。
+    let mut rollback_node = NodeStore::open(nb.clone(), did.clone(), MemoryStore::new())?;
+    rollback_node.install(&before, true)?;
+    let base_root = before.content_root()?;
+    let rolled_back = migrate(
+        &mut rollback_node,
+        plan.clone(),
+        &delta,
+        &signed,
+        &mut FaultInjector::at(FaultPoint::AfterStaging),
+    )?;
+    let rollback_clean = !rolled_back.is_confirmed()
+        && rollback_node.live_content_root()? == base_root
+        && rollback_node.orphan_generations(rollback_node.head()?)?.is_empty();
+    if rollback_clean {
+        // 注入的故障是竞争/容量语义，不是恶意：记一条可重试的拒绝。
+        kernel.refuse(
+            &did,
+            FaultPoint::AfterStaging.refusal_code(),
+            "injected fault during prepare; migration rolled back",
+        );
+    }
+
     // 4) 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
     let mut tampered = before.to_value()?;
     if let Some(first) = tampered
@@ -615,6 +799,18 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             short(signed.signer().as_str()),
             signature_ok,
             signature_tamper_refused
+        ),
+    );
+
+    kernel.emit(
+        &format!("{TRACK}.migration"),
+        format!(
+            "tx={} committed={} live={} orphans={} rollback_clean={}",
+            short(&plan.tx),
+            committed_ok,
+            short(&target_live),
+            orphans_after_commit,
+            rollback_clean
         ),
     );
 
@@ -674,7 +870,18 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             },
             "evidence_grade": "verified",
         },
-        "events": 3,
+        "two_phase": {
+            "tx": plan.tx,
+            "committed": committed_ok,
+            "target_live_content_root": target_live,
+            "orphan_generations": orphans_after_commit,
+            "rollback_clean": rollback_clean,
+            "rollback_point": FaultPoint::AfterStaging.as_str(),
+            "rollback_live_content_root": rollback_node.live_content_root()?,
+            "outcome": rolled_back.to_value(),
+            "evidence_grade": "verified",
+        },
+        "events": 4,
     }))
 }
 
@@ -694,7 +901,7 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks));
-        assert_eq!(checks.len(), 9);
+        assert_eq!(checks.len(), 11);
     }
 
     #[test]
@@ -728,6 +935,11 @@ mod tests {
         assert_eq!(a["signature"]["impersonation_refused"], json!(true));
         assert_eq!(a["signature"]["sig_len"], json!(128));
         assert_eq!(a["signature"]["content_root"], a["target_content_root"]);
+        assert_eq!(a["two_phase"]["committed"], json!(true));
+        assert_eq!(a["two_phase"]["target_live_content_root"], a["target_content_root"]);
+        assert_eq!(a["two_phase"]["orphan_generations"], json!(0));
+        assert_eq!(a["two_phase"]["rollback_clean"], json!(true));
+        assert_eq!(a["two_phase"]["rollback_live_content_root"], a["before_content_root"]);
         k1.ledger().check_conservation().unwrap();
     }
 
