@@ -33,6 +33,7 @@ fn the_scenario_contract_has_every_section_and_the_pinned_numbers() {
         "stake",
         "dispute",
         "settlement",
+        "revenue_panel",
         "conservation",
     ] {
         assert!(
@@ -62,6 +63,20 @@ fn the_scenario_contract_has_every_section_and_the_pinned_numbers() {
     assert_eq!(value["settlement"]["receipts"][0]["amount"], json!(140));
     assert_eq!(value["settlement"]["receipts"][1]["amount"], json!(60));
     assert_eq!(value["settlement"]["human_operator"]["may_decide"], json!(false));
+    // 只读收益面板：与节点 /api/revenue 字段对齐（minted/slashed/total/accounts.*.available|locked）。
+    assert_eq!(value["revenue_panel"]["read_only"], json!(true));
+    assert_eq!(value["revenue_panel"]["ledger"]["conservation_ok"], json!(true));
+    assert_eq!(value["revenue_panel"]["ledger"]["account_count"], json!(5));
+    assert_eq!(value["revenue_panel"]["total_earned"], json!(200));
+    let owner = AgentKeys::from_seed(&[45; 32]).did();
+    let owner_row = &value["revenue_panel"]["ledger"]["accounts"][owner.as_str()];
+    assert_eq!(owner_row["earned"], json!(60));
+    assert_eq!(owner_row["locked"], json!(0));
+    assert_eq!(owner_row["kind"], json!("human_operator"));
+    let total_available = value["revenue_panel"]["ledger"]["available"].as_i64().unwrap_or(0);
+    let total_locked = value["revenue_panel"]["ledger"]["locked"].as_i64().unwrap_or(0);
+    let total = value["revenue_panel"]["ledger"]["total"].as_i64().unwrap_or(-1);
+    assert_eq!(total_available + total_locked, total, "面板总量必须自洽");
     // 守恒。
     assert_eq!(value["conservation"]["ok"], json!(true));
     assert_eq!(value["conservation"]["slashed"], json!(100));
