@@ -14,6 +14,7 @@
 //! v1.9.4 效果评估 → v1.9.5 数据收集 → v1.9.6 分析工具 → v1.9.7 测试 →
 //! v1.9.8 文档 → v1.9.9 论文。轨道间**零耦合**：只依赖 `au4a-core` 与 `au4a-kernel`。
 
+pub mod analyze;
 pub mod cluster;
 pub mod collect;
 pub mod harness;
@@ -24,6 +25,7 @@ use au4a_core::{CoreResult, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+pub use analyze::{fit, residuals, FitReport, FitSearch};
 pub use cluster::{
     bounded_vertex_scan, evaluation_budget, tier_report, TierReport, TierRow, VertexScan,
     MAX_SCAN_SAMPLES, TIERS,
@@ -44,7 +46,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.5";
+pub const CURRENT: &str = "v1.9.6";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -120,6 +122,45 @@ pub fn self_check() -> Vec<SelfCheck> {
                 "metrics.analytic_vertex",
                 format!("解析顶点 {analytic}，期望 1000"),
             )
+        }
+    });
+
+    // v1.9.6：从观测数据反推参数必须能恢复真值（有依据的拟合）。
+    checks.push({
+        let params = ScalingParams::new(1_000, 2, 1_000_000, 0);
+        let bundle = collect(&[ScenarioSpec::new(
+            "fit-probe",
+            vec![10, 100, 500, 1_000, 2_000, 5_000],
+            params,
+            100_000,
+        )]);
+        match bundle.and_then(|bundle| {
+            let search = FitSearch::around(1_000, 200, 10, vec![1, 2, 3]);
+            fit(&bundle, &search)
+        }) {
+            Ok(report) => {
+                let delta = report.n0_estimate.abs_diff(1_000);
+                if report.alpha_estimate == 2 && delta <= 50 && report.max_residual_ppm <= 10_000 {
+                    SelfCheck::pass(
+                        TRACK,
+                        "analyze.recovers_truth",
+                        format!(
+                            "从 6 条观测恢复 α={} N0={}（真值 2/1000，最大残差 {} ppm）",
+                            report.alpha_estimate, report.n0_estimate, report.max_residual_ppm
+                        ),
+                    )
+                } else {
+                    SelfCheck::fail(
+                        TRACK,
+                        "analyze.recovers_truth",
+                        format!(
+                            "恢复 α={} N0={} 残差 {} ppm",
+                            report.alpha_estimate, report.n0_estimate, report.max_residual_ppm
+                        ),
+                    )
+                }
+            }
+            Err(err) => SelfCheck::fail(TRACK, "analyze.recovers_truth", err.to_string()),
         }
     });
 
@@ -274,15 +315,17 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         config.params,
         config.demand_milli,
     )])?;
+    let fit_report = fit(&bundle, &FitSearch::around(config.params.n0, 500, 10, vec![1, 2, 3]))?;
 
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "{CURRENT} 档位评估 + 容量裁决 + 数据包：顶点 {}（{:?}），{} 条记录，digest={}",
+            "{CURRENT} 档位评估 + 容量裁决 + 数据包 + 拟合：顶点 {}（{:?}），N0 估计 {}（真值 {}），最大残差 {} ppm",
             verdict.vertex_nodes,
             verdict.kind,
-            bundle.len(),
-            au4a_core::short_id(&bundle.digest)
+            fit_report.n0_estimate,
+            config.params.n0,
+            fit_report.max_residual_ppm
         ),
     );
 
@@ -303,6 +346,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "digest": bundle.digest,
             "scenarios": 1,
         },
+        "fit": fit_report.to_json()?,
         "verdict_kind": match verdict.kind {
             VerdictKind::VertexFound => "vertex_found",
             VerdictKind::MonotonicNoVertex => "monotonic_no_vertex",

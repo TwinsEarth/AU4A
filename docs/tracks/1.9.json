@@ -162,23 +162,26 @@
         "src/analyze.rs: FitReport / fit_by_grid_search / residual 统计"
       ],
       "interfaces": [
-        "pub struct FitReport { n0_estimate, alpha_estimate, p0_estimate_milli, max_residual_bp, mean_residual_bp, samples }",
+        "pub struct FitReport { n0_estimate, alpha_estimate, p0_estimate_milli, max_residual_ppm, mean_residual_ppm, samples, evaluated_candidates }",
+        "pub struct FitSearch { n0_min, n0_max, n0_step, alphas }（around(...) 构造）",
         "pub fn fit(bundle: &DataBundle, search: &FitSearch) -> CoreResult<FitReport>",
-        "pub fn residuals(bundle: &DataBundle, params: &ScalingParams) -> CoreResult<Vec<i64>>"
+        "pub fn residuals(bundle: &DataBundle, params: &ScalingParams) -> CoreResult<Vec<i64>>（ppm）"
       ],
       "acceptance": [
-        "对合成数据能恢复出真值 (N0, α)（容差内：N0 相对误差 ≤ 20%，α 精确命中）",
-        "残差报告与逐点复算一致；替换参数后残差变大（拟合有区分度）",
-        "样本不足时被拒（不给出无依据的拟合）"
+        "从 6 条合成观测恢复真值：α 精确命中 2，N0 误差 ≤ 50（真值 1000）",
+        "真值参数残差 ≤ 1000 ppm；换错参数残差显著变大（区分度）",
+        "样本 < 2 条或搜索空间非法时被拒（不给出无依据的拟合）",
+        "扫描数据能被拟合回被扫描的参数（N0 误差 ≤ 30）",
+        "拟合确定性（两次相等）且 JSON 可规范化"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-scale",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.9.5 全绿后开工"
+        "tests_passed": 36,
+        "tests_total": 36,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.6.log；累计 36 个测试"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.9.7",

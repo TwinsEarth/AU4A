@@ -242,14 +242,14 @@ mod tests {
     fn residuals_are_zero_at_the_truth_and_grow_for_wrong_parameters() {
         let bundle = truth_bundle();
         let truth = ScalingParams::new(1_000, 2, 1_000_000, 0);
-        let residuals = residuals(&bundle, &truth).unwrap();
-        for value in &residuals {
+        let at_truth = residuals(&bundle, &truth).unwrap();
+        for value in &at_truth {
             assert!(value.abs() <= 1_000, "真值附近残差应接近 0，得到 {value} ppm");
         }
         let wrong = ScalingParams::new(2_000, 2, 1_000_000, 0);
-        let worse = residuals(&bundle, &wrong).unwrap();
-        let worst_truth = residuals.iter().map(|v| v.abs()).max().unwrap();
-        let worst_wrong = worse.iter().map(|v| v.abs()).max().unwrap();
+        let at_wrong = residuals(&bundle, &wrong).unwrap();
+        let worst_truth = at_truth.iter().map(|v| v.abs()).max().unwrap();
+        let worst_wrong = at_wrong.iter().map(|v| v.abs()).max().unwrap();
         assert!(worst_wrong > worst_truth, "错误参数的残差必须更大（拟合有区分度）");
     }
 
