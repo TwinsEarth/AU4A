@@ -8,7 +8,6 @@ use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Did};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::arbitration::VerdictOutcome;
 use crate::evidence::EvidenceRef;
 
 /// 违规种类。封闭集合：新增种类是接口扩展，不是自由文本。
@@ -197,16 +196,6 @@ pub struct Case {
     pub evidence: EvidenceRef,
     pub opened_at: u64,
     pub status: CaseStatus,
-    /// 造成当前状态的链上事件序号（订阅快照与审计用它定位证据）。
-    pub status_seq: u64,
-    /// 已受理的申诉 id（按提交顺序）。
-    pub appeals: Vec<String>,
-    /// 已执行的处罚记录 id（按执行顺序）。
-    pub penalties: Vec<String>,
-    /// 终局裁决结论（`arbitrated` 之后才有值）。
-    pub outcome: Option<VerdictOutcome>,
-    /// 终局裁决的时刻（逻辑时钟）。
-    pub arbitrated_at: Option<u64>,
 }
 
 impl Case {
@@ -219,11 +208,6 @@ impl Case {
             evidence: report.evidence.clone(),
             opened_at: report.at,
             status: CaseStatus::Reported,
-            status_seq: 0,
-            appeals: Vec::new(),
-            penalties: Vec::new(),
-            outcome: None,
-            arbitrated_at: None,
         }
     }
 

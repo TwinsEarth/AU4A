@@ -14,15 +14,25 @@
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）；
 //! 与 `au4a-council` 的协作只走**数据契约**（可序列化 JSON），不互相依赖 crate。
 
+pub mod case;
+pub mod chain;
 pub mod config;
+pub mod evidence;
+pub mod office;
 pub mod permission;
 pub mod setup;
 
-use au4a_core::{CoreResult, SelfCheck};
+use au4a_core::{CoreError, CoreResult, Credits, Did, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+pub use case::{Case, CaseStatus, ViolationKind, ViolationReport};
+pub use chain::{
+    chain_head, verify_chain, ChainBreak, ChainVerdict, SafetyEvent, SafetyEventKind, GENESIS_PREV,
+};
 pub use config::SafetyConfig;
+pub use evidence::{is_lower_hex64, require_well_formed, EvidenceKind, EvidenceRef};
+pub use office::{ledger_fingerprint, ledger_snapshot, SafetyOffice};
 pub use permission::{
     query_permissions, stake_requirement, DenialReason, DeniedPermission, Permission,
     PermissionBoundary, PermissionQuery, StakeGate,
@@ -36,23 +46,60 @@ pub const TITLE: &str = "Safety API 安全 API";
 /// 版本区间。
 pub const RANGE: &str = "v1.5.1 → v1.5.10";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.5.1";
+pub const CURRENT: &str = "v1.5.2";
 
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_safety";
 
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 ///
-/// 每一项都是**跑出来的断言**（在私有内核上真跑一遍 `scenario` 后检查真实状态），
-/// 不是占位文本。
+/// 每一项都是**跑出来的断言**：`scenario` 在私有内核上真跑一遍，
+/// 事件链被独立重新解析并复算，账本不变式由一次独立的举报实验验证。
 pub fn self_check() -> Vec<SelfCheck> {
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
     let mut checks = Vec::new();
 
     let run = scenario(&mut kernel);
     checks.push(match &run {
-        Ok(_) => SelfCheck::pass(TRACK, "scenario.completed", "v1.5.1 端到端流程无错误返回"),
+        Ok(_) => SelfCheck::pass(
+            TRACK,
+            "scenario.completed",
+            format!("{CURRENT} 端到端流程无错误返回"),
+        ),
         Err(err) => SelfCheck::fail(TRACK, "scenario.completed", format!("scenario 失败: {err}")),
+    });
+
+    // 独立复算：把 scenario 报告的事件链解析回来，重新验证序号/前驱/哈希。
+    checks.push(match &run {
+        Ok(value) => match replay_reported_chain(value) {
+            Ok((len, head)) => SelfCheck::pass(
+                TRACK,
+                "chain.recomputable",
+                format!("{len} 条事件重新解析并复算通过，链头 {head}"),
+            ),
+            Err(err) => SelfCheck::fail(TRACK, "chain.recomputable", format!("复算失败: {err}")),
+        },
+        Err(_) => SelfCheck::fail(TRACK, "chain.recomputable", "scenario 未产生事件链"),
+    });
+
+    // 无罪不罚：一次独立的举报实验，账本快照必须逐字段相等。
+    checks.push(match no_penalty_probe() {
+        Ok(()) => SelfCheck::pass(
+            TRACK,
+            "report.moves_nothing",
+            "未确认举报前后账本快照与 AgentCard 逐字段相等（余额/信誉不动）",
+        ),
+        Err(err) => SelfCheck::fail(TRACK, "report.moves_nothing", err.to_string()),
+    });
+
+    // 证据闸门：伪造摘要必须被拒，且不留下案件与事件。
+    checks.push(match forged_evidence_probe() {
+        Ok(()) => SelfCheck::pass(
+            TRACK,
+            "evidence.forgery_refused",
+            "摘要与证据本体不一致时返回 invalid_signature，案件数 0、事件数 0",
+        ),
+        Err(err) => SelfCheck::fail(TRACK, "evidence.forgery_refused", err.to_string()),
     });
 
     let config = demo_config();
@@ -107,12 +154,114 @@ pub fn self_check() -> Vec<SelfCheck> {
         Ok(()) => SelfCheck::pass(
             TRACK,
             "ledger.conservation",
-            format!("Σ可用+Σ锁定+罚没 == 发行（minted={}）", kernel.ledger().minted()),
+            format!(
+                "Σ可用+Σ锁定+罚没 == 发行（minted={} slashed={}）",
+                kernel.ledger().minted(),
+                kernel.ledger().slashed()
+            ),
         ),
         Err(err) => SelfCheck::fail(TRACK, "ledger.conservation", err.to_string()),
     });
 
     checks
+}
+
+/// 从 `scenario` 的 JSON 里取回事件链并独立复算。
+fn replay_reported_chain(value: &Value) -> CoreResult<(usize, String)> {
+    let raw = value
+        .get("chain")
+        .and_then(|c| c.get("events"))
+        .and_then(|e| e.as_array())
+        .ok_or(CoreError::Encoding)?;
+    let mut events = Vec::with_capacity(raw.len());
+    for item in raw {
+        events.push(SafetyEvent::from_json(item)?);
+    }
+    let verdict = verify_chain(&events);
+    if !verdict.ok {
+        return Err(CoreError::InvalidSignature);
+    }
+    Ok((verdict.len, verdict.head))
+}
+
+/// 独立实验：举报一个 Agent，账本与名片必须逐字段不变。
+fn no_penalty_probe() -> CoreResult<()> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config, office_keys)?;
+
+    let participants = vec![reporter.did(), subject.did()];
+    let before = ledger_snapshot(&kernel, &participants);
+    let card_before = kernel.card(&subject.did()).cloned();
+
+    let payload = json!({"probe": "self-check", "delivered": false});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &payload)?;
+    let report = office.report(
+        &mut kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::NonDelivery,
+        reference,
+        &payload,
+    )?;
+    if office.status_of(&report.id) != Some(CaseStatus::Reported) {
+        return Err(CoreError::InvalidKind);
+    }
+    if ledger_snapshot(&kernel, &participants) != before {
+        return Err(CoreError::Overflow);
+    }
+    if kernel.card(&subject.did()).cloned() != card_before {
+        return Err(CoreError::InvalidSignature);
+    }
+    kernel.ledger().check_conservation()
+}
+
+/// 独立实验：伪造证据必须被拒且不留痕迹。
+fn forged_evidence_probe() -> CoreResult<()> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config, office_keys)?;
+
+    let honest = json!({"probe": "honest"});
+    let forged = json!({"probe": "forged"});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &honest)?;
+    let outcome = office.report(
+        &mut kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::FakeEvidence,
+        reference,
+        &forged,
+    );
+    if outcome != Err(CoreError::InvalidSignature)
+        || office.case_count() != 0
+        || office.event_count() != 0
+    {
+        return Err(CoreError::InvalidSignature);
+    }
+    Ok(())
 }
 
 /// 轨道产物摘要（只读投影的一部分）。
@@ -141,19 +290,76 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let arbiter = role_keys(setup::ROLE_ARBITER);
     let service = role_keys(setup::ROLE_SERVICE);
 
-    ensure_agent(kernel, &reporter, "reporter-agent", &["audit.report"], au4a_core::Credits(20))?;
-    ensure_agent(kernel, &subject, "subject-agent", &["deliver.task"], au4a_core::Credits(20))?;
-    ensure_agent(kernel, &arbiter, "arbiter-agent", &["arbitrate.case"], au4a_core::Credits(20))?;
-    ensure_agent(kernel, &service, "safety-service", &["safety.api"], au4a_core::Credits(20))?;
+    ensure_agent(kernel, &reporter, "reporter-agent", &["audit.report"], Credits(20))?;
+    ensure_agent(kernel, &subject, "subject-agent", &["deliver.task"], Credits(20))?;
+    ensure_agent(kernel, &arbiter, "arbiter-agent", &["arbitrate.case"], Credits(20))?;
+    ensure_agent(kernel, &service, "safety-service", &["safety.api"], Credits(20))?;
 
     let config = SafetyConfig::single_arbiter(service.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config.clone(), service)?;
+
+    // 1) 权限边界：结构化查询。
     let reporter_boundary = PermissionBoundary::of(kernel, &config, &reporter.did());
     let arbiter_boundary = PermissionBoundary::of(kernel, &config, &arbiter.did());
     let probe_boundary = PermissionBoundary::of(kernel, &config, &role_keys(0xEE).did());
 
+    // 2) 举报：带可复算证据哈希。
+    let participants = vec![reporter.did(), subject.did()];
+    let evidence_payload = json!({"task": "deliver-1", "delivered": false, "deadline": 40});
+    let evidence = EvidenceRef::commit(EvidenceKind::Transcript, &evidence_payload)?;
+    let before = ledger_snapshot(kernel, &participants);
+    let fingerprint_before = ledger_fingerprint(kernel, &participants)?;
+    let subject_card_before = kernel.card(&subject.did()).cloned();
+
+    let report = office.report(
+        kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::NonDelivery,
+        evidence,
+        &evidence_payload,
+    )?;
+
+    let after = ledger_snapshot(kernel, &participants);
+    let fingerprint_after = ledger_fingerprint(kernel, &participants)?;
+    let ledger_untouched = before == after
+        && fingerprint_before == fingerprint_after
+        && kernel.card(&subject.did()).cloned() == subject_card_before;
+    if !ledger_untouched {
+        return Err(CoreError::Overflow);
+    }
+
+    // 3) 伪造证据：必须被拒，且不留案件、不留事件。
+    let forged_payload = json!({"task": "deliver-1", "delivered": true, "deadline": 40});
+    let forged_reference = EvidenceRef::commit(EvidenceKind::Transcript, &forged_payload)?;
+    let cases_before_forgery = office.case_count();
+    let events_before_forgery = office.event_count();
+    let forgery = office.report(
+        kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::FakeEvidence,
+        forged_reference,
+        &evidence_payload,
+    );
+    let forgery_refused = forgery == Err(CoreError::InvalidSignature)
+        && office.case_count() == cases_before_forgery
+        && office.event_count() == events_before_forgery;
+
+    let verdict = office.verify_chain();
+    let events: Vec<Value> = office
+        .events()
+        .iter()
+        .map(|event| event.to_json())
+        .collect::<CoreResult<Vec<Value>>>()?;
+
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{CURRENT} 权限边界查询：{} 个权限点", Permission::ALL.len()),
+        format!(
+            "{CURRENT} 举报受理 + 哈希链（{} 条事件，链头 {}）",
+            verdict.len,
+            au4a_core::short_id(&verdict.head)
+        ),
     );
 
     Ok(json!({
@@ -174,6 +380,29 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "allowed": probe_boundary.allowed.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
             "send_message_denial": probe_boundary.denial(Permission::SendMessage).map(|r| r.code()),
         },
+        "case": {
+            "id": report.id,
+            "status": office.status_of(&report.id).map(|s| s.as_str()),
+            "violation": report.violation.as_str(),
+            "reporter": report.reporter.as_str(),
+            "subject": report.subject.as_str(),
+        },
+        "chain": {
+            "len": verdict.len,
+            "head": verdict.head,
+            "ok": verdict.ok,
+            "events": events,
+        },
+        "ledger": {
+            "untouched_by_unconfirmed_report": ledger_untouched,
+            "fingerprint_before": fingerprint_before,
+            "fingerprint_after": fingerprint_after,
+            "snapshot": after,
+        },
+        "forgery": {
+            "refused": forgery_refused,
+            "refusals": kernel.refusals().len(),
+        },
         "ledger_conserved": kernel.ledger().check_conservation().is_ok(),
     }))
 }
@@ -183,4 +412,13 @@ pub fn demo_config() -> SafetyConfig {
     let arbiter = role_keys(setup::ROLE_ARBITER);
     let service = role_keys(setup::ROLE_SERVICE);
     SafetyConfig::single_arbiter(service.did(), arbiter.did())
+}
+
+/// 演示用参与者的 DID 列表（账本快照的可比较顺序无关，见 `ledger_snapshot`）。
+pub fn demo_participants() -> Vec<Did> {
+    vec![
+        role_keys(setup::ROLE_REPORTER).did(),
+        role_keys(setup::ROLE_SUBJECT).did(),
+        role_keys(setup::ROLE_ARBITER).did(),
+    ]
 }

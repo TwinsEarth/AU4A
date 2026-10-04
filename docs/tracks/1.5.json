@@ -56,19 +56,20 @@
         "pub fn SafetyOffice::report(&mut self, kernel, keys, subject, kind, evidence) -> CoreResult<ViolationReport>"
       ],
       "acceptance": [
-        "伪造/缺失证据的举报被拒（InvalidSignature）",
-        "举报后账本逐字段不变（无罪不罚）",
-        "举报写入哈希链事件，链头可复算",
-        "篡改事件内容后 verify_chain 报断链"
+        "伪造/缺失证据的举报被拒（InvalidSignature / Encoding），案件数 0、事件数 0",
+        "举报前后账本快照与 AgentCard 逐字段相等（无罪不罚），slashed == 0",
+        "举报写入哈希链事件，链头 64 位 hex 且可复算",
+        "篡改内容/删除记录/改写前驱/伪造 hash 分别报 hash_mismatch/seq_mismatch/prev_mismatch",
+        "未注册举报者 unauthorized、自举报 InvalidKind、未知主体 stale_epoch，均留下结构化拒绝记录"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：轨道内严格串行，v1.5.1 全绿后开工"
+        "tests_passed": 44,
+        "tests_total": 44,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.2.log；累计 44 个测试（v1.5.1 的 14 个 + 本版 30 个）"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.3",
