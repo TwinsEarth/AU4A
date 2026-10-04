@@ -44,17 +44,35 @@
       "version": "v1.1.2",
       "title": "声明 API",
       "goal": "Agent 用自签声明把自己的能力写进图，且任何人都不能替他人声明",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/declaration.rs: Declaration（自洽校验、按技能排序、拒绝重复技能）/ SignedDeclaration（验签）",
+        "src/graph.rs: AgentCapabilityGraph / CapGraphConfig / NeighborRecord / DeclareOutcome",
+        "tests/declaration.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn Declaration::new(agent: Did, epoch: u64, issued_at: u64, capabilities: Vec<Capability>) -> CoreResult<Declaration>",
+        "pub fn Declaration::sign(self, keys: &AgentKeys) -> CoreResult<SignedDeclaration>",
+        "pub fn SignedDeclaration::verify(&self) -> CoreResult<()>",
+        "pub fn AgentCapabilityGraph::apply(&mut self, signed: &SignedDeclaration, now: u64) -> DeclareOutcome",
+        "pub fn AgentCapabilityGraph::capabilities_of(&self, did: &Did) -> Option<&[Capability]>",
+        "pub enum DeclareOutcome { Applied, Unchanged, Rejected }"
+      ],
+      "acceptance": [
+        "自签声明入图；同一份声明重放 4 次全部 Unchanged 且 own_epoch 不推进（幂等）",
+        "B 用自己私钥替 A 声明返回 InvalidSignature；把已签声明的 agent 改成 B 被图判 unauthorized",
+        "篡改已签声明的 price/throughput → unauthorized（恶意码 is_misconduct()==true），邻居视图保持为空",
+        "epoch 回退→stale_epoch；同 epoch 异内容→conflict；epoch 递增→接受并完整替换旧能力集",
+        "超过 max_skills_per_agent→policy_denied，且被拒声明不改变 capability_count()",
+        "邻居声明不触碰自有状态；skills() 去重列出全部提供者"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现（严格串行开发，待 v1.1.1 之后的下一版）"
+        "tests_passed": 35,
+        "tests_total": 35,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 20 passed + tests/data_structures 7 passed + tests/declaration 8 passed，0 failed，本 crate 0 warning。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.3",

@@ -25,12 +25,16 @@
 //! | v1.1.10 | 文档与证据 | `docs/tracks/1.1.md` |
 
 pub mod capability;
+pub mod declaration;
+pub mod graph;
 
 pub use capability::{
     Capability, Constraints, FormatId, SkillId, BP_SCALE, MAX_FORMAT_LEN, MAX_SKILL_LEN,
 };
+pub use declaration::{Declaration, SignedDeclaration};
+pub use graph::{AgentCapabilityGraph, CapGraphConfig, DeclareOutcome, NeighborRecord};
 
-use au4a_core::{CoreResult, Credits, SelfCheck};
+use au4a_core::{AgentKeys, CoreResult, Credits, SelfCheck};
 use serde_json::{json, Value};
 
 /// 轨道号。
@@ -118,6 +122,70 @@ fn checks_v111() -> Vec<SelfCheck> {
     checks
 }
 
+/// v1.1.2：声明必须自签、内容必须自洽、拒绝必须有类型、重放必须幂等。
+fn checks_v112() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.2.self_signed_only", || {
+        let a = AgentKeys::from_seed(&[21; 32]);
+        let b = AgentKeys::from_seed(&[22; 32]);
+        let declaration = Declaration::new(a.did(), 1, 1, vec![sample_capability()?]).map_err(show)?;
+        let forged = declaration.clone().sign(&b);
+        if forged != Err(au4a_core::CoreError::InvalidSignature) {
+            return Err("用 B 的私钥替 A 声明竟然成功了".into());
+        }
+        let honest = declaration.sign(&a).map_err(show)?;
+        honest.verify().map_err(show)?;
+        Ok("断言：替他人声明返回 InvalidSignature；自签声明验签通过".into())
+    }));
+    checks.push(verdict("1.1.2.tampering_is_unauthorized", || {
+        let a = AgentKeys::from_seed(&[23; 32]);
+        let b = AgentKeys::from_seed(&[24; 32]);
+        let mut graph = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
+        let signed = Declaration::new(b.did(), 1, 1, vec![sample_capability()?])
+            .map_err(show)?
+            .sign(&b)
+            .map_err(show)?;
+        let mut value = signed.to_value().map_err(show)?;
+        value["declaration"]["capabilities"][0]["throughput_per_min"] = json!(1);
+        let tampered = SignedDeclaration::from_value(&value).map_err(show)?;
+        let outcome = graph.apply(&tampered, 1);
+        if outcome.refusal() != Some(au4a_core::RefusalCode::Unauthorized) || graph.neighbor_count() != 0
+        {
+            return Err(format!("篡改未被判 unauthorized：{:?}", outcome.to_value()));
+        }
+        Ok("断言：改动签名后的声明被判 unauthorized，且邻居视图保持为空".into())
+    }));
+    checks.push(verdict("1.1.2.epoch_monotonic", || {
+        let a = AgentKeys::from_seed(&[25; 32]);
+        let b = AgentKeys::from_seed(&[26; 32]);
+        let mut graph = AgentCapabilityGraph::new(a.did(), CapGraphConfig::default());
+        let mut declare = |epoch: u64, skill: &str| -> Result<DeclareOutcome, String> {
+            let cap = Capability::new(SkillId::new(skill).map_err(show)?, Credits(3));
+            let signed = Declaration::new(b.did(), epoch, epoch, vec![cap])
+                .map_err(show)?
+                .sign(&b)
+                .map_err(show)?;
+            Ok(graph.apply(&signed, epoch))
+        };
+        let applied = declare(5, "translate.en-zh")?;
+        let stale = declare(4, "translate.en-zh")?;
+        let conflict = declare(5, "sentiment.analyze")?;
+        if !applied.is_applied()
+            || stale.refusal() != Some(au4a_core::RefusalCode::StaleEpoch)
+            || conflict.refusal() != Some(au4a_core::RefusalCode::Conflict)
+        {
+            return Err("陈旧/冲突检测不正确".into());
+        }
+        Ok("断言：epoch 回退→stale_epoch；同 epoch 异内容→conflict；图停留在 epoch=5".into())
+    }));
+    checks
+}
+
+/// 自检用的一条合法能力。
+fn sample_capability() -> Result<Capability, String> {
+    Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
+}
+
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 ///
 /// 每一条都是**运行中的真实断言**，不是版本号回显。
@@ -128,6 +196,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         format!("{TITLE} {RANGE} 已接入 au4a-node"),
     )];
     checks.extend(checks_v111());
+    checks.extend(checks_v112());
     checks
 }
 
@@ -139,7 +208,7 @@ pub fn results_json() -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "versions": ["v1.1.1"],
+        "versions": ["v1.1.1", "v1.1.2"],
         "checks": checks.len(),
         "checks_passed": passed,
         "schema": {
@@ -153,45 +222,64 @@ pub fn results_json() -> CoreResult<Value> {
     }))
 }
 
-/// v1.1.1 的自有流程：三条能力各自校验、内容寻址，并给出一条格式接续证据。
+/// v1.1.2 的自有流程：三个 Agent 各自签一份声明，A 接受 B/C 的声明并报告结果。
 ///
-/// 后续小版本会让这里逐步接上声明、广播、缓存、查询与路径规划，
+/// 后续小版本会让这里逐步接上广播、缓存、查询与路径规划，
 /// 但它从第一版起就必须做**真事**：返回值里的每个数字都来自真实计算。
 pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
-    let translate = Capability::new(SkillId::new("translate.en-zh")?, Credits(4))
-        .with_formats(&["text/plain"], &["text/plain"])?
-        .with_latency(80, 200)
-        .with_reliability_bp(9_500);
-    let sentiment = Capability::new(SkillId::new("sentiment.analyze")?, Credits(2))
+    let alice = AgentKeys::from_seed(&[11; 32]);
+    let bob = AgentKeys::from_seed(&[12; 32]);
+    let carol = AgentKeys::from_seed(&[13; 32]);
+
+    let alice_caps = vec![
+        Capability::new(SkillId::new("translate.en-zh")?, Credits(4))
+            .with_formats(&["text/plain"], &["text/plain"])?
+            .with_latency(80, 200)
+            .with_reliability_bp(9_500),
+        Capability::new(SkillId::new("sentiment.analyze")?, Credits(2))
+            .with_formats(&["text/plain"], &["application/json"])?
+            .with_latency(120, 400),
+    ];
+    let bob_caps = vec![Capability::new(SkillId::new("translate.en-zh")?, Credits(3))
         .with_formats(&["text/plain"], &["application/json"])?
-        .with_latency(120, 400);
-    let asr = Capability::new(SkillId::new("speech.transcribe")?, Credits(9))
-        .with_formats(&["audio/wav"], &["text/plain"])?
-        .with_latency(400, 1_200);
+        .with_latency(90, 240)];
+    let carol_caps = vec![Capability::new(SkillId::new("sentiment.analyze")?, Credits(2))
+        .with_formats(&["application/json"], &["application/json"])?
+        .with_latency(110, 300)];
 
-    let mut skills = Vec::new();
-    let mut fingerprints = Vec::new();
-    for cap in [&translate, &sentiment, &asr] {
-        cap.validate()?;
-        skills.push(cap.skill.as_str().to_string());
-        fingerprints.push(cap.fingerprint()?);
-    }
-    let handoff = asr
-        .handoff_format(&translate)
-        .map(|f| f.as_str().to_string());
+    let mut graph = AgentCapabilityGraph::new(alice.did(), CapGraphConfig::default());
+    let own = Declaration::new(alice.did(), 1, 0, alice_caps)?.sign(&alice)?;
+    let own_outcome = graph.apply(&own, 0);
+    let bob_outcome = graph.apply(&Declaration::new(bob.did(), 1, 0, bob_caps)?.sign(&bob)?, 0);
+    let carol_outcome =
+        graph.apply(&Declaration::new(carol.did(), 1, 0, carol_caps)?.sign(&carol)?, 0);
 
+    let rejected = [&own_outcome, &bob_outcome, &carol_outcome]
+        .iter()
+        .filter(|o| !o.is_applied())
+        .count();
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("v1.1.1 数据结构：{} 条能力完成校验与内容寻址", skills.len()),
+        format!(
+            "v1.1.2 声明 API：{} 个 Agent 自签声明，{} 条能力入图，{rejected} 次拒绝",
+            graph.known_agents(),
+            graph.capability_count()
+        ),
     );
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "version": "v1.1.1",
-        "capabilities": skills,
-        "fingerprints": fingerprints,
-        "handoff_audio_to_text": handoff,
+        "version": "v1.1.2",
+        "agents": graph.known_agents(),
+        "capabilities": graph.capability_count(),
+        "skills": graph.skills().iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        "outcomes": [
+            own_outcome.to_value(),
+            bob_outcome.to_value(),
+            carol_outcome.to_value(),
+        ],
+        "rejected": rejected,
         "events": 1,
     }))
 }

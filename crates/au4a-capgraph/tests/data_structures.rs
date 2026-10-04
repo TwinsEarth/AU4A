@@ -109,20 +109,13 @@ fn every_metric_is_bounded_and_integer() {
 }
 
 #[test]
-fn scenario_is_deterministic_and_reports_real_fingerprints() {
+fn scenario_is_deterministic() {
+    // scenario 会随小版本演进，但「同样输入给同样输出」是从 v1.1.1 起不可协商的契约。
     let mut first = Kernel::new(KernelConfig::default());
     let mut second = Kernel::new(KernelConfig::default());
     let a = au4a_capgraph::scenario(&mut first).expect("scenario runs");
     let b = au4a_capgraph::scenario(&mut second).expect("scenario runs");
     assert_eq!(a, b, "同样的输入必须给同样的输出（可重放）");
-
-    let caps = a["capabilities"].as_array().expect("capabilities array");
-    let fps = a["fingerprints"].as_array().expect("fingerprints array");
-    assert_eq!(caps.len(), 3);
-    assert_eq!(fps.len(), 3);
-    for fp in fps {
-        assert_eq!(fp.as_str().map(str::len), Some(64), "指纹是 SHA-256 hex");
-    }
-    assert_eq!(a["handoff_audio_to_text"].as_str(), Some("text/plain"));
+    assert!(a["version"].is_string());
     assert!(!first.observe().progress.is_empty(), "scenario 必须留下进度事件");
 }
