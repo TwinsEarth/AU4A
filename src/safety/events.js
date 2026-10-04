@@ -1,6 +1,8 @@
 // v1.5.4/v1.5.5 — 安全事件通知与总线扩展
 // SafetyEvents：按案件订阅事件（REPORTED/APPEALED/ARBITRATED/…）；
 // SafetyAPI 集成后：任何状态变更即通知订阅者，并可发布到外部事件总线（PMB 旁路）。
+import { SafetyStatus } from './api.js';
+
 export class SafetyEvents {
   constructor(bus = null) {
     this.bus = bus;           // 可选 PMB：{ publish(topic, payload) }
@@ -22,7 +24,13 @@ export class SafetyEvents {
   }
 
   publish(caseId, event, payload) {
-    this._emit(`${caseId}:${event}`, { caseId, event, ...payload });
+    const body = { caseId, event, ...payload };
+    // 总线走规范主题 /safety/1.0.0（人类观察层/外部订阅者旁路）
+    if (this.bus && typeof this.bus.publish === 'function') this.bus.publish('/safety/1.0.0', body);
+    // 本地订阅走案件级主题
+    const topic = `${caseId}:${event}`;
+    const subs = this._subs.get(topic);
+    if (subs) for (const fn of subs) fn(body);
   }
 }
 
