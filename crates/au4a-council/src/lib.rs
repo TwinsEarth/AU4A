@@ -25,6 +25,7 @@ pub mod committee;
 pub mod election;
 pub mod execution;
 pub mod human;
+pub mod invariants;
 pub mod ongov;
 pub mod proposal;
 pub mod veto;
@@ -37,6 +38,9 @@ pub use election::{
 };
 pub use execution::{ExecutionEffect, ExecutionReceipt};
 pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
+pub use invariants::{
+    check_all, replay, replay_report, state_digest, INVARIANT_NAMES, ReplayReport,
+};
 pub use ongov::{
     no_false_chain_claims, project_all, state_summary, ChainBinding, GovExecution, GovState, GovVeto,
     GovernorToken,
@@ -1357,8 +1361,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     }
 
     match build_vetoed() {
-        Ok(v) => {
-            let blocked = matches!(
+        Ok(v) => {            let blocked = matches!(
                 v.council.proposal(&v.proposal_id).map(|p| p.state),
                 Some(ProposalState::Blocked)
             );
@@ -1399,6 +1402,60 @@ pub fn self_check() -> Vec<SelfCheck> {
             checks.extend(v.council.checks());
         }
         Err(err) => checks.push(SelfCheck::fail(TRACK, "council.veto.blocks_only", err.to_string())),
+    }
+
+    // 确定性重放：用 LCG 驱动一段真实治理历史，每一步之后跑全部不变式。
+    match invariants::replay(0x17_07, 72) {
+        Ok(report) => {
+            checks.push(if report.ok() {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.replay.invariants",
+                    format!(
+                        "确定性重放 seed={} steps={}：{} 条动议 / {} 轮表决（{} 轮双签作废）/ {} 执行 / {} 阻断 / {} 拒绝，{} 条不变式 × 每步全部通过",
+                        report.seed,
+                        report.steps,
+                        report.proposals,
+                        report.rounds,
+                        report.voided_rounds,
+                        report.executed,
+                        report.blocked,
+                        report.refusals,
+                        report.invariants_per_step
+                    ),
+                )
+            } else {
+                SelfCheck::fail(
+                    TRACK,
+                    "council.replay.invariants",
+                    format!("重放出现 {} 条违例：{}", report.violations.len(), report.violations.join("; ")),
+                )
+            });
+            checks.push(if report.voided_rounds > 0
+                && report.executed > 0
+                && report.blocked > 0
+                && report.refusals > 0
+            {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.replay.coverage",
+                    format!(
+                        "重放覆盖了双签作废（{} 轮）、执行（{}）、人类阻断（{}）、拒绝路径（{}）",
+                        report.voided_rounds, report.executed, report.blocked, report.refusals
+                    ),
+                )
+            } else {
+                SelfCheck::fail(
+                    TRACK,
+                    "council.replay.coverage",
+                    format!(
+                        "重放覆盖不足：voided={} executed={} blocked={} refusals={}",
+                        report.voided_rounds, report.executed, report.blocked, report.refusals
+                    ),
+                )
+            });
+        }
+        Err(err) => checks.push(SelfCheck::fail(TRACK, "council.replay.invariants", err.to_string())),
     }
 
     checks
@@ -1466,6 +1523,12 @@ pub fn results_json() -> CoreResult<Value> {
             "vetoed_states": state_summary(&project_all(&vetoed.council)?),
             "real_chain": false,
             "grade": au4a_core::EvidenceGrade::CpuProto.as_str(),
+        },
+        "invariants": {
+            "names": invariants::INVARIANT_NAMES.len(),
+            "state_digest": invariants::state_digest(&run.council)?,
+            "vetoed_digest": invariants::state_digest(&vetoed.council)?,
+            "replay": invariants::replay_report(&[1, 2, 3], 48)?,
         },
         "events": run.council.events().len(),
         "agents_enrolled": run.agents.len(),

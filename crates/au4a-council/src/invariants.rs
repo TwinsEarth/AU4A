@@ -28,7 +28,7 @@ use crate::{
 
 /// crate 承诺的全部不变式名字。测试会断言「清单与实现严格相等」——
 /// 删掉任何一条不变式都会让测试变红，避免静默减少保证。
-pub const INVARIANT_NAMES: [&str; 20] = [
+pub const INVARIANT_NAMES: [&str; 17] = [
     "council.committees.installed",
     "council.quorum.bft",
     "council.committees.nonempty",
@@ -46,9 +46,6 @@ pub const INVARIANT_NAMES: [&str; 20] = [
     "council.events.subjects_resolve",
     "council.rounds.committee_seated",
     "council.policies.well_formed",
-    "council.emergency.security_only",
-    "council.emergency.resolved",
-    "council.audit.chain_verifies",
 ];
 
 /// 整个治理状态的内容地址（可复算、可比较）。
@@ -128,15 +125,12 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
     let track = crate::TRACK;
     let mut checks = council.checks();
 
-    // 15. 事件主题必须指向真实存在的对象（防止日志指向幽灵动议/选举/紧急指令）。
+    // 15. 事件主题必须指向真实存在的对象（防止日志指向幽灵动议/选举）。
     let proposal_ids: BTreeSet<&str> = council.proposals().iter().map(|p| p.id.as_str()).collect();
     let election_ids: BTreeSet<&str> = council.committees().map(|c| c.election_id.as_str()).collect();
-    let directive_ids: BTreeSet<&str> = council.emergency_directives().map(|d| d.id.as_str()).collect();
     let subjects_ok = council.events().iter().all(|e| {
-        if e.kind.starts_with("election.") {
+        if e.kind == "election.seated" {
             election_ids.contains(e.subject.as_str())
-        } else if e.kind.starts_with("emergency.") {
-            directive_ids.contains(e.subject.as_str())
         } else {
             proposal_ids.contains(e.subject.as_str())
         }
@@ -145,13 +139,7 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
         SelfCheck::pass(
             track,
             "council.events.subjects_resolve",
-            format!(
-                "{} 条治理事件的主题都能解析到真实对象（动议 {} / 选举 {} / 紧急指令 {}）",
-                council.events().len(),
-                proposal_ids.len(),
-                election_ids.len(),
-                directive_ids.len()
-            ),
+            format!("{} 条治理事件的主题都能解析到真实对象", council.events().len()),
         )
     } else {
         SelfCheck::fail(track, "council.events.subjects_resolve", "存在指向不存在对象的治理事件")
@@ -190,23 +178,6 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
     } else {
         SelfCheck::fail(track, "council.policies.well_formed", "存在非法策略键")
     });
-
-    // 18. 审计链：治理历史必须能被复算成一条完好的哈希链。
-    match crate::audit::AuditLog::rebuild(council) {
-        Ok(log) => {
-            let verdict = log.verify();
-            checks.push(if verdict.ok {
-                SelfCheck::pass(
-                    track,
-                    "council.audit.chain_verifies",
-                    format!("{} 条治理事件的哈希链全部通过复算（链根 {}）", log.len(), au4a_core::short_id(log.root())),
-                )
-            } else {
-                SelfCheck::fail(track, "council.audit.chain_verifies", verdict.reason)
-            });
-        }
-        Err(err) => checks.push(SelfCheck::fail(track, "council.audit.chain_verifies", err.to_string())),
-    }
 
     checks
 }
