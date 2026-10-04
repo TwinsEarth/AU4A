@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Did, RefusalCode};
+use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Credits, Did, RefusalCode};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
@@ -18,6 +18,7 @@ use crate::case::{Case, CaseStatus, ViolationKind, ViolationReport};
 use crate::chain::{chain_head, verify_chain, ChainVerdict, SafetyEvent, SafetyEventKind};
 use crate::config::SafetyConfig;
 use crate::evidence::EvidenceRef;
+use crate::penalty::{PenaltyOrder, PenaltyRecord};
 
 /// 安全服务：案件登记处 + 变更日志。
 pub struct SafetyOffice {
@@ -26,6 +27,7 @@ pub struct SafetyOffice {
     events: Vec<SafetyEvent>,
     cases: BTreeMap<String, Case>,
     appeals: BTreeMap<String, Appeal>,
+    penalties: Vec<PenaltyRecord>,
 }
 
 impl SafetyOffice {
@@ -41,6 +43,7 @@ impl SafetyOffice {
             events: Vec::new(),
             cases: BTreeMap::new(),
             appeals: BTreeMap::new(),
+            penalties: Vec::new(),
         })
     }
 
@@ -296,6 +299,127 @@ impl SafetyOffice {
         );
         Ok(appeal)
     }
+
+    // ---- v1.5.4 处罚 ----
+
+    pub fn penalty_count(&self) -> usize {
+        self.penalties.len()
+    }
+
+    pub fn penalty(&self, id: &str) -> Option<&PenaltyRecord> {
+        self.penalties.iter().find(|record| record.id == id)
+    }
+
+    /// 处罚查询：按主体返回记录（按执行顺序）。
+    pub fn penalties_for(&self, did: &Did) -> Vec<&PenaltyRecord> {
+        self.penalties
+            .iter()
+            .filter(|record| &record.subject == did)
+            .collect()
+    }
+
+    /// 全部处罚记录（按执行顺序）。
+    pub fn penalties(&self) -> &[PenaltyRecord] {
+        &self.penalties
+    }
+
+    /// 至今净罚没额（Σ执行 − Σ已回滚）。
+    pub fn slashed_total(&self) -> CoreResult<Credits> {
+        let mut total = Credits::ZERO;
+        for record in &self.penalties {
+            if !record.reversed {
+                total = total.checked_add(record.applied)?;
+            }
+        }
+        Ok(total)
+    }
+
+    /// 执行一份仲裁者签名的处罚契约。**这是账本唯一的改动入口。**
+    ///
+    /// 罚没额按锁定余额封顶：记录里同时保留「请求额」与「实际执行额」，
+    /// 因此请求 100、只有 20 可罚时，记录不会假装罚了 100。
+    pub fn apply_penalty_order(
+        &mut self,
+        kernel: &mut Kernel,
+        order: PenaltyOrder,
+    ) -> CoreResult<PenaltyRecord> {
+        if order.verify_against(&self.config).is_err() {
+            kernel.refuse(
+                &order.arbiter,
+                RefusalCode::Unauthorized,
+                "penalty order is not signed by a trusted arbiter",
+            );
+            return Err(CoreError::InvalidSignature);
+        }
+        let case = match self.cases.get(&order.case) {
+            Some(case) => case.clone(),
+            None => {
+                kernel.refuse(
+                    &order.arbiter,
+                    RefusalCode::StaleEpoch,
+                    "penalty order references an unknown case",
+                );
+                return Err(CoreError::UnknownAgent);
+            }
+        };
+        if case.subject != order.subject {
+            kernel.refuse(
+                &order.arbiter,
+                RefusalCode::PolicyDenied,
+                "penalty order subject does not match the case subject",
+            );
+            return Err(CoreError::InvalidSignature);
+        }
+
+        let at = kernel.tick();
+        let mut applied = Credits::ZERO;
+        if order.sanction.moves_ledger() {
+            let locked = kernel.ledger().balance(&order.subject).locked;
+            let take = if order.amount > locked {
+                locked
+            } else {
+                order.amount
+            };
+            if take > Credits::ZERO {
+                kernel.ledger_mut().slash(&order.subject, take)?;
+                applied = take;
+            }
+        }
+
+        let record = PenaltyRecord {
+            id: order.id.clone(),
+            case: order.case.clone(),
+            subject: order.subject.clone(),
+            sanction: order.sanction,
+            requested: order.amount,
+            applied,
+            arbiter: order.arbiter.clone(),
+            at,
+            reversed: false,
+        };
+
+        if let Some(target) = self.cases.get_mut(&order.case) {
+            target.status = CaseStatus::Penalized;
+            target.penalties.push(record.id.clone());
+        }
+        self.penalties.push(record.clone());
+        self.append(
+            kernel,
+            SafetyEventKind::Penalized,
+            json!({"case": order.case, "penalty": record.to_json()?}),
+        )?;
+        kernel.emit(
+            &format!("{}.penalized", crate::TRACK),
+            format!(
+                "案件 {} 执行 {}（请求 {}，实际 {}）",
+                au4a_core::short_id(&record.case),
+                record.sanction.as_str(),
+                record.requested,
+                record.applied
+            ),
+        );
+        Ok(record)
+    }
 }
 
 /// 账本快照：参与者逐字段 + 全局发行/罚没。用于「未确认不动账本」的可比较断言。
@@ -330,6 +454,7 @@ pub fn ledger_fingerprint(kernel: &Kernel, dids: &[Did]) -> CoreResult<String> {
 mod tests {
     use super::*;
     use crate::evidence::EvidenceKind;
+    use crate::penalty::SanctionKind;
     use crate::setup;
     use au4a_core::Credits;
     use au4a_kernel::KernelConfig;
@@ -339,6 +464,7 @@ mod tests {
         office: SafetyOffice,
         reporter: AgentKeys,
         subject: AgentKeys,
+        arbiter: AgentKeys,
         participants: Vec<Did>,
     }
 
@@ -363,6 +489,7 @@ mod tests {
             office,
             reporter,
             subject,
+            arbiter,
             participants,
         }
     }
@@ -813,6 +940,222 @@ mod tests {
             .collect();
         assert_eq!(indexed, w.office.case(&case_id).unwrap().appeals);
         assert_eq!(w.office.event_count(), 3);
+        assert!(w.office.verify_chain().ok);
+    }
+
+    // ---- v1.5.4 处罚 ----
+
+    fn slash_order(case_id: &str, subject: &Did, amount: i64, arbiter: &AgentKeys) -> PenaltyOrder {
+        PenaltyOrder::new(
+            case_id,
+            subject.clone(),
+            SanctionKind::StakeSlash,
+            Credits(amount),
+            arbiter.did(),
+            0,
+        )
+    }
+
+    #[test]
+    fn an_arbiter_order_slashes_the_stake_and_is_recorded() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "penalty-1");
+        let subject_did = w.subject.did();
+        let locked_before = w.kernel.ledger().balance(&subject_did).locked;
+
+        let order = slash_order(&case_id, &subject_did, 5, &w.arbiter)
+            .sign(&w.arbiter)
+            .unwrap();
+        let record = w.office.apply_penalty_order(&mut w.kernel, order).unwrap();
+
+        assert_eq!(record.requested, Credits(5));
+        assert_eq!(record.applied, Credits(5));
+        assert_eq!(record.sanction, SanctionKind::StakeSlash);
+        assert_eq!(record.arbiter, w.arbiter.did());
+        assert!(!record.reversed);
+
+        assert_eq!(
+            w.kernel.ledger().balance(&subject_did).locked,
+            locked_before.checked_sub(Credits(5)).unwrap()
+        );
+        assert_eq!(w.kernel.ledger().slashed(), Credits(5));
+        w.kernel.ledger().check_conservation().unwrap();
+
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Penalized));
+        assert_eq!(
+            w.office.case(&case_id).unwrap().penalties,
+            vec![record.id.clone()]
+        );
+        assert_eq!(w.office.penalty_count(), 1);
+        assert_eq!(w.office.penalty(&record.id), Some(&record));
+        assert_eq!(w.office.slashed_total().unwrap(), Credits(5));
+        assert_eq!(w.office.events().last().unwrap().kind, SafetyEventKind::Penalized);
+        assert!(w.office.verify_chain().ok);
+    }
+
+    #[test]
+    fn an_order_from_an_untrusted_arbiter_is_refused_and_nothing_moves() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "penalty-2");
+        let subject_did = w.subject.did();
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+
+        let outsider = AgentKeys::from_seed(&[0x66; 32]);
+        let order = slash_order(&case_id, &subject_did, 5, &outsider)
+            .sign(&outsider)
+            .unwrap();
+        assert_eq!(
+            w.office.apply_penalty_order(&mut w.kernel, order),
+            Err(CoreError::InvalidSignature)
+        );
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Reported));
+        assert_eq!(w.office.penalty_count(), 0);
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::Unauthorized);
+    }
+
+    #[test]
+    fn a_tampered_order_is_refused_and_nothing_moves() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "penalty-3");
+        let subject_did = w.subject.did();
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+
+        let mut order = slash_order(&case_id, &subject_did, 5, &w.arbiter)
+            .sign(&w.arbiter)
+            .unwrap();
+        order.amount = Credits(19);
+        assert_eq!(
+            w.office.apply_penalty_order(&mut w.kernel, order),
+            Err(CoreError::InvalidSignature)
+        );
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        assert_eq!(w.office.penalty_count(), 0);
+    }
+
+    #[test]
+    fn a_slash_larger_than_the_stake_is_capped_and_conservation_holds() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "penalty-4");
+        let subject_did = w.subject.did();
+        let locked_before = w.kernel.ledger().balance(&subject_did).locked;
+
+        let order = slash_order(&case_id, &subject_did, 10_000, &w.arbiter)
+            .sign(&w.arbiter)
+            .unwrap();
+        let record = w.office.apply_penalty_order(&mut w.kernel, order).unwrap();
+        assert_eq!(record.requested, Credits(10_000));
+        assert_eq!(record.applied, locked_before);
+        assert_eq!(w.kernel.ledger().balance(&subject_did).locked, Credits::ZERO);
+        assert_eq!(w.kernel.ledger().slashed(), locked_before);
+        assert_eq!(w.office.slashed_total().unwrap(), locked_before);
+        w.kernel.ledger().check_conservation().unwrap();
+    }
+
+    #[test]
+    fn an_order_naming_the_wrong_subject_or_an_unknown_case_is_refused() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "penalty-5");
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+        let reporter_did = w.reporter.did();
+
+        let wrong_subject = slash_order(&case_id, &reporter_did, 5, &w.arbiter)
+            .sign(&w.arbiter)
+            .unwrap();
+        assert_eq!(
+            w.office.apply_penalty_order(&mut w.kernel, wrong_subject),
+            Err(CoreError::InvalidSignature)
+        );
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::PolicyDenied);
+
+        let unknown_case = slash_order("no-such-case", &w.subject.did(), 5, &w.arbiter)
+            .sign(&w.arbiter)
+            .unwrap();
+        assert_eq!(
+            w.office.apply_penalty_order(&mut w.kernel, unknown_case),
+            Err(CoreError::UnknownAgent)
+        );
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::StaleEpoch);
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        assert_eq!(w.office.penalty_count(), 0);
+    }
+
+    #[test]
+    fn a_warning_is_recorded_without_moving_the_ledger() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "penalty-6");
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+        let order = PenaltyOrder::new(
+            &case_id,
+            w.subject.did(),
+            SanctionKind::Warning,
+            Credits::ZERO,
+            w.arbiter.did(),
+            0,
+        )
+        .sign(&w.arbiter)
+        .unwrap();
+        let record = w.office.apply_penalty_order(&mut w.kernel, order).unwrap();
+        assert_eq!(record.applied, Credits::ZERO);
+        assert_eq!(w.kernel.ledger().slashed(), Credits::ZERO);
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Penalized));
+        w.kernel.ledger().check_conservation().unwrap();
+    }
+
+    #[test]
+    fn penalty_queries_are_scoped_to_the_subject() {
+        let mut w = world();
+        let third = setup::keys(0x31);
+        setup::ensure_agent(&mut w.kernel, &third, "third", &["x"], Credits(20)).unwrap();
+
+        let case_one = open_case(&mut w, "penalty-7a");
+        let (reference, payload) = evidence("penalty-7b");
+        let case_two = w
+            .office
+            .report(
+                &mut w.kernel,
+                &w.reporter,
+                &third.did(),
+                ViolationKind::Fraud,
+                reference,
+                &payload,
+            )
+            .unwrap()
+            .id;
+
+        let first = w
+            .office
+            .apply_penalty_order(
+                &mut w.kernel,
+                slash_order(&case_one, &w.subject.did(), 4, &w.arbiter)
+                    .sign(&w.arbiter)
+                    .unwrap(),
+            )
+            .unwrap();
+        let second = w
+            .office
+            .apply_penalty_order(
+                &mut w.kernel,
+                slash_order(&case_two, &third.did(), 6, &w.arbiter)
+                    .sign(&w.arbiter)
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let subject_records = w.office.penalties_for(&w.subject.did());
+        assert_eq!(subject_records.len(), 1);
+        assert_eq!(subject_records[0].id, first.id);
+        let third_records = w.office.penalties_for(&third.did());
+        assert_eq!(third_records.len(), 1);
+        assert_eq!(third_records[0].id, second.id);
+        assert_eq!(w.office.penalties().len(), 2);
+        assert_eq!(w.office.slashed_total().unwrap(), Credits(10));
+        assert_eq!(w.kernel.ledger().slashed(), Credits(10));
+        w.kernel.ledger().check_conservation().unwrap();
         assert!(w.office.verify_chain().ok);
     }
 }

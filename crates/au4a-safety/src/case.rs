@@ -198,6 +198,8 @@ pub struct Case {
     pub status: CaseStatus,
     /// 已受理的申诉 id（按提交顺序）。
     pub appeals: Vec<String>,
+    /// 已执行的处罚记录 id（按执行顺序）。
+    pub penalties: Vec<String>,
 }
 
 impl Case {
@@ -211,6 +213,7 @@ impl Case {
             opened_at: report.at,
             status: CaseStatus::Reported,
             appeals: Vec::new(),
+            penalties: Vec::new(),
         }
     }
 

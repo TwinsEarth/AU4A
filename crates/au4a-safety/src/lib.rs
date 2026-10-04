@@ -20,6 +20,7 @@ pub mod chain;
 pub mod config;
 pub mod evidence;
 pub mod office;
+pub mod penalty;
 pub mod permission;
 pub mod setup;
 
@@ -35,6 +36,7 @@ pub use chain::{
 pub use config::SafetyConfig;
 pub use evidence::{is_lower_hex64, require_well_formed, EvidenceKind, EvidenceRef};
 pub use office::{ledger_fingerprint, ledger_snapshot, SafetyOffice};
+pub use penalty::{PenaltyOrder, PenaltyRecord, SanctionKind};
 pub use permission::{
     query_permissions, stake_requirement, DenialReason, DeniedPermission, Permission,
     PermissionBoundary, PermissionQuery, StakeGate,
@@ -48,7 +50,7 @@ pub const TITLE: &str = "Safety API 安全 API";
 /// 版本区间。
 pub const RANGE: &str = "v1.5.1 → v1.5.10";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.5.3";
+pub const CURRENT: &str = "v1.5.4";
 
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_safety";
@@ -102,6 +104,18 @@ pub fn self_check() -> Vec<SelfCheck> {
             "第三方代签申诉返回 invalid_signature，状态仍为 reported",
         ),
         Err(err) => SelfCheck::fail(TRACK, "appeal.subject_only", err.to_string()),
+    });
+
+    // 处罚闸门：只有受信仲裁者签名的契约能动账本。
+    checks.push(match penalty_gate_probe() {
+        Ok((applied, slashed)) => SelfCheck::pass(
+            TRACK,
+            "penalty.arbiter_gated",
+            format!(
+                "未授权契约被拒后账本逐字段不变；受信契约罚没 {applied}，账本 slashed={slashed}，守恒成立"
+            ),
+        ),
+        Err(err) => SelfCheck::fail(TRACK, "penalty.arbiter_gated", err.to_string()),
     });
 
     // 证据闸门：伪造摘要必须被拒，且不留下案件与事件。
@@ -337,6 +351,75 @@ fn forged_evidence_probe() -> CoreResult<()> {
     Ok(())
 }
 
+/// 独立实验：处罚闸门。未受信的契约分文不动，受信的契约精确罚没。
+fn penalty_gate_probe() -> CoreResult<(Credits, Credits)> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config, office_keys)?;
+
+    let participants = vec![reporter.did(), subject.did()];
+    let payload = json!({"probe": "penalty-gate"});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &payload)?;
+    let report = office.report(
+        &mut kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::NonDelivery,
+        reference,
+        &payload,
+    )?;
+    let before = ledger_snapshot(&kernel, &participants);
+
+    // 未受信的签署者：即使签名自洽也必须被拒。
+    let outsider = role_keys(0x6d);
+    let rogue = PenaltyOrder::new(
+        report.id.clone(),
+        subject.did(),
+        SanctionKind::StakeSlash,
+        Credits(5),
+        outsider.did(),
+        0,
+    )
+    .sign(&outsider)?;
+    if office.apply_penalty_order(&mut kernel, rogue) != Err(CoreError::InvalidSignature) {
+        return Err(CoreError::InvalidSignature);
+    }
+    if ledger_snapshot(&kernel, &participants) != before {
+        return Err(CoreError::Overflow);
+    }
+
+    // 受信的仲裁者：罚没精确发生。
+    let order = PenaltyOrder::new(
+        report.id.clone(),
+        subject.did(),
+        SanctionKind::StakeSlash,
+        Credits(5),
+        arbiter.did(),
+        kernel.now(),
+    )
+    .sign(&arbiter)?;
+    let record = office.apply_penalty_order(&mut kernel, order)?;
+    if record.applied != Credits(5) || kernel.ledger().slashed() != Credits(5) {
+        return Err(CoreError::Overflow);
+    }
+    if office.slashed_total()? != Credits(5) {
+        return Err(CoreError::Overflow);
+    }
+    kernel.ledger().check_conservation()?;
+    Ok((record.applied, kernel.ledger().slashed()))
+}
+
 /// 轨道产物摘要（只读投影的一部分）。
 pub fn results_json() -> CoreResult<Value> {
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
@@ -392,32 +475,9 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         evidence,
         &evidence_payload,
     )?;
-
-    // 3) 申诉：被处罚方（案件主体）提交证据。只推状态、只写链，不动账本。
-    let appeal_payloads = vec![json!({"task": "deliver-1", "receipt": "signed-by-receiver", "ok": true})];
-    let appeal_references = vec![EvidenceRef::commit(
-        EvidenceKind::Witness,
-        &appeal_payloads[0],
-    )?];
-    let appeal = office.appeal(
-        kernel,
-        &subject,
-        &report.id,
-        appeal_references,
-        &appeal_payloads,
-    )?;
-
-    // 从举报到申诉，账本与名片必须逐字段不变（无罪不罚 + 申诉不改账）。
-    let after = ledger_snapshot(kernel, &participants);
-    let fingerprint_after = ledger_fingerprint(kernel, &participants)?;
-    let ledger_untouched = before == after
-        && fingerprint_before == fingerprint_after
-        && kernel.card(&subject.did()).cloned() == subject_card_before;
-    if !ledger_untouched
-        || office.status_of(&report.id) != Some(CaseStatus::Appealed)
-    {
-        return Err(CoreError::Overflow);
-    }
+    // 举报受理后立刻取快照：这一阶段（未确认）不允许任何账本变化。
+    let snapshot_after_report = ledger_snapshot(kernel, &participants);
+    let fingerprint_after_report = ledger_fingerprint(kernel, &participants)?;
 
     // 4) 伪造证据：必须被拒，且不留案件、不留事件。
     let forged_payload = json!({"task": "deliver-1", "delivered": true, "deadline": 40});
@@ -436,6 +496,47 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         && office.case_count() == cases_before_forgery
         && office.event_count() == events_before_forgery;
 
+    // 5) 仲裁者处罚契约：这是账本**唯一**的改动入口。
+    let order = PenaltyOrder::new(
+        report.id.clone(),
+        subject.did(),
+        SanctionKind::StakeSlash,
+        Credits(5),
+        arbiter.did(),
+        kernel.now(),
+    )
+    .sign(&arbiter)?;
+    let penalty = office.apply_penalty_order(kernel, order)?;
+    let after_penalty = ledger_snapshot(kernel, &participants);
+    let penalty_moved_ledger = after_penalty != before
+        && penalty.applied == Credits(5)
+        && kernel.ledger().slashed() == Credits(5);
+
+    // 6) 被处罚方申诉：提交证据、推状态、写链——**不再动账本**。
+    let appeal_payloads = vec![json!({"task": "deliver-1", "receipt": "signed-by-receiver", "ok": true})];
+    let appeal_references = vec![EvidenceRef::commit(
+        EvidenceKind::Witness,
+        &appeal_payloads[0],
+    )?];
+    let appeal = office.appeal(
+        kernel,
+        &subject,
+        &report.id,
+        appeal_references,
+        &appeal_payloads,
+    )?;
+    let after_appeal = ledger_snapshot(kernel, &participants);
+    let appeal_untouched = after_appeal == after_penalty
+        && office.status_of(&report.id) == Some(CaseStatus::Appealed);
+    if !penalty_moved_ledger || !appeal_untouched {
+        return Err(CoreError::Overflow);
+    }
+
+    // 未确认举报阶段（举报前后）账本与名片必须逐字段不变。
+    let ledger_untouched_by_report = before == snapshot_after_report
+        && fingerprint_before == fingerprint_after_report
+        && kernel.card(&subject.did()).cloned() == subject_card_before;
+
     let verdict = office.verify_chain();
     let events: Vec<Value> = office
         .events()
@@ -446,7 +547,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "{CURRENT} 举报受理 + 哈希链（{} 条事件，链头 {}）",
+            "{CURRENT} 举报→处罚→申诉，哈希链 {} 条事件（链头 {}）",
             verdict.len,
             au4a_core::short_id(&verdict.head)
         ),
@@ -477,12 +578,22 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "reporter": report.reporter.as_str(),
             "subject": report.subject.as_str(),
             "appeals": office.case(&report.id).map(|c| c.appeals.len()),
+            "penalties": office.case(&report.id).map(|c| c.penalties.len()),
+        },
+        "penalty": {
+            "id": penalty.id,
+            "sanction": penalty.sanction.as_str(),
+            "requested": penalty.requested.get(),
+            "applied": penalty.applied.get(),
+            "arbiter": penalty.arbiter.as_str(),
+            "slashed_total": office.slashed_total()?.get(),
+            "moved_ledger": penalty_moved_ledger,
         },
         "appeal": {
             "id": appeal.id,
             "appellant": appeal.appellant.as_str(),
             "evidence": appeal.evidence_count(),
-            "third_party_refused": true,
+            "moved_ledger": !appeal_untouched,
         },
         "chain": {
             "len": verdict.len,
@@ -491,10 +602,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "events": events,
         },
         "ledger": {
-            "untouched_by_unconfirmed_report": ledger_untouched,
+            "untouched_by_unconfirmed_report": ledger_untouched_by_report,
+            "untouched_by_appeal": appeal_untouched,
             "fingerprint_before": fingerprint_before,
-            "fingerprint_after": fingerprint_after,
-            "snapshot": after,
+            "fingerprint_after_report": fingerprint_after_report,
+            "snapshot_after_penalty": after_penalty,
+            "snapshot": after_appeal,
         },
         "forgery": {
             "refused": forgery_refused,

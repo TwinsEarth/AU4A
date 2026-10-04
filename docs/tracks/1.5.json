@@ -114,18 +114,20 @@
         "pub fn SafetyOffice::penalties_for(&self, did: &Did) -> Vec<PenaltyRecord>"
       ],
       "acceptance": [
-        "非仲裁者签名的处罚契约被拒，账本不变",
-        "罚没额超过锁定余额时按锁定余额封顶，守恒仍成立",
-        "处罚记录可按主体查询且与事件链一致"
+        "非仲裁者签名的处罚契约被拒（unauthorized），账本逐字段不变",
+        "篡改金额的契约验签失败，账本不变；种类与金额不一致的契约被拒（InvalidKind/ZeroAmount）",
+        "罚没额超过锁定余额时按锁定余额封顶：requested 保留原值、applied 记录实际值，守恒仍成立",
+        "warning 类处罚写入记录但不动账本",
+        "penalties_for 按主体隔离查询，slashed_total == 账本 slashed"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.3 全绿后开工"
+        "tests_passed": 68,
+        "tests_total": 68,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.4.log；累计 68 个测试"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.5",
