@@ -309,7 +309,8 @@ fn outcome_json_is_machine_readable_evidence() {
 #[test]
 fn self_check_covers_two_phase_and_rollback() {
     let checks = self_check();
-    assert_eq!(checks.len(), 11);
+    // 自检项只增不减：这一版至少要有 v1.3.4 的 11 条。
+    assert!(checks.len() >= 11, "{checks:?}");
     assert!(au4a_core::all_passed(&checks), "{checks:?}");
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"migration.two_phase_commit"));

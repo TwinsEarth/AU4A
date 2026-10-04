@@ -230,8 +230,7 @@ fn zone_roots_are_the_units_of_diagnosis() {
 #[test]
 fn self_check_covers_consistency() {
     let checks = self_check();
-    // 自检项只增不减：这一版至少要有 v1.3.5 的 13 条。
-    assert!(checks.len() >= 13, "{checks:?}");
+    assert_eq!(checks.len(), 13);
     assert!(au4a_core::all_passed(&checks), "{checks:?}");
     let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
     assert!(names.contains(&"consistency.clean"));

@@ -225,16 +225,13 @@ pub fn claim(
         KIND_CLAIM,
         "au4a/state/claims",
         grade,
-        json!({"source": "au4a-state"}),
+        json!({"source": "au4a-state", "method": "cargo test -p au4a-state"}),
         json!({
             "key": key,
             "statement": statement,
             "value": artifact_digest,
             "grade": grade.as_str(),
             "artifact_digest": artifact_digest,
-            // 与 UDOS `evidence.Claim` 的字段对齐：method 记录产出方式，notes 留给补充说明。
-            "method": "cargo test -p au4a-state",
-            "notes": "由 au4a-state 导出；UDOS 侧可独立复算 artifact_digest",
         }),
     )
 }
@@ -565,15 +562,15 @@ mod tests {
         let snapshot = sample();
         let object = snapshot_to_object(&snapshot).unwrap();
         let digest = object["object_id"].as_str().unwrap().to_string();
-        let claim_object = claim(
+        let claim = claim(
             "state.migration.identical",
             "迁移后内容根与源一致",
             au4a_core::EvidenceGrade::Verified,
             &digest,
         )
         .unwrap();
-        assert_eq!(claim_object["kind"], json!(KIND_CLAIM));
-        assert_eq!(claim_object["payload"]["artifact_digest"], json!(digest));
+        assert_eq!(claim["kind"], json!(KIND_CLAIM));
+        assert_eq!(claim["payload"]["artifact_digest"], json!(digest));
         // 摘要格式不对直接拒绝。
         assert_eq!(
             claim("k", "s", au4a_core::EvidenceGrade::Verified, "deadbeef"),

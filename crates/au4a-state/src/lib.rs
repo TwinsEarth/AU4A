@@ -12,9 +12,12 @@
 //! 验证分两层（签名有效 + 正是我要的那份），篡改与替换都必须被拒。
 //! v1.3.4 让移动**全有或全无**：目标节点用影子代 + 单点 head 切换做两阶段提交
 //! （prepare → commit → confirm），任何阶段失败都回滚，**不留部分状态**。
+//! v1.3.5 让「恢复成功」**可被检查**：三区摘要 + 块级差异报告，
+//! 把缺失/多余/被改的块定位到「区 + 键」，而不是一句笼统的校验失败。
 //! 之后每一版都在同一 crate 内增量实现，公共 API 只增不改。
 
 pub mod diff;
+pub mod integrity;
 pub mod recovery;
 pub mod signed;
 pub mod snapshot;
@@ -25,6 +28,10 @@ use au4a_core::{AgentKeys, CoreError, CoreResult, Did, SelfCheck};
 use serde_json::{json, Value};
 
 pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
+pub use integrity::{
+    audit_node, compare, compare_store, is_integrity_error, summarize, ConsistencyReport, Finding,
+    FindingCode, NodeAudit, StoreReport, ZoneReport,
+};
 pub use recovery::{
     migrate, generation_prefix, CommitReceipt, ConfirmReceipt, FaultInjector, FaultPoint,
     Migration, MigrationOutcome, MigrationPlan, MigrationReport, NodeStore, Phase, PrepareReceipt,
@@ -105,6 +112,10 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_two_phase_commit());
     // 11) v1.3.4：任意阶段注入故障都必须回滚到 base，且不留孤儿代。
     checks.push(check_rollback_leaves_no_partial_state());
+    // 12) v1.3.5：一致时报告干净（三区摘要全等）。
+    checks.push(check_consistency_clean());
+    // 13) v1.3.5：损坏时必须被定位到区 + 键（缺失/多余/被改）。
+    checks.push(check_consistency_locates_damage());
 
     checks
 }
@@ -358,6 +369,82 @@ fn check_stale_base_refused() -> SelfCheck {
 
 fn short(s: &str) -> String {
     s.chars().take(16).collect()
+}
+
+fn check_consistency_clean() -> SelfCheck {
+    let name = "consistency.clean";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(bool, usize, usize, bool)> {
+        let mut d = drill(&keys, 1)?;
+        let outcome = migrate(
+            &mut d.node,
+            d.plan.clone(),
+            &d.delta,
+            &d.signed,
+            &mut FaultInjector::none(),
+        )?;
+        if !outcome.is_confirmed() {
+            return Err(CoreError::Encoding);
+        }
+        let live = d.node.live_snapshot()?;
+        let report = compare(&d.after, &live)?;
+        let audit = audit_node(&d.node)?;
+        Ok((
+            report.is_clean(),
+            report.changed_blocks(),
+            audit.findings.len(),
+            audit.orphan_generations.is_empty(),
+        ))
+    })();
+    match result {
+        Ok((true, 0, 0, true)) => SelfCheck::pass(
+            TRACK,
+            name,
+            "源与目标逐区摘要相等：0 处差异；节点审计 0 发现",
+        ),
+        Ok((clean, changed, findings, no_orphans)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("clean={clean} changed={changed} findings={findings} no_orphans={no_orphans}"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("一致性检查失败: {e}")),
+    }
+}
+
+fn check_consistency_locates_damage() -> SelfCheck {
+    let name = "consistency.locates_damage";
+    let keys = track_agent();
+    let result = (|| -> CoreResult<(usize, usize, usize, usize, bool)> {
+        let expected = sample_snapshot(&keys.did())?;
+        let mut store = MemoryStore::new();
+        write_snapshot(&mut store, "live:", &expected)?;
+        // 三区各破坏一处：memory 改值、context 删块、fs 加块（外加一个坏键）。
+        store.put("live:memory:last_task", json!({"tampered": true}))?;
+        store.remove("live:context:goal")?;
+        store.put("live:fs:/injected", json!(1))?;
+        store.put("live:bogus-key", json!(1))?;
+        let report = compare_store(&store, "live:", &expected)?;
+        Ok((
+            report.found(FindingCode::Modified).len(),
+            report.found(FindingCode::Missing).len(),
+            report.found(FindingCode::Extra).len(),
+            report.found(FindingCode::BadKey).len(),
+            report.is_clean(),
+        ))
+    })();
+    match result {
+        Ok((1, 1, 1, 1, false)) => SelfCheck::pass(
+            TRACK,
+            name,
+            "改/删/加/坏键 各定位到 1 处（区 + 键均可读）",
+        ),
+        Ok((m, mi, e, b, clean)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("modified={m} missing={mi} extra={e} badkey={b} clean={clean}（期望 1/1/1/1/false）"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("损坏定位失败: {e}")),
+    }
 }
 
 /// v1.3.4 的演练夹具：源状态 before、目标状态 after、差异、签名、计划、目标节点。
@@ -749,6 +836,17 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         );
     }
 
+    // 8) 一致性检查：源（签名快照）vs 目标（2PC 后的 live），逐区摘要必须相等。
+    let target_live_snapshot = target_node.live_snapshot()?;
+    let report = compare(&after, &target_live_snapshot)?;
+    let audit = audit_node(&target_node)?;
+    // 反向证据：故意破坏一份存储副本，报告必须定位到具体的区与键。
+    let mut damaged = MemoryStore::new();
+    write_snapshot(&mut damaged, "live:", &after)?;
+    damaged.put("live:memory:last_task", json!({"tampered": true}))?;
+    damaged.remove("live:context:goal")?;
+    let damaged_report = compare_store(&damaged, "live:", &after)?;
+
     // 4) 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
     let mut tampered = before.to_value()?;
     if let Some(first) = tampered
@@ -881,8 +979,41 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             "outcome": rolled_back.to_value(),
             "evidence_grade": "verified",
         },
-        "events": 4,
+        "consistency": {
+            "identical": report.is_clean(),
+            "changed_blocks": report.changed_blocks(),
+            "summary": summarize(&report),
+            "zones": report.zones,
+            "node_findings": audit.findings.len(),
+            "orphan_generations": audit.orphan_generations.len(),
+            "damage_detected": {
+                "modified": damaged_report.found(FindingCode::Modified).len(),
+                "missing": damaged_report.found(FindingCode::Missing).len(),
+                "summary": summarize_store(&damaged_report),
+            },
+        },
+        "events": 5,
     }))
+}
+
+/// 存储报告的简短结论文本。
+fn summarize_store(report: &StoreReport) -> String {
+    if report.is_clean() {
+        return "clean".to_string();
+    }
+    let mut parts = Vec::new();
+    for zone in &report.zones {
+        if !zone.is_clean() {
+            parts.push(format!(
+                "{}: -{} +{} ~{}",
+                zone.zone.as_str(),
+                zone.missing.len(),
+                zone.extra.len(),
+                zone.modified.len()
+            ));
+        }
+    }
+    parts.join("; ")
 }
 
 /// 内部自检辅助：快照整体自洽（root + 每块摘要）。库代码不 panic。
@@ -901,7 +1032,7 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks));
-        assert_eq!(checks.len(), 11);
+        assert_eq!(checks.len(), 13);
     }
 
     #[test]
@@ -940,6 +1071,11 @@ mod tests {
         assert_eq!(a["two_phase"]["orphan_generations"], json!(0));
         assert_eq!(a["two_phase"]["rollback_clean"], json!(true));
         assert_eq!(a["two_phase"]["rollback_live_content_root"], a["before_content_root"]);
+        assert_eq!(a["consistency"]["identical"], json!(true));
+        assert_eq!(a["consistency"]["changed_blocks"], json!(0));
+        assert_eq!(a["consistency"]["node_findings"], json!(0));
+        assert_eq!(a["consistency"]["damage_detected"]["modified"], json!(1));
+        assert_eq!(a["consistency"]["damage_detected"]["missing"], json!(1));
         k1.ledger().check_conservation().unwrap();
     }
 
