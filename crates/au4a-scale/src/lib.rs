@@ -14,12 +14,14 @@
 //! v1.9.4 效果评估 → v1.9.5 数据收集 → v1.9.6 分析工具 → v1.9.7 测试 →
 //! v1.9.8 文档 → v1.9.9 论文。轨道间**零耦合**：只依赖 `au4a-core` 与 `au4a-kernel`。
 
+pub mod harness;
 pub mod metrics;
 
 use au4a_core::{CoreResult, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
 pub use metrics::{
     aggregate_throughput_milli, analytic_vertex_floor, completion_bp, coordination_base,
     effective_per_node_milli, interaction_complexity, marginal_gain_milli, net_throughput_milli,
@@ -33,7 +35,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.1";
+pub const CURRENT: &str = "v1.9.2";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -112,6 +114,31 @@ pub fn self_check() -> Vec<SelfCheck> {
         }
     });
 
+    // v1.9.2：实验框架必须确定性且内容寻址。
+    checks.push(match (
+        harness::run(&ExperimentConfig::default_tiers()),
+        harness::run(&ExperimentConfig::default_tiers()),
+    ) {
+        (Ok(first), Ok(second)) => {
+            if first == second && first.digest == second.digest && first.digest.len() == 64 {
+                SelfCheck::pass(
+                    TRACK,
+                    "harness.deterministic",
+                    format!(
+                        "同一配置两次 run 完全相同，digest={} 覆盖 {} 个档位",
+                        au4a_core::short_id(&first.digest),
+                        first.rows.len()
+                    ),
+                )
+            } else {
+                SelfCheck::fail(TRACK, "harness.deterministic", "两次 run 结果不一致")
+            }
+        }
+        (Err(err), _) | (_, Err(err)) => {
+            SelfCheck::fail(TRACK, "harness.deterministic", err.to_string())
+        }
+    });
+
     checks
 }
 
@@ -136,31 +163,16 @@ pub fn results_json() -> CoreResult<Value> {
 /// 契约（不可改）：不 panic、不读文件、不开网络、不读墙钟；同样的输入给同样的输出。
 /// 每一版迭代都应该让这里多做一件真实的事，而不是多打印一行字。
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
-    let params = ScalingParams::default();
-    params.validate()?;
-    let demand_milli = 20_000;
-
-    let mut rows = Vec::new();
-    for nodes in [10u64, 100, 1_000, 10_000] {
-        rows.push(json!({
-            "nodes": nodes,
-            "per_node_milli": effective_per_node_milli(nodes, &params)?,
-            "aggregate_milli": aggregate_throughput_milli(nodes, &params)?,
-            "overhead_milli": orchestration_overhead_milli(nodes, &params)?,
-            "net_milli": net_throughput_milli(nodes, &params)?,
-            "completion_bp": completion_bp(nodes, &params, demand_milli)?,
-            "overhead_ratio_bp": overhead_ratio_bp(nodes, &params)?,
-            "marginal_gain_milli": marginal_gain_milli(nodes, &params)?,
-        }));
-    }
+    let config = ExperimentConfig::default_tiers();
+    config.validate()?;
+    let report = run_experiment(&config)?;
 
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "{CURRENT} 缩放度量：N0={} α={}，{} 个节点档位",
-            params.n0,
-            params.alpha,
-            rows.len()
+            "{CURRENT} 实验框架：{} 个档位，digest={}",
+            report.rows.len(),
+            au4a_core::short_id(&report.digest)
         ),
     );
 
@@ -168,10 +180,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "version": CURRENT,
-        "params": params.to_json()?,
-        "demand_milli": demand_milli,
-        "rows": rows,
-        "analytic_vertex": analytic_vertex_floor(params.n0, params.alpha),
+        "config": report.config.to_json()?,
+        "rows": report.rows,
+        "digest": report.digest,
+        "peak_nodes": report.peak().map(|row| row.nodes),
+        "first_negative_net_nodes": report.first_negative_net().map(|row| row.nodes),
+        "analytic_vertex": analytic_vertex_floor(config.params.n0, config.params.alpha),
         "note": "确定性聚合模型（解析式实现），非真实分布式压测",
     }))
 }

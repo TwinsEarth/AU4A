@@ -60,12 +60,12 @@
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-scale",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.9.1 全绿后开工"
+        "tests_passed": 14,
+        "tests_total": 14,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.2.log；累计 14 个测试"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.9.3",
