@@ -216,17 +216,6 @@ impl NegotiationMsg {
         }
     }
 
-    /// 协商会话字段：四种协商消息带会话，合约类消息挂的是合约编号（没有会话字段）。
-    pub fn negotiate_session(&self) -> Option<&str> {
-        match self {
-            Self::Request { session, .. }
-            | Self::Counter { session, .. }
-            | Self::Accept { session, .. }
-            | Self::Reject { session, .. } => Some(session),
-            Self::SignContract { .. } | Self::Breach { .. } => None,
-        }
-    }
-
     /// 报价轮次。`Request` 是第 0 轮（开局不算还价）。
     pub fn round(&self) -> u32 {
         match self {
