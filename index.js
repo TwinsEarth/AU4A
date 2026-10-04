@@ -9,9 +9,11 @@ import { Wallet } from './src/core/wallet.js';
 import { AgentRegistry } from './src/autonomy/registry.js';
 import { HumanObserver } from './src/observer/dashboard.js';
 
-export const version = '1.1.0';
+export const version = '1.2.0';
 export { Identity, Wallet, AgentRegistry, HumanObserver };
 export const sdk = au;
 export const sdkVersion = au.version;
 
 export { Capability, CapabilityGraph } from './src/capgraph/graph.js';
+
+export { Negotiation, NegotiationState } from './src/negotiate/protocol.js';
