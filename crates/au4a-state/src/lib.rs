@@ -16,6 +16,7 @@
 //! 把缺失/多余/被改的块定位到「区 + 键」，而不是一句笼统的校验失败。
 //! 之后每一版都在同一 crate 内增量实现，公共 API 只增不改。
 
+pub mod chain;
 pub mod diff;
 pub mod integrity;
 pub mod perf;
@@ -29,6 +30,7 @@ pub mod udos;
 use au4a_core::{AgentKeys, CoreError, CoreResult, Did, SelfCheck};
 use serde_json::{json, Value};
 
+pub use chain::{run_chain, ChainOptions, ChainReport, ConsistencyReportView};
 pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
 pub use integrity::{
     audit_node, compare, compare_store, is_integrity_error, summarize, ConsistencyReport, Finding,
@@ -135,6 +137,8 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_digest_cache_reuse());
     // 17) v1.3.7：续跑真的省下操作数（用确定性计数器证明，不用墙钟）。
     checks.push(check_resume_saves_work());
+    // 18) v1.3.8：把七版能力串成一条链后仍然成立（端到端自有流程）。
+    checks.push(check_full_chain());
 
     checks
 }
@@ -502,6 +506,53 @@ fn state_as_raw(blocks: Vec<StateBlock>) -> Vec<(StateZone, String, serde_json::
         .into_iter()
         .map(|b| (b.zone(), b.key().to_string(), b.value().clone()))
         .collect()
+}
+
+/// v1.3.8：把全部能力串成一条链跑一遍（这也是端到端演示与灾难演练用的同一条链）。
+fn check_full_chain() -> SelfCheck {
+    let name = "chain.full_migration";
+    let keys = track_agent();
+    let did = keys.did();
+    let result = (|| -> CoreResult<(bool, bool, usize, usize, bool, bool)> {
+        let base = StateSnapshot::capture(&did, "node-a", 1, sample_state()?)?;
+        let target = StateSnapshot::capture(&did, "node-a", 2, evolved_state()?)?;
+        let to_node = NodeId::new("node-b")?;
+        let ok = run_chain(&keys, &base, &target, &to_node, &ChainOptions::default())?;
+        // 同一条链在注入故障后必须回滚回 base，而不是留下混合状态。
+        let rolled = run_chain(
+            &keys,
+            &base,
+            &target,
+            &to_node,
+            &ChainOptions {
+                fault: Some(FaultPoint::BeforeFlip),
+                ..ChainOptions::default()
+            },
+        )?;
+        Ok((
+            ok.is_ok(),
+            ok.identical,
+            ok.chunks,
+            ok.dropped_frames,
+            rolled.is_ok(),
+            rolled.rollback_clean,
+        ))
+    })();
+    match result {
+        Ok((true, true, chunks, dropped, true, true)) if chunks > 0 && dropped > 0 => SelfCheck::pass(
+            TRACK,
+            name,
+            format!("链路成立：{chunks} 块、丢 {dropped} 帧后续跑成功；注入故障后回滚干净"),
+        ),
+        Ok((ok, identical, chunks, dropped, rolled, clean)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!(
+                "ok={ok} identical={identical} chunks={chunks} dropped={dropped} rolled_ok={rolled} rollback_clean={clean}"
+            ),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("链路失败: {e}")),
+    }
 }
 
 fn check_udos_contract_roundtrip() -> SelfCheck {
@@ -1316,7 +1367,7 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks), "{checks:#?}");
-        assert_eq!(checks.len(), 17);
+        assert_eq!(checks.len(), 18);
     }
 
     #[test]

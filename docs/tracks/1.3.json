@@ -264,18 +264,32 @@
     {
       "version": "v1.3.8",
       "title": "测试",
-      "goal": "全链路集成测试 + 篡改矩阵 + 边界与拒绝路径。",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "goal": "全链路集成（run_chain）+ 篡改矩阵 + 故障矩阵 + 边界与拒绝路径。",
+      "deliverables": [
+        "src/chain.rs: run_chain/ChainOptions/ChainReport/ConsistencyReportView（产品代码，灾难演练复用）",
+        "tests/v138_chain.rs: 16 个集成测试（篡改/故障/边界三个矩阵）"
+      ],
+      "interfaces": [
+        "pub fn run_chain(agent, base, target, to_node, options) -> CoreResult<ChainReport>",
+        "pub struct ChainOptions { chunk_ops, first_batch_chunks, drop_rest, fault, epoch }",
+        "pub struct ChainReport { base/source/live_content_root, identical, signed_and_verified, chunks, dropped_frames, resumed_from, delta_ops, committed, rollback_clean, consistency, work, delta_plan, udos_* }",
+        "pub fn ChainReport::is_ok(&self) -> bool"
+      ],
+      "acceptance": [
+        "6 块状态逐块篡改全部被检出；逐个存储键改/删恰好定位 1 处",
+        "每个差异块被篡改都被拒；改签名/改 object_id 被拒",
+        "5 个注入点全部回滚且 live==base、一致性干净",
+        "空↔单块双向迁移、零差异链路、Unicode/控制字符、超限输入全部按预期",
+        "链路报告逐字节可重放；跨 Agent 与 chunk_ops=0 被拒"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-state",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 186,
+        "tests_total": 186,
+        "grade": "verified",
+        "notes": "lib 82 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 + v138 16 全绿 0 warning。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.8.log"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.3.9",
