@@ -17,6 +17,7 @@ use crate::experience::{Experience, ExperienceStore, Outcome};
 use crate::feedback::FeedbackAnalyser;
 use crate::policy::{adjust, PolicyBounds, PolicyParams, PolicyTargets, Signals};
 use crate::rng::hash64;
+use crate::signal::{LearningSignal, SignalWeights};
 use crate::sim::{ab_test, MarketConfig};
 use crate::violation::ViolationLog;
 use crate::TRACK;
@@ -195,6 +196,21 @@ pub fn run(kernel: &mut Kernel) -> CoreResult<Value> {
 
     let stats = serde_json::to_value(store.stats()).map_err(|_| CoreError::Encoding)?;
 
+    // v1.6.4：四类学习信号（完成质量 / 结算金额 / 信誉变化 / 违规记录）折算成统一向量
+    let violations = ViolationLog::new();
+    let signal = LearningSignal::from_store(&store, &violations, 0, &SignalWeights::default())?;
+    kernel.emit(
+        &format!("{TRACK}.signal.aggregate"),
+        format!(
+            "学习信号：质量 {}bp、结算 {} 微积分、信誉 {}、违规 {} → 综合 {}bp",
+            signal.quality_bp,
+            signal.settled,
+            signal.reputation_delta,
+            signal.violations,
+            signal.composite_bp
+        ),
+    );
+
     // v1.6.3：用这 24 条成功/失败经验做一次真实的行为调整（策略参数必须真的变）
     let baseline = PolicyParams::baseline();
     let signals = Signals::cold_start(
@@ -254,6 +270,7 @@ pub fn run(kernel: &mut Kernel) -> CoreResult<Value> {
         "digest": store.digest()?,
         "store": stats,
         "feedback": report.public_json()?,
+        "learning_signal": signal.to_value()?,
         "ledger_conserved": kernel.ledger().check_conservation().is_ok(),
         "policy_adjustment": adjustment.public_json()?,
         "policy_before": baseline.public_json()?,

@@ -21,9 +21,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::experience::{Experience, ExperienceStore, Outcome};
-use crate::feedback::{confidence_of, FeedbackAnalyser, MIN_SAMPLES};
-use crate::policy::{adjust, PolicyBounds, PolicyParams, PolicyTargets, Signals};
+use crate::feedback::{FeedbackAnalyser, MIN_SAMPLES};
+use crate::policy::{adjust, PolicyBounds, PolicyParams, PolicyTargets};
 use crate::rng::{hash_below, hash_bp};
+use crate::signal::{LearningSignal, SignalWeights};
 use crate::violation::{Violation, ViolationLog};
 
 /// 任务类型画像。Agent **观察不到** `difficulty_bp`，只能从结果里估计。
@@ -163,6 +164,8 @@ pub struct RoundStats {
     pub params_digest: String,
     /// 本轮参数是否改变。
     pub changed: bool,
+    /// 本轮四类学习信号的综合值（万分比）。
+    pub signal_composite_bp: i64,
 }
 
 /// 一次市场跑批的完整结果。
@@ -403,7 +406,7 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
             acc.revenue = acc.revenue.checked_add(revenue)?;
         }
 
-        // ---- 学习阶段：反馈分析 → 行为调整 ----
+        // ---- 学习阶段：反馈分析 → 学习信号 → 行为调整 ----
         let report = FeedbackAnalyser::analyse(&store)?;
         let ticks = acc.ticks.max(1) as i64;
         let round_mean = Credits(acc.revenue.get() / ticks);
@@ -414,18 +417,16 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
         } else {
             Credits((3 * prev_reward.get() + round_mean.get()) / 4)
         };
-        let signals = Signals {
-            sample: acc.ticks as usize,
-            confidence_bp: confidence_of(acc.ticks as usize),
-            accept_rate_bp: Some(ratio_bp(acc.accepted as i64, acc.ticks as i64)),
-            success_bp: ratio_bp(acc.successes as i64, acc.ticks as i64),
-            mean_reward: reward_ema,
-            prev_mean_reward: prev_reward,
-            prev_price_dir: prev_dir,
-            violations: acc.violations,
-            // 信誉台账在 v1.6.5 落地；本版如实传 0，不假装有信誉信号。
-            reputation_delta: 0,
-        };
+        // v1.6.4：四类学习信号（质量/结算/信誉/违规）从经验窗口与违规台账折算。
+        // 信誉台账在 v1.6.5 落地，这里如实传 0，不假装有信誉信号。
+        let signal = LearningSignal::from_store(&store, &violations, 0, &SignalWeights::default())?;
+        let signals = signal.to_signals(
+            acc.ticks as usize,
+            Some(ratio_bp(acc.accepted as i64, acc.ticks as i64)),
+            reward_ema,
+            prev_reward,
+            prev_dir,
+        );
         let adjustment = adjust(&params, &report, &violations, &signals, &bounds, &targets)?;
         let changed = config.learn && adjustment.changed;
         if changed {
@@ -451,6 +452,7 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
             price_bp: params.price_bp,
             params_digest: params.digest()?,
             changed,
+            signal_composite_bp: signal.composite_bp,
         });
         totals.add(&acc);
         experiences_recorded = experiences_recorded.saturating_add(acc.ticks);

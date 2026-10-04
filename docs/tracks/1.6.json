@@ -123,26 +123,40 @@
     {
       "version": "v1.6.4",
       "title": "学习信号",
-      "goal": "把四类信号（任务完成质量 / 结算金额 / 信誉变化 / 违规记录）折算成统一的整数信号向量。",
+      "goal": "把四类信号（任务完成质量 / 结算金额 / 信誉变化 / 违规记录）折算成统一的整数信号向量，并让它们真的参与决策。",
       "deliverables": [
-        "src/signal.rs: LearningSignal / SignalWeights"
+        "src/signal.rs: SignalWeights / LearningSignal / VIOLATION_UNIT_BP",
+        "src/policy.rs: 信誉下降时冻结涨价（让信誉信号真的改变行为）",
+        "src/sim.rs: 每轮用 from_store 生成信号并喂给 adjust()，RoundStats.signal_composite_bp 留证",
+        "src/scenario.rs: 端到端摘要输出 learning_signal",
+        "tests/signal.rs: 8 个集成测试"
       ],
       "interfaces": [
-        "pub fn LearningSignal::from_experience(&Experience, &PeerLedger) -> CoreResult<LearningSignal>"
+        "pub struct SignalWeights { quality_bp, settled_bp, reputation_bp, violation_bp, reward_ref, reputation_ref }",
+        "pub const VIOLATION_UNIT_BP: i64 = 2500",
+        "pub struct LearningSignal { quality_bp, settled, reputation_delta, violations, *_norm_bp, composite_bp }",
+        "pub fn LearningSignal::compute(quality_bp, settled, reputation_delta, violations, &SignalWeights) -> CoreResult<LearningSignal>",
+        "pub fn LearningSignal::from_experience(&Experience, &ViolationLog, &SignalWeights) -> CoreResult<LearningSignal>",
+        "pub fn LearningSignal::from_store(&ExperienceStore, &ViolationLog, reputation_delta, &SignalWeights) -> CoreResult<LearningSignal>",
+        "pub fn LearningSignal::to_signals(&self, sample, accept_rate_bp, mean_reward, prev_mean_reward, prev_price_dir) -> Signals"
       ],
       "acceptance": [
-        "四类信号各自的精确取值有断言",
-        "违规记录使综合信号严格下降",
-        "信号→策略输入（Signals）映射无浮点、无饱和歧义"
+        "质量 5000 + 结算 50/100 + 信誉 +50/100 → 归一 (5000,5000,5000,0)、综合 4500bp（精确）",
+        "四类全满 → 9000bp；四类全负 → -2500bp",
+        "质量↑/结算↑/信誉↑ → 综合↑；信誉↓/违规↑ → 综合↓；结算与信誉归一值封顶 10000bp；违规第 4 条起吃满",
+        "from_experience 只统计该条经验参与者的违规",
+        "from_store：质量均值 6250bp、结算求和 100；空库给零信号不是错误",
+        "权重校验：负权重 → NegativeAmount；权重和 >10000 / 分母为 0 → InvalidKind",
+        "reputation_delta=-40 时冻结涨价（price_moved=0，理由含『冻结涨价』），reputation_delta=0 时 +500bp"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 52,
+        "tests_total": 52,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 9 策略 + 8 信号。信誉信号在本版仍由调用方显式传入（市场里如实传 0，信誉台账到 v1.6.5 才落地），不假装已有信誉数据。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.4.log"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.6.5",

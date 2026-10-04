@@ -277,7 +277,16 @@ pub fn adjust(
     let mut reasons = Vec::new();
 
     // ---- 定价策略 ----
-    let dir = price_direction(signals, targets);
+    let mut dir = price_direction(signals, targets);
+    // 信誉变化也是一类学习信号：信誉在下降时冻结涨价（不为了一点收益去冒失去协作对象的险）。
+    // 这一条让「信誉变化」这个信号真的参与决策，而不是被记录后丢掉。
+    if dir > 0 && signals.reputation_delta < 0 {
+        reasons.push(format!(
+            "pricing: reputation_delta={} < 0 → 冻结涨价（信誉下降时不提价）",
+            signals.reputation_delta
+        ));
+        dir = 0;
+    }
     let price_moved = move_price(&mut next, dir, bounds);
     if price_moved != 0 {
         reasons.push(format!(
