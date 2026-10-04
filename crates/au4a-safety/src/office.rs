@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 use crate::appeal::Appeal;
 use crate::arbitration::{ArbitrationRequest, ArbitrationVerdict, CaseOutcome, VerdictOutcome};
+use crate::audit::{self, AuditCode, AuditFinding, AuditReport};
 use crate::case::{Case, CaseStatus, ViolationKind, ViolationReport};
 use crate::chain::{chain_head, verify_chain, ChainVerdict, SafetyEvent, SafetyEventKind};
 use crate::config::SafetyConfig;
@@ -95,18 +96,21 @@ impl SafetyOffice {
     }
 
     /// 追加一条链上事件。序号、时间、前驱全部由链自身决定，调用方无法伪造。
+    ///
+    /// 返回 `(seq, at)`：调用方必须用**事件里的**时间戳来记录派生状态，
+    /// 这样「运行时状态」与「重放结果」才由同一个事实决定。
     pub(crate) fn append(
         &mut self,
         kernel: &mut Kernel,
         kind: SafetyEventKind,
         payload: Value,
-    ) -> CoreResult<()> {
+    ) -> CoreResult<(u64, u64)> {
         let at = kernel.tick();
         let seq = self.events.len() as u64;
         let prev = chain_head(&self.events);
         let event = SafetyEvent::seal(seq, at, kind, payload, &prev)?;
         self.events.push(event);
-        Ok(())
+        Ok((seq, at))
     }
 
     /// 受理一次举报。**不触碰账本，不触碰信誉。**
@@ -196,7 +200,11 @@ impl SafetyOffice {
         report.verify()?;
 
         let at = report.at;
-        let case = Case::from_report(report);
+        let seq = self.events.len() as u64;
+        let mut case = Case::from_report(report);
+        // `status_seq` 必须等于事件在链上的序号——重放会从链上取值，
+        // 两边必须由同一个事实决定，否则审计会（正确地）报不一致。
+        case.status_seq = seq;
         let case_id = case.id.clone();
         self.cases.insert(case_id.clone(), case);
         self.append(
@@ -765,8 +773,6 @@ impl SafetyOffice {
             }
         };
 
-        let at = kernel.tick();
-        let seq = self.events.len() as u64;
         let mut applied = Credits::ZERO;
         let mut refunded = Credits::ZERO;
 
@@ -783,21 +789,6 @@ impl SafetyOffice {
                         kernel.ledger_mut().slash(&case.subject, take)?;
                         applied = take;
                     }
-                }
-                let record = PenaltyRecord {
-                    id: verdict.id.clone(),
-                    case: verdict.case.clone(),
-                    subject: case.subject.clone(),
-                    sanction: verdict.sanction,
-                    requested: verdict.amount,
-                    applied,
-                    arbiter: verdict.arbiter.clone(),
-                    at,
-                    reversed: false,
-                };
-                self.penalties.push(record.clone());
-                if let Some(target) = self.cases.get_mut(&verdict.case) {
-                    target.penalties.push(record.id.clone());
                 }
             }
             VerdictOutcome::Rejected => {
@@ -819,13 +810,9 @@ impl SafetyOffice {
             }
         }
 
-        if let Some(target) = self.cases.get_mut(&verdict.case) {
-            target.status = CaseStatus::Arbitrated;
-            target.status_seq = seq;
-            target.outcome = Some(verdict.outcome);
-            target.arbitrated_at = Some(at);
-        }
-        self.append(
+        // 时间戳与序号一律取自**已追加的事件**：重放只能看到事件里的值，
+        // 如果运行时另取一个 tick，审计就会（正确地）报出状态与重放不一致。
+        let (seq, at) = self.append(
             kernel,
             SafetyEventKind::Arbitrated,
             json!({
@@ -835,6 +822,31 @@ impl SafetyOffice {
                 "refunded": refunded,
             }),
         )?;
+
+        if verdict.outcome == VerdictOutcome::Upheld {
+            let record = PenaltyRecord {
+                id: verdict.id.clone(),
+                case: verdict.case.clone(),
+                subject: case.subject.clone(),
+                sanction: verdict.sanction,
+                requested: verdict.amount,
+                applied,
+                arbiter: verdict.arbiter.clone(),
+                at,
+                reversed: false,
+            };
+            self.penalties.push(record.clone());
+            if let Some(target) = self.cases.get_mut(&verdict.case) {
+                target.penalties.push(record.id.clone());
+            }
+        }
+
+        if let Some(target) = self.cases.get_mut(&verdict.case) {
+            target.status = CaseStatus::Arbitrated;
+            target.status_seq = seq;
+            target.outcome = Some(verdict.outcome);
+            target.arbitrated_at = Some(at);
+        }
         self.deliver(&verdict.case, CaseStatus::Arbitrated, seq, at);
         kernel.emit(
             &format!("{}.arbitrated", crate::TRACK),
@@ -854,6 +866,175 @@ impl SafetyOffice {
             refunded,
             status: CaseStatus::Arbitrated,
         })
+    }
+
+    // ---- v1.5.10 审计 ----
+
+    /// 从事件链重建一个服务实例（不复制任何实时状态）。
+    ///
+    /// 这是审计与灾备的共同入口：给定同一份事件链与同一份配置，重建出的状态必须一致。
+    /// 通知是派生投影而非事件，因此重建实例的收件箱为空（历史通知不重放）。
+    pub fn from_journal(
+        events: Vec<SafetyEvent>,
+        config: SafetyConfig,
+        service: AgentKeys,
+    ) -> CoreResult<Self> {
+        if !verify_chain(&events).ok {
+            return Err(CoreError::InvalidSignature);
+        }
+        let replayed = audit::replay(&events)?;
+        let mut office = Self::new(config, service)?;
+        office.events = events;
+        office.cases = replayed.cases;
+        office.appeals = replayed.appeals;
+        office.penalties = replayed.penalties;
+        office.subscriptions = replayed.subscriptions;
+        Ok(office)
+    }
+
+    /// 只读审计：链完整性 + 状态==重放(链) + 账本交叉核对 + 结构一致性。
+    ///
+    /// 等价于 `audit_since(kernel, Credits::ZERO)`：适用于**独占内核**的场景。
+    pub fn audit(&self, kernel: &Kernel) -> AuditReport {
+        self.audit_since(kernel, Credits::ZERO)
+    }
+
+    /// 带基线的审计：只核对「本服务活动期间」的账本变化。
+    ///
+    /// 共享内核上会同时跑别的轨道，账本 `slashed` 里可能有别人的罚没；
+    /// 传入服务开始活动时的 `slashed` 快照，交叉核对才是公平的比较。
+    pub fn audit_since(&self, kernel: &Kernel, baseline: Credits) -> AuditReport {
+        let chain = verify_chain(&self.events);
+        let mut findings: Vec<AuditFinding> = Vec::new();
+
+        if !chain.ok {
+            findings.push(AuditFinding::new(
+                AuditCode::ChainBroken,
+                json!({
+                    "at": chain.broken_at,
+                    "reason": chain.reason.map(|reason| reason.as_str()),
+                    "len": chain.len,
+                }),
+            ));
+        }
+
+        // 状态 == 重放(事件链)：把「每次都写链」变成可验算的等式。
+        match audit::replay(&self.events) {
+            Ok(replayed) => {
+                if replayed.cases != self.cases
+                    || replayed.appeals != self.appeals
+                    || replayed.penalties != self.penalties
+                    || replayed.subscriptions != self.subscriptions
+                {
+                    findings.push(AuditFinding::new(
+                        AuditCode::StateReplayMismatch,
+                        json!({
+                            "live": {
+                                "cases": self.cases.len(),
+                                "appeals": self.appeals.len(),
+                                "penalties": self.penalties.len(),
+                                "subscriptions": self.subscriptions.len(),
+                            },
+                            "replayed": {
+                                "cases": replayed.cases.len(),
+                                "appeals": replayed.appeals.len(),
+                                "penalties": replayed.penalties.len(),
+                                "subscriptions": replayed.subscriptions.len(),
+                            },
+                        }),
+                    ));
+                }
+                findings.extend(replayed.findings);
+            }
+            Err(err) => findings.push(AuditFinding::new(
+                AuditCode::StateReplayMismatch,
+                json!({"error": err.to_string()}),
+            )),
+        }
+
+        // 结构性检查：处罚记录必须挂在真实案件上，且主体一致。
+        for record in &self.penalties {
+            match self.cases.get(&record.case) {
+                Some(case) => {
+                    if case.subject != record.subject {
+                        findings.push(AuditFinding::new(
+                            AuditCode::SubjectMismatch,
+                            json!({"penalty": record.id, "case": record.case}),
+                        ));
+                    }
+                }
+                None => findings.push(AuditFinding::new(
+                    AuditCode::CaseMissing,
+                    json!({"penalty": record.id, "case": record.case}),
+                )),
+            }
+        }
+        // 结构检查：通知必须属于一个存在（或曾经存在）的订阅。
+        for notification in &self.notifications {
+            if !self.subscriptions.contains_key(&notification.subscription) {
+                findings.push(AuditFinding::new(
+                    AuditCode::NotificationOrphan,
+                    json!({"subscription": notification.subscription, "case": notification.case}),
+                ));
+            }
+        }
+
+        // 账本交叉核对：历史罚没 == 记录里实际执行额合计；守恒式成立。
+        let gross = match self.gross_slashed() {
+            Ok(value) => value,
+            Err(err) => {
+                findings.push(AuditFinding::new(
+                    AuditCode::LedgerMismatch,
+                    json!({"error": err.to_string()}),
+                ));
+                Credits::ZERO
+            }
+        };
+        let net = self.slashed_total().unwrap_or(Credits::ZERO);
+        let refunded = self.refunded_total().unwrap_or(Credits::ZERO);
+        let ledger_slashed = kernel.ledger().slashed();
+        // 基线之上的账本罚没必须等于本服务记录的合计。
+        match ledger_slashed.checked_sub(baseline) {
+            Ok(since_baseline) if since_baseline == gross => {}
+            Ok(since_baseline) => findings.push(AuditFinding::new(
+                AuditCode::LedgerMismatch,
+                json!({
+                    "office_gross": gross.get(),
+                    "ledger_slashed_since_baseline": since_baseline.get(),
+                    "baseline": baseline.get(),
+                    "ledger_slashed": ledger_slashed.get(),
+                }),
+            )),
+            Err(err) => findings.push(AuditFinding::new(
+                AuditCode::LedgerMismatch,
+                json!({"error": err.to_string(), "baseline": baseline.get()}),
+            )),
+        }
+        if kernel.ledger().check_conservation().is_err() {
+            findings.push(AuditFinding::new(
+                AuditCode::ConservationBroken,
+                json!({
+                    "minted": kernel.ledger().minted().get(),
+                    "slashed": ledger_slashed.get(),
+                }),
+            ));
+        }
+
+        AuditReport {
+            ok: findings.is_empty() && chain.ok,
+            events: self.events.len(),
+            cases: self.cases.len(),
+            appeals: self.appeals.len(),
+            penalties: self.penalties.len(),
+            subscriptions: self.subscriptions.len(),
+            notifications: self.notifications.len(),
+            chain,
+            gross_slashed: gross,
+            net_slashed: net,
+            refunded,
+            ledger_slashed,
+            findings,
+        }
     }
 }
 
@@ -2245,5 +2426,181 @@ mod tests {
         assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Arbitrated));
         w.kernel.ledger().check_conservation().unwrap();
         assert!(w.office.verify_chain().ok);
+    }
+
+    // ---- v1.5.10 审计 ----
+
+    fn full_case(w: &mut World, tag: &str) -> String {
+        let case_id = open_case(w, tag);
+        let (references, payloads) = appeal_evidence(tag);
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        w.office
+            .apply_penalty_order(
+                &mut w.kernel,
+                slash_order(&case_id, &w.subject.did(), 4, &w.arbiter)
+                    .sign(&w.arbiter)
+                    .unwrap(),
+            )
+            .unwrap();
+        w.office
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Reported, CaseStatus::Arbitrated],
+            )
+            .unwrap();
+        w.office
+            .resolve(&mut w.kernel, upheld(&case_id, 2, &w.arbiter))
+            .unwrap();
+        case_id
+    }
+
+    #[test]
+    fn a_clean_lifecycle_audits_clean_and_cross_checks_the_ledger() {
+        let mut w = world();
+        let case_id = full_case(&mut w, "audit-1");
+        let report = w.office.audit(&w.kernel);
+
+        assert!(report.ok, "findings: {:?}", report.findings);
+        assert!(report.findings.is_empty());
+        assert_eq!(report.events, w.office.event_count());
+        assert_eq!(report.cases, 1);
+        assert_eq!(report.penalties, 2, "处罚契约 + 终局裁决各一条记录");
+        assert_eq!(report.subscriptions, 1);
+        // 订阅发生在案件已 penalized 之后、裁决之前：只关心 reported/arbitrated，
+        // 因此快照不投递（penalized 未被订阅），最终只收到 arbitrated 一条。
+        assert_eq!(report.notifications, 1);
+        assert_eq!(report.chain.head, w.office.chain_head());
+        assert_eq!(report.gross_slashed, Credits(6));
+        assert_eq!(report.net_slashed, Credits(6));
+        assert_eq!(report.refunded, Credits::ZERO);
+        assert_eq!(report.ledger_slashed, w.kernel.ledger().slashed());
+        assert_eq!(report.gross_slashed, report.ledger_slashed);
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Arbitrated));
+        let json = report.to_json().unwrap();
+        assert_eq!(json["ok"], json!(true));
+        assert_eq!(json["findings"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn an_out_of_band_ledger_change_is_caught_by_the_cross_check() {
+        let mut w = world();
+        full_case(&mut w, "audit-2");
+        // 绕过服务直接动账本：审计必须发现「记录合计 ≠ 账本历史罚没」。
+        w.kernel
+            .ledger_mut()
+            .slash(&w.subject.did(), Credits(3))
+            .unwrap();
+        let report = w.office.audit(&w.kernel);
+        assert!(!report.ok);
+        assert!(report.has(AuditCode::LedgerMismatch));
+        assert_eq!(report.gross_slashed, Credits(6));
+        assert_eq!(report.ledger_slashed, Credits(9));
+        // 守恒式仍然成立——这正是「只靠守恒式不够、必须交叉核对」的证据。
+        w.kernel.ledger().check_conservation().unwrap();
+        assert!(!report.has(AuditCode::ConservationBroken));
+    }
+
+    #[test]
+    fn a_baseline_scopes_the_cross_check_to_this_service() {
+        let mut w = world();
+        // 别人先在这个内核上罚没了 5。
+        w.kernel
+            .ledger_mut()
+            .slash(&w.subject.did(), Credits(5))
+            .unwrap();
+        let baseline = w.kernel.ledger().slashed();
+        full_case(&mut w, "audit-3");
+        let scoped = w.office.audit_since(&w.kernel, baseline);
+        assert!(scoped.ok, "findings: {:?}", scoped.findings);
+        assert_eq!(scoped.gross_slashed, Credits(6));
+        // 不带基线时，全账本罚没（11）与本服务记录（6）对不上——这是正确的告警。
+        let global = w.office.audit(&w.kernel);
+        assert!(global.has(AuditCode::LedgerMismatch));
+    }
+
+    #[test]
+    fn a_journal_round_trip_rebuilds_the_same_state() {
+        let mut w = world();
+        let case_id = full_case(&mut w, "audit-4");
+        let rebuilt = SafetyOffice::from_journal(
+            w.office.events().to_vec(),
+            w.office.config().clone(),
+            setup::keys(setup::ROLE_SERVICE),
+        )
+        .unwrap();
+
+        assert_eq!(rebuilt.chain_head(), w.office.chain_head());
+        assert_eq!(rebuilt.event_count(), w.office.event_count());
+        assert_eq!(rebuilt.case_count(), w.office.case_count());
+        assert_eq!(rebuilt.penalty_count(), w.office.penalty_count());
+        assert_eq!(rebuilt.appeal_count(), w.office.appeal_count());
+        assert_eq!(rebuilt.status_of(&case_id), Some(CaseStatus::Arbitrated));
+        assert_eq!(rebuilt.slashed_total().unwrap(), w.office.slashed_total().unwrap());
+        // 重建实例的审计同样干净：链是唯一事实来源。
+        let report = rebuilt.audit(&w.kernel);
+        assert!(report.ok, "findings: {:?}", report.findings);
+        assert_eq!(report.cases, 1);
+    }
+
+    #[test]
+    fn a_tampered_journal_cannot_be_replayed() {
+        let mut w = world();
+        full_case(&mut w, "audit-5");
+        let mut journal = w.office.events().to_vec();
+        journal[1].payload = json!({"case": "forged", "subscription": {}});
+        let verdict = crate::chain::verify_chain(&journal);
+        assert!(!verdict.ok);
+        assert_eq!(verdict.broken_at, Some(1));
+        assert_eq!(
+            SafetyOffice::from_journal(
+                journal,
+                w.office.config().clone(),
+                setup::keys(setup::ROLE_SERVICE)
+            )
+            .err(),
+            Some(CoreError::InvalidSignature)
+        );
+    }
+
+    #[test]
+    fn a_journal_that_penalizes_a_missing_case_is_flagged_not_hidden() {
+        let w = world();
+        let record = PenaltyRecord {
+            id: "penalty-orphan".to_string(),
+            case: "missing-case".to_string(),
+            subject: w.subject.did(),
+            sanction: SanctionKind::StakeSlash,
+            requested: Credits(5),
+            applied: Credits(5),
+            arbiter: w.arbiter.did(),
+            at: 3,
+            reversed: false,
+        };
+        let event = SafetyEvent::seal(
+            0,
+            3,
+            SafetyEventKind::Penalized,
+            json!({"case": "missing-case", "penalty": record.to_json().unwrap()}),
+            crate::chain::GENESIS_PREV,
+        )
+        .unwrap();
+        let rebuilt = SafetyOffice::from_journal(
+            vec![event],
+            w.office.config().clone(),
+            setup::keys(setup::ROLE_SERVICE),
+        )
+        .unwrap();
+        assert_eq!(rebuilt.case_count(), 0);
+        assert_eq!(rebuilt.penalty_count(), 1);
+        let report = rebuilt.audit(&w.kernel);
+        assert!(!report.ok);
+        assert!(report.has(AuditCode::CaseMissing));
+        assert!(report.findings.iter().any(|finding| {
+            finding.code == AuditCode::CaseMissing && finding.detail["case"] == json!("missing-case")
+        }));
     }
 }

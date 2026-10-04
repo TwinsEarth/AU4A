@@ -16,6 +16,7 @@
 
 pub mod appeal;
 pub mod arbitration;
+pub mod audit;
 pub mod case;
 pub mod chain;
 pub mod config;
@@ -25,6 +26,7 @@ pub mod office;
 pub mod penalty;
 pub mod permission;
 pub mod pmb;
+pub mod schema;
 pub mod setup;
 
 use au4a_core::{canonical_hash, CoreError, CoreResult, Credits, Did, SelfCheck};
@@ -35,6 +37,7 @@ pub use appeal::Appeal;
 pub use arbitration::{
     ArbitrationRequest, ArbitrationVerdict, CaseOutcome, VerdictOutcome,
 };
+pub use audit::{verify_journal, AuditCode, AuditFinding, AuditReport, ReplayState};
 pub use case::{Case, CaseStatus, ViolationKind, ViolationReport};
 pub use chain::{
     chain_head, verify_chain, ChainBreak, ChainVerdict, SafetyEvent, SafetyEventKind, GENESIS_PREV,
@@ -53,6 +56,7 @@ pub use pmb::{
     report_envelope, SafetyMessage,
 };
 pub use pmb::kinds as safety_kinds;
+pub use schema::{schema_json, schema_summary};
 pub use setup::{ensure_agent, keys as role_keys, seed as role_seed};
 
 /// 轨道号。
@@ -62,7 +66,7 @@ pub const TITLE: &str = "Safety API 安全 API";
 /// 版本区间。
 pub const RANGE: &str = "v1.5.1 → v1.5.10";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.5.7";
+pub const CURRENT: &str = "v1.5.10";
 
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_safety";
@@ -160,6 +164,22 @@ pub fn self_check() -> Vec<SelfCheck> {
             ),
         ),
         Err(err) => SelfCheck::fail(TRACK, "arbitration.rollback", err.to_string()),
+    });
+
+    // 审计：链完整性 + 状态==重放(链) + 账本交叉核对。
+    checks.push(match audit_probe() {
+        Ok(report) => {
+            let codes: Vec<&str> = report.codes().iter().map(|c| c.as_str()).collect();
+            SelfCheck::pass(
+                TRACK,
+                "audit.clean",
+                format!(
+                    "{} 条事件重放一致、gross_slashed={} == ledger.slashed、findings={:?}",
+                    report.events, report.gross_slashed, codes
+                ),
+            )
+        }
+        Err(err) => SelfCheck::fail(TRACK, "audit.clean", err.to_string()),
     });
 
     // 证据闸门：伪造摘要必须被拒，且不留下案件与事件。
@@ -660,6 +680,83 @@ fn arbitration_rollback_probe() -> CoreResult<(Credits, Credits)> {
     Ok((outcome.applied, rolled_back.refunded))
 }
 
+/// 独立实验：审计。跑完整生命周期后，报告必须干净且与账本交叉核对一致。
+fn audit_probe() -> CoreResult<AuditReport> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config.clone(), office_keys)?;
+
+    let payload = json!({"probe": "audit", "delivered": false});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &payload)?;
+    let report = office.report(
+        &mut kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::NonDelivery,
+        reference,
+        &payload,
+    )?;
+    let order = PenaltyOrder::new(
+        report.id.clone(),
+        subject.did(),
+        SanctionKind::StakeSlash,
+        Credits(4),
+        arbiter.did(),
+        kernel.now(),
+    )
+    .sign(&arbiter)?;
+    office.apply_penalty_order(&mut kernel, order)?;
+    let appeal_payload = json!({"probe": "audit-appeal", "ok": true});
+    let appeal_evidence = vec![EvidenceRef::commit(EvidenceKind::Witness, &appeal_payload)?];
+    office.appeal(
+        &mut kernel,
+        &subject,
+        &report.id,
+        appeal_evidence,
+        &[appeal_payload],
+    )?;
+    let verdict = ArbitrationVerdict::new(
+        report.id.clone(),
+        VerdictOutcome::Upheld,
+        SanctionKind::StakeSlash,
+        Credits(3),
+        canonical_hash(&json!({"probe": "audit-rationale"}))?,
+        arbiter.did(),
+        kernel.now(),
+    )
+    .sign(&arbiter)?;
+    office.resolve(&mut kernel, verdict)?;
+
+    let report = office.audit(&kernel);
+    if !report.ok {
+        return Err(CoreError::InvalidSignature);
+    }
+    if report.gross_slashed != kernel.ledger().slashed() || report.events != office.event_count() {
+        return Err(CoreError::Overflow);
+    }
+    // 重放重建：同一份事件链必须重建出同样的状态。
+    let rebuilt = SafetyOffice::from_journal(
+        office.events().to_vec(),
+        config,
+        role_keys(setup::ROLE_SERVICE),
+    )?;
+    if rebuilt.chain_head() != office.chain_head() || rebuilt.case_count() != office.case_count() {
+        return Err(CoreError::InvalidSignature);
+    }
+    Ok(report)
+}
+
 /// 轨道产物摘要（只读投影的一部分）。
 pub fn results_json() -> CoreResult<Value> {
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
@@ -672,6 +769,7 @@ pub fn results_json() -> CoreResult<Value> {
         "current": CURRENT,
         "checks": checks.len(),
         "checks_passed": checks.iter().filter(|c| c.passed).count(),
+        "schema": schema_summary()?,
         "scenario": scenario_value,
     }))
 }
@@ -693,6 +791,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
 
     let config = SafetyConfig::single_arbiter(service.did(), arbiter.did());
     let mut office = SafetyOffice::new(config.clone(), service)?;
+    // 审计基线：本服务开始活动时的历史罚没额（共享内核上可能已有别人的罚没）。
+    let slashed_at_start = kernel.ledger().slashed();
 
     // 1) 权限边界：结构化查询。
     let reporter_boundary = PermissionBoundary::of(kernel, &config, &reporter.did());
@@ -750,20 +850,31 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         && office.event_count() == events_before_forgery;
 
     // 5) 仲裁者处罚契约：这是账本**唯一**的改动入口。
+    //    预期罚没额由**观察到的锁定质押**推导（`applied = min(请求额, 锁定额)`），
+    //    因此 scenario 在共享内核上重复调用时依然正确：质押被罚光后 applied 为 0，
+    //    既不会假装罚了钱，也不会因此失败。
+    let slashed_before = kernel.ledger().slashed();
+    let locked_before = kernel.ledger().balance(&subject.did()).locked;
+    let slash_request = Credits(5);
+    let expected_slash = if slash_request > locked_before {
+        locked_before
+    } else {
+        slash_request
+    };
     let order = PenaltyOrder::new(
         report.id.clone(),
         subject.did(),
         SanctionKind::StakeSlash,
-        Credits(5),
+        slash_request,
         arbiter.did(),
         kernel.now(),
     )
     .sign(&arbiter)?;
     let penalty = office.apply_penalty_order(kernel, order)?;
     let after_penalty = ledger_snapshot(kernel, &participants);
-    let penalty_moved_ledger = after_penalty != before
-        && penalty.applied == Credits(5)
-        && kernel.ledger().slashed() == Credits(5);
+    let penalty_moved_ledger = penalty.applied == expected_slash
+        && kernel.ledger().slashed() == slashed_before.checked_add(expected_slash)?
+        && (expected_slash == Credits::ZERO || after_penalty != before);
 
     // 6) 被处罚方申诉：提交证据、推状态、写链——**不再动账本**。
     let appeal_payloads = vec![json!({"task": "deliver-1", "receipt": "signed-by-receiver", "ok": true})];
@@ -798,14 +909,25 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     )
     .sign(&arbiter)?;
     let outcome = office.resolve(kernel, verdict)?;
+    let locked_after_penalty = if slash_request > locked_before {
+        Credits::ZERO
+    } else {
+        locked_before.checked_sub(slash_request)?
+    };
+    let slash_request_verdict = Credits(2);
+    let expected_verdict_slash = if slash_request_verdict > locked_after_penalty {
+        locked_after_penalty
+    } else {
+        slash_request_verdict
+    };
     let arbitrated = office.status_of(&report.id) == Some(CaseStatus::Arbitrated)
         && outcome.outcome == VerdictOutcome::Upheld
-        && outcome.applied == Credits(2);
+        && outcome.applied == expected_verdict_slash;
     if !arbitrated {
         return Err(CoreError::InvalidKind);
     }
     let after_verdict = ledger_snapshot(kernel, &participants);
-    if after_verdict == after_appeal {
+    if expected_verdict_slash > Credits::ZERO && after_verdict == after_appeal {
         return Err(CoreError::Overflow);
     }
 
@@ -865,6 +987,11 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         && kernel.card(&subject.did()).cloned() == subject_card_before;
 
     let verdict = office.verify_chain();
+    // 共享内核上可能有别的轨道在动账本：用活动开始时的 slashed 作为基线做交叉核对。
+    let audit = office.audit_since(kernel, slashed_at_start);
+    if !audit.ok {
+        return Err(CoreError::InvalidSignature);
+    }
     let events: Vec<Value> = office
         .events()
         .iter()
@@ -952,6 +1079,19 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "head": verdict.head,
             "ok": verdict.ok,
             "events": events,
+        },
+        "audit": {
+            "ok": audit.ok,
+            "events": audit.events,
+            "cases": audit.cases,
+            "penalties": audit.penalties,
+            "subscriptions": audit.subscriptions,
+            "notifications": audit.notifications,
+            "gross_slashed": audit.gross_slashed.get(),
+            "net_slashed": audit.net_slashed.get(),
+            "refunded": audit.refunded.get(),
+            "ledger_slashed": audit.ledger_slashed.get(),
+            "findings": audit.findings.len(),
         },
         "ledger": {
             "untouched_by_unconfirmed_report": ledger_untouched_by_report,

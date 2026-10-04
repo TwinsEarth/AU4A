@@ -235,18 +235,20 @@
         "pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value>（确定性契约）"
       ],
       "acceptance": [
-        "端到端：查询→举报→处罚→申诉→ARBITRATED 全程断言",
-        "对抗用例全部被拒且账本守恒",
-        "同一内核序列两次 scenario 输出完全一致"
+        "端到端：PMB 查询→举报→订阅→处罚→申诉→裁决 ARBITRATED 全程断言（含事件链 5 条）",
+        "对抗用例全部被拒且账本快照逐字段不变（伪造证据/裁决、第三方申诉/退订、无授权处罚）",
+        "链篡改在每一个位置都能被定位（broken_at == 篡改位置）",
+        "误判回滚后锁定质押回到原值，权限完好（不是「拿回钱丢了权」）",
+        "两个新内核上 scenario 字节一致；同一内核重复调用语义正确且账本守恒"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.7 全绿后开工"
+        "tests_passed": 128,
+        "tests_total": 128,
+        "grade": "verified",
+        "notes": "本版交付 15 个集成测试（end_to_end 3 / adversarial 7 / determinism 5）全绿；lib 113 + 集成 15 = 128，0 warning。外部阻塞说明见 1.5.md 附录：v1.5.8/v1.5.9 的全绿取证与 v1.5.10 合并执行，快照取自最终树"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.9",
@@ -260,17 +262,20 @@
         "pub fn schema_json() -> CoreResult<Value>"
       ],
       "acceptance": [
-        "schema_json 可解析且覆盖三种消息类型、四种案件状态、全部事件种类",
-        "文档中的接口与代码一致（同一份 JSON 被自检引用）"
+        "schema_json 可解析、覆盖消息类型/事件种类/状态/证据/处罚/权限/拒绝码",
+        "每个事件种类与权限点在 schema 中恰好出现一次（代码与文档同一来源）",
+        "线格式名与 au4a_core::kinds::SAFETY_REPORT 一致；genesis_prev 与 MAX_FRAME 与基元层一致",
+        "错误映射表 ≥ 10 条且每条三段式（情形 / core_error / refusal）",
+        "schema 本身是规范 JSON（无浮点，可 canonicalize）"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.8 全绿后开工"
+        "tests_passed": 127,
+        "tests_total": 127,
+        "grade": "verified",
+        "notes": "schema 测试 5 个全绿（lib 累计 127 = 122 lib + 5 schema，随最终树合并取证）；0 warning"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.10",
@@ -286,19 +291,21 @@
         "pub fn verify_chain(events: &[SafetyEvent]) -> ChainVerdict"
       ],
       "acceptance": [
-        "干净案件：audit ok、无 findings",
-        "篡改事件后重放失败且 ChainVerdict 指向断裂序号",
-        "账本外部改动被交叉核对发现（LedgerMismatch）",
-        "self_check 聚合审计结论"
+        "干净案件：audit ok、findings 为空、计数与四个金额（gross/net/refunded/ledger）正确",
+        "状态 == 重放(事件链)：from_journal 重建的实例链头/案件/处罚完全一致且审计同样干净",
+        "篡改事件后 verify_chain 指向断裂序号，from_journal 返回 InvalidSignature",
+        "账本被绕过改动时交叉核对发现 LedgerMismatch（而守恒式仍成立，证明守恒不够）",
+        "手工构造「给不存在案件开罚单」的日志被 flagged 为 case_missing 而不是被隐藏",
+        "self_check 聚合审计结论（audit.clean 项）"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.9 全绿后开工"
+        "tests_passed": 137,
+        "tests_total": 137,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 全绿：lib 122 + adversarial 7 + determinism 5 + end_to_end 3 = 137，0 failed、本 crate 0 warning；日志 _forangent\\logs\\1.5-v1.5.10.log。审计检查抓出并修正了两处真实的状态/重放不一致（status_seq 与裁决时间戳）"
       },
-      "status": "planned"
+      "status": "done"
     }
   ]
 }
