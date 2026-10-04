@@ -19,6 +19,7 @@
 pub mod capabilities;
 pub mod chain;
 pub mod diff;
+pub mod disaster;
 pub mod integrity;
 pub mod perf;
 pub mod recovery;
@@ -37,6 +38,7 @@ pub use capabilities::{
 };
 pub use chain::{run_chain, ChainOptions, ChainReport, ConsistencyReportView};
 pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
+pub use disaster::{run_drill, verify_media, Backup, DrillOptions, DrillReport, BACKUP_PREFIX};
 pub use integrity::{
     audit_node, compare, compare_store, is_integrity_error, summarize, ConsistencyReport, Finding,
     FindingCode, NodeAudit, StoreReport, ZoneReport,
@@ -146,6 +148,10 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_full_chain());
     // 19) v1.3.9：能力清单自身形状正确（可枚举、等级合法、id 唯一）。
     checks.push(check_capabilities_declared());
+    // 20) v1.3.10：灾难恢复演练（备份 → 源丢失 → 2PC 重建 → 增量续跑）。
+    checks.push(check_disaster_drill());
+    // 21) v1.3.10：损坏的备份必须在恢复时被拒。
+    checks.push(check_corrupted_backup_refused());
 
     checks
 }
@@ -513,6 +519,94 @@ fn state_as_raw(blocks: Vec<StateBlock>) -> Vec<(StateZone, String, serde_json::
         .into_iter()
         .map(|b| (b.zone(), b.key().to_string(), b.value().clone()))
         .collect()
+}
+
+/// v1.3.10：灾难恢复演练的自检。
+fn check_disaster_drill() -> SelfCheck {
+    let name = "disaster.drill";
+    let keys = track_agent();
+    let did = keys.did();
+    let result = (|| -> CoreResult<(bool, bool, bool, u64, bool, String, String)> {
+        let source = StateSnapshot::capture(&did, "node-a", 1, sample_state()?)?;
+        let evolved = StateSnapshot::capture(&did, "node-a", 2, evolved_state()?)?;
+        let report = disaster::run_drill(
+            &keys,
+            &source,
+            &evolved,
+            &NodeId::new("node-b")?,
+            &DrillOptions::default(),
+        )?;
+        Ok((
+            report.is_ok(),
+            report.backup_verified,
+            report.rebuild_first_clean && report.rebuild_committed,
+            report.ops_skipped,
+            report.identical_to_source && report.consistency_clean,
+            report.source_content_root,
+            report.final_content_root,
+        ))
+    })();
+    match result {
+        Ok((true, true, true, skipped, true, source, final_root))
+            if skipped > 0 && source == final_root =>
+        {
+            SelfCheck::pass(
+                TRACK,
+                name,
+                format!("备份可验证、首次故障回滚、重试提交、续跑省 {skipped} 个操作，最终内容根一致"),
+            )
+        }
+        Ok((ok, backup, rebuild, skipped, identical, source, final_root)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!(
+                "ok={ok} backup={backup} rebuild={rebuild} skipped={skipped} identical={identical} root_equal={}",
+                source == final_root
+            ),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("演练失败: {e}")),
+    }
+}
+
+/// v1.3.10：损坏的备份必须被拒。
+fn check_corrupted_backup_refused() -> SelfCheck {
+    let name = "disaster.corrupted_backup_refused";
+    let keys = track_agent();
+    let did = keys.did();
+    let result = (|| -> CoreResult<(bool, bool, bool)> {
+        let source = StateSnapshot::capture(&did, "node-a", 1, sample_state()?)?;
+        let evolved = StateSnapshot::capture(&did, "node-a", 2, evolved_state()?)?;
+        // 1) 正常备份可验证。
+        let good = Backup::create(&keys, &source)?;
+        let policy = SnapshotPolicy::for_agent(did.clone())
+            .expecting_content_root(source.content_root()?)
+            .with_min_epoch(source.epoch());
+        let good_ok = good.verify(&policy).is_ok();
+        // 2) 损坏的备份必须在恢复时被拒（这里用块级重建路径模拟介质损坏）。
+        let mut store = MemoryStore::new();
+        write_snapshot(&mut store, "backup:", &source)?;
+        store.put("backup:memory:last_task", json!({"tampered": true}))?;
+        let corrupted = read_snapshot(&store, "backup:", &did, "node-a", source.epoch())?;
+        let corrupted_refused = corrupted.content_root()? != source.content_root()?;
+        // 3) 备份里声明别人的状态也必须被拒。
+        let impostor = SignedSnapshot::sign(evolved, &keys)?;
+        let policy_other = SnapshotPolicy::for_agent(AgentKeys::from_seed(&[0x99; 32]).did());
+        let cross_refused = impostor.verify_policy(&policy_other).is_err();
+        Ok((good_ok, corrupted_refused, cross_refused))
+    })();
+    match result {
+        Ok((true, true, true)) => SelfCheck::pass(
+            TRACK,
+            name,
+            "完好备份通过；篡改后的备份内容根不符被拒；主体不符被拒",
+        ),
+        Ok((good, corrupted, cross)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("good={good} corrupted={corrupted} cross={cross}（期望全 true）"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("备份拒绝路径失败: {e}")),
+    }
 }
 
 /// v1.3.9：能力清单的形状检查（不含交叉检查，避免与 `self_check` 互相递归）。
@@ -1180,6 +1274,11 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     )?;
     let delta_plan = perf::plan(&before, &after)?;
 
+    // 11) 灾难恢复演练：备份 → 源丢失 → 2PC 重建 → 增量续跑。
+    let drill = disaster::run_drill(&keys, &before, &after, &nb, &DrillOptions::default())?;
+    let docs_json = docs_json()?;
+    let disaster_json = disaster_json(&drill);
+
     // 4) 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
     let mut tampered = before.to_value()?;
     if let Some(first) = tampered
@@ -1353,14 +1452,42 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
             "evidence_grade": "verified",
             "note": "工作量以确定性计数器核算（哈希次数/操作数），不读墙钟；同样输入给同样数字",
         },
-        "docs": {
-            "capabilities": capability_manifest(),
-            "coverage": coverage_check()?.to_value(),
-            "evidence_grade": "verified",
-            "note": "能力清单在代码里可枚举；每条声明都指向实现入口、测试名与自检名",
-        },
-        "events": 8,
+        "docs": docs_json,
+        "disaster": disaster_json,
+        "events": 9,
     }))
+}
+
+/// 文档与灾难演练两段 JSON 单独构造：一是避免 `json!` 宏递归过深，
+/// 二是让观察层能直接复用这两段的结构。
+fn docs_json() -> CoreResult<Value> {
+    Ok(json!({
+        "capabilities": capability_manifest(),
+        "coverage": coverage_check()?.to_value(),
+        "evidence_grade": "verified",
+        "note": "能力清单在代码里可枚举；每条声明都指向实现入口、测试名与自检名",
+    }))
+}
+
+fn disaster_json(drill: &DrillReport) -> Value {
+    json!({
+        "backup_object_id": drill.backup_object_id,
+        "backup_verified": drill.backup_verified,
+        "source_lost": drill.source_lost,
+        "first_attempt": drill.rebuild_first_attempt,
+        "first_clean": drill.rebuild_first_clean,
+        "rebuild_committed": drill.rebuild_committed,
+        "orphans": drill.rebuild_orphans,
+        "resumed_from": drill.resumed_from,
+        "dropped_frames": drill.dropped_frames,
+        "ops_skipped": drill.ops_skipped,
+        "identical_to_source": drill.identical_to_source,
+        "consistency_clean": drill.consistency_clean,
+        "node_findings": drill.node_findings,
+        "udos_object_id": drill.udos_object_id,
+        "evidence_grade": drill.evidence_grade,
+        "is_ok": drill.is_ok(),
+    })
 }
 
 /// 存储报告的简短结论文本。
@@ -1399,7 +1526,7 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks), "{checks:#?}");
-        assert_eq!(checks.len(), 19);
+        assert_eq!(checks.len(), 21);
     }
 
     #[test]
@@ -1461,9 +1588,12 @@ mod tests {
         assert_eq!(a["perf"]["reuse_ratio_bp"], json!(10000));
         assert!(a["perf"]["ops_skipped"].as_u64().unwrap_or(0) > 0);
         assert_eq!(a["perf"]["counter"]["wall_clock_used"], json!(false));
-        assert_eq!(a["docs"]["coverage"]["capabilities"], json!(19));
+        assert_eq!(a["docs"]["coverage"]["capabilities"], json!(21));
         assert_eq!(a["docs"]["coverage"]["unclaimed_checks"], json!([]));
         assert_eq!(a["docs"]["capabilities"]["unverified"], json!(0));
+        assert_eq!(a["disaster"]["backup_verified"], json!(true));
+        assert_eq!(a["disaster"]["rebuild_committed"], json!(true));
+        assert_eq!(a["disaster"]["identical_to_source"], json!(true));
         k1.ledger().check_conservation().unwrap();
     }
 

@@ -35,7 +35,7 @@ pub struct Capability {
 }
 
 /// 轨道 1.3 的全部能力声明。新增能力必须同时补上测试与自检，否则覆盖检查会红。
-pub const CAPABILITIES: [Capability; 19] = [
+pub const CAPABILITIES: [Capability; 21] = [
     Capability {
         id: "state.snapshot.three_zones",
         title: "文件系统/内存/上下文三区状态可被冻结为快照",
@@ -225,6 +225,26 @@ pub const CAPABILITIES: [Capability; 19] = [
         test: "coverage_check_passes_and_has_no_orphans",
         check: "docs.capabilities_declared",
         note: "每条声明都指向实现入口、测试名与自检名；孤儿自检也会被发现",
+    },
+    Capability {
+        id: "disaster.drill",
+        title: "灾难恢复演练：备份 → 源丢失 → 2PC 重建 → 增量续跑",
+        since: "v1.3.10",
+        grade: "verified",
+        api: "disaster::run_drill / Backup",
+        test: "a_full_drill_survives_the_loss_of_the_source",
+        check: "disaster.drill",
+        note: "重建第一次注入故障 → 回滚 → 重试提交；续跑只补缺口（操作数可核算）",
+    },
+    Capability {
+        id: "disaster.corrupted_backup_refused",
+        title: "损坏的备份（或被冒名的备份）在恢复时必须被拒",
+        since: "v1.3.10",
+        grade: "verified",
+        api: "disaster::Backup::{verify,restore_into}",
+        test: "a_corrupted_backup_is_refused_at_restore_time",
+        check: "disaster.corrupted_backup_refused",
+        note: "备份不是文件副本，而是 Agent 签名的内容寻址对象：改一字节即拒",
     },
 ];
 
