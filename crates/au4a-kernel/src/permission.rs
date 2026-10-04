@@ -487,8 +487,10 @@ mod tests {
 
     #[test]
     fn competition_denials_never_use_misconduct_codes() {
-        let mut config = KernelConfig::default();
-        config.max_skills = 1;
+        let config = KernelConfig {
+            max_skills: 1,
+            ..KernelConfig::default()
+        };
         let k = kernel_with(2, config);
         let report = explain(&k, &keys(60).did()).unwrap();
         // 能力数已达上限 → resource_exhausted（竞争）。
@@ -528,8 +530,10 @@ mod tests {
         assert!(report.allows(Capability::WithdrawStake));
 
         // 把配置下限抬高到 20：锁定恰好等于下限，再解押就会跌破准入。
-        let mut config = KernelConfig::default();
-        config.min_stake = Credits(20);
+        let config = KernelConfig {
+            min_stake: Credits(20),
+            ..KernelConfig::default()
+        };
         let k2 = kernel_with(1, config);
         let report2 = explain(&k2, &keys(60).did()).unwrap();
         let denial = report2.denial_for(Capability::WithdrawStake).unwrap();

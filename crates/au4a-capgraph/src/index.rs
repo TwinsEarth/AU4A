@@ -385,7 +385,7 @@ impl QueryResult {
 /// v1.1.8 的 [`crate::perf::rank_top_k`] 在 `limit < 候选数` 时用有界选择替代它，
 /// 并且必须与它**逐位一致**——这条不变式由 `perf` 模块的测试断言。
 pub fn rank_and_truncate(mut matches: Vec<CapabilityMatch>, limit: usize) -> Vec<CapabilityMatch> {
-    matches.sort_by(|a, b| crate::perf::rank_key(a).cmp(&crate::perf::rank_key(b)));
+    matches.sort_by_key(crate::perf::rank_key);
     if limit > 0 && matches.len() > limit {
         matches.truncate(limit);
     }

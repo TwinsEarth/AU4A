@@ -555,10 +555,7 @@ mod tests {
         pay(&mut world, 200, 10).unwrap();
         let err = pay(&mut world, 200, 11).unwrap_err();
         assert_eq!(err.code, RefusalCode::Conflict);
-        assert_eq!(
-            world.x402.payment_of(&world.invoice_id).unwrap().claimed,
-            false
-        );
+        assert!(!world.x402.payment_of(&world.invoice_id).unwrap().claimed);
     }
 
     #[test]

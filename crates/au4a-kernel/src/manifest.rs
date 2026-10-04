@@ -94,6 +94,10 @@ impl TrackManifest {
     }
 }
 
+// 这是「版本清单」的声明式构造器：8 个参数逐项对应 v1.0.1–v1.9.9 表格的列，
+// 调用处是 10 行对齐的字面量表。为了消除 clippy 的计数而把三个切片参数打包成结构体，
+// 只会让表格更难读，因此这里显式豁免并保留原因。
+#[allow(clippy::too_many_arguments)]
 fn spec(
     version: &str,
     title: &str,

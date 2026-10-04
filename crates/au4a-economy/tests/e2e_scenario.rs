@@ -174,7 +174,7 @@ fn a_tampered_price_announcement_is_recorded_as_misconduct() {
     let value = au4a_economy::scenario(&mut kernel).unwrap();
     assert_eq!(value["conservation"]["ok"], json!(true));
     kernel.ledger().check_conservation().unwrap();
-    assert!(kernel.refusals().len() >= 1);
+    assert!(!kernel.refusals().is_empty());
 }
 
 #[test]

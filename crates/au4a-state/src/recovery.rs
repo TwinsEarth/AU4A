@@ -555,7 +555,7 @@ impl Migration {
             // 回滚后 live 必须回到 base；不满足就是协议 bug，直接报错而不是粉饰。
             return Err(CoreError::InvalidSignature);
         }
-        Ok(node.gc_except(node.head()?)?)
+        node.gc_except(node.head()?)
     }
 
     fn expect(&self, phase: Phase) -> CoreResult<()> {

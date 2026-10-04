@@ -960,7 +960,7 @@ impl Council {
         });
         let bft_ok = self
             .committees()
-            .all(|c| c.is_bft_consistent() && c.quorum() >= c.fault_bound() * 2 + 1);
+            .all(|c| c.is_bft_consistent() && c.quorum() > c.fault_bound() * 2);
         checks.push(if bft_ok {
             SelfCheck::pass(
                 TRACK,

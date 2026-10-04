@@ -153,10 +153,7 @@ fn the_per_agent_skill_cap_is_enforced_on_both_paths() {
         graph.apply(&too_many, 0).refusal(),
         Some(RefusalCode::PolicyDenied)
     );
-    assert_eq!(
-        graph.apply(&declare(&a, 1, &["a1", "a2"]), 0).is_applied(),
-        true
-    );
+    assert!(graph.apply(&declare(&a, 1, &["a1", "a2"]), 0).is_applied());
     assert_eq!(
         graph
             .apply(&declare(&b, 1, &["b1", "b2", "b3"]), 0)

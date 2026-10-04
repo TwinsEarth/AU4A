@@ -696,7 +696,7 @@ mod tests {
         assert_eq!(report.verdict, Verdict::Rejected);
         assert_eq!(report.slashed, Credits::ZERO);
         assert_eq!(report.compensated, Credits::ZERO);
-        assert_eq!(report.conservation_ok, true);
+        assert!(report.conservation_ok);
         let after = k.ledger().view();
         assert_eq!(after.accounts, before.accounts);
         assert_eq!(after.slashed, before.slashed);

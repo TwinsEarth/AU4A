@@ -202,7 +202,7 @@ fn respond(
     };
     let head = format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nAllow: {ALLOWED_METHOD}\r\nConnection: close\r\n\r\n",
-        body.as_bytes().len()
+        body.len()
     );
     stream.write_all(head.as_bytes())?;
     stream.write_all(body.as_bytes())?;

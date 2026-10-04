@@ -1,13 +1,15 @@
 name: CI
 
-# 从无到有：本仓库此前没有任何 CI。这个工作流把「本机实测过的事实」变成「每次 push 都被机器复验的事实」。
+# 真实 CI：把项目「声称的事实」交给机器在每次 push 时复验，而不是写在文档里。
 #
-# 设计口径（与 README 徽章一致，不吹不藏）：
-#   * fmt    —— 只检查格式，不自动改写；
-#   * test   —— ubuntu + windows 双平台 `cargo test --workspace`（--locked 保证依赖锁定）；
-#   * verify —— 10 条轨道自检 + 端到端 8 Agent 运行 + 只读观察面探针（GET 全通、写方法必须 405）；
-#   * deploy —— Windows 上的真实部署验证脚本 deploy/verify.ps1（构建→自检→端到端→只读面板）。
-# 没有「伪绿」步骤：任何一步失败，工作流就是红的。
+#   fmt      —— 格式门禁（只检查，不自动改写）
+#   test     —— cargo test --workspace，ubuntu / windows / macos 三平台矩阵
+#   clippy   —— cargo clippy --all-targets -- -D warnings（lint 门禁，warning 即失败）
+#   msrv     —— 用 Cargo.toml 里声明的 rust-version = 1.88.0 真实构建（验证 MSRV 承诺）
+#   verify   —— 10 条轨道自检 + 端到端 8 Agent + 只读观察面探针（GET 全 200、写方法全 405）
+#   deploy   —— Windows 上真实部署脚本 deploy/verify.ps1
+#   versions —— 逐个 checkout 10 个中版本收尾 tag（v1.0.10 … v1.9.9）并重跑 workspace 测试，
+#               证明这条 99 小版本的版本线不是「只有 tag」，而是每个版本当时就真的能测过。
 
 on:
   push:
@@ -36,8 +38,30 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: cargo fmt --all --check
-        run: cargo fmt --all --check
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (-D warnings)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  msrv:
+    name: msrv (rust 1.88.0 as declared)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo check with the declared minimum toolchain
+        run: cargo check --workspace --all-targets --locked
 
   test:
     name: test (${{ matrix.os }})
@@ -46,11 +70,44 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - name: cargo test --workspace --locked
+        run: cargo test --workspace --locked
+
+  versions:
+    name: version line (${{ matrix.tag }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        tag:
+          - v1.0.10
+          - v1.1.10
+          - v1.2.10
+          - v1.3.10
+          - v1.4.10
+          - v1.5.10
+          - v1.6.10
+          - v1.7.10
+          - v1.8.10
+          - v1.9.9
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.tag }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.tag }}
+      - name: tag identity
+        run: |
+          echo "checking out ${{ matrix.tag }}"
+          cat VERSION
       - name: cargo test --workspace --locked
         run: cargo test --workspace --locked
 

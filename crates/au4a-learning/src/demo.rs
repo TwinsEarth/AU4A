@@ -127,7 +127,7 @@ pub fn demo_report(seed: u64) -> CoreResult<Value> {
 
     // ---- 可解释性：为什么参数是这个值（可直接对外发布）----
     let explanation = explain(
-        &model.params(),
+        model.params(),
         &report,
         &violations,
         &signals,

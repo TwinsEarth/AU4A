@@ -393,10 +393,8 @@ impl AutonomyLayer {
             kinds.push(intent.kind());
             self.state.intents_planned += 1;
             let before = kernel.refusals().len();
-            let acted = match self.execute(kernel, &card, intent) {
-                Ok(acted) => acted,
-                Err(_) => false,
-            };
+            // 执行失败按「没做成」处理：bool 的默认值就是 false，手写 match 是多余的。
+            let acted = self.execute(kernel, &card, intent).unwrap_or_default();
             if acted {
                 sent += 1;
             }

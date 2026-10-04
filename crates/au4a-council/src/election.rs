@@ -417,7 +417,8 @@ mod tests {
         let ballots = vec![
             ElectionBallot::cast(&voter, CommitteeKind::Task, &[a.did.clone(), b.did.clone()])
                 .unwrap(),
-            ElectionBallot::cast(&voter2, CommitteeKind::Task, &[b.did.clone()]).unwrap(),
+            ElectionBallot::cast(&voter2, CommitteeKind::Task, std::slice::from_ref(&b.did))
+                .unwrap(),
         ];
         let mut shuffled = ballots.clone();
         shuffled.reverse();

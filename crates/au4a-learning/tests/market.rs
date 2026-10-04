@@ -38,7 +38,7 @@ fn learning_arm_changes_behaviour_while_control_stays_frozen() {
         "偏好应有正有负"
     );
     // 对照组的 public 投影证明它没学
-    assert_eq!(comparison.params_differ, true);
+    assert!(comparison.params_differ);
     assert!(!control.public_json().unwrap()["params_changed"]
         .as_bool()
         .unwrap());
@@ -154,13 +154,10 @@ fn public_projection_of_a_run_never_leaks_peer_dids() {
     let (_, learning, _) = ab_test(&config).unwrap();
     let text = learning.public_json().unwrap().to_string();
     assert!(!text.contains("did:au4a:"), "公开投影泄露 DID");
-    assert!(
-        learning.public_json().unwrap()["rounds"]
-            .as_array()
-            .unwrap()
-            .len()
-            > 0
-    );
+    assert!(!learning.public_json().unwrap()["rounds"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 #[test]

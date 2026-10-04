@@ -157,7 +157,7 @@ impl Committee {
     pub fn is_bft_consistent(&self) -> bool {
         let n = self.size();
         let f = self.fault_bound();
-        n >= 3 * f + 1 && n > 0 && self.quorum() == n - f
+        n > 3 * f && n > 0 && self.quorum() == n - f
     }
 
     /// 在任成员 DID 列表（rank 升序，确定性）。
@@ -216,7 +216,7 @@ mod tests {
             };
             assert!(c.is_bft_consistent(), "n={n}");
             let f = c.fault_bound();
-            assert!(n >= 3 * f + 1, "n={n} f={f}");
+            assert!(n > 3 * f, "n={n} f={f}");
             assert_eq!(c.quorum(), n - f);
             if n == 3 * f + 1 {
                 assert_eq!(c.quorum(), 2 * f + 1, "n={n}");

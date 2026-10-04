@@ -272,7 +272,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(bundle.len(), 4 * 2 * 2);
-        assert_eq!(collect(&[]).is_err(), true);
+        assert!(collect(&[]).is_err());
         let again = sweep(
             &[10, 100, 1_000, 10_000],
             &[100, 1_000],

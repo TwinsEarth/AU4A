@@ -603,10 +603,8 @@ mod tests {
         let run = || {
             let mut k = kernel_with(3);
             let mut router = PmbRouter::new();
-            let mut decisions = Vec::new();
-            decisions
-                .push(router.admit(&k, &progress(&keys(120), None, 0, "a", json!({})).unwrap()));
-            decisions.push(
+            let decisions = vec![
+                router.admit(&k, &progress(&keys(120), None, 0, "a", json!({})).unwrap()),
                 router.admit(
                     &k,
                     &settle_request(
@@ -618,11 +616,11 @@ mod tests {
                     )
                     .unwrap(),
                 ),
-            );
-            decisions.push(router.admit(
-                &k,
-                &council_vote(&keys(122), keys(121).did(), 0, "m1", "uphold").unwrap(),
-            ));
+                router.admit(
+                    &k,
+                    &council_vote(&keys(122), keys(121).did(), 0, "m1", "uphold").unwrap(),
+                ),
+            ];
             k.tick();
             (decisions, router.stats().clone())
         };

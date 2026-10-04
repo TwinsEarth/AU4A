@@ -282,7 +282,7 @@ mod tests {
                 opened_at: 0,
             };
             assert_eq!(round.tally().quorum, round.n - round.f);
-            assert!(n >= 3 * f + 1);
+            assert!(n > 3 * f);
         }
     }
 

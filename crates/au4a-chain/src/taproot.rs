@@ -105,10 +105,14 @@ pub fn merkle_proof(leaves: &[String], index: usize) -> CoreResult<Vec<ProofStep
             let last = level.last().cloned().unwrap_or_default();
             level.push(last);
         }
-        let sibling = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
+        let sibling = if idx.is_multiple_of(2) {
+            idx + 1
+        } else {
+            idx - 1
+        };
         proof.push(ProofStep {
             hash: level.get(sibling).cloned().unwrap_or_default(),
-            right: idx % 2 == 0,
+            right: idx.is_multiple_of(2),
         });
         let mut next = Vec::with_capacity(level.len() / 2);
         let mut i = 0;

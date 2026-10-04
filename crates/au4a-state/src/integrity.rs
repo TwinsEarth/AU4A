@@ -342,7 +342,7 @@ pub fn compare_store<S: StateStore + ?Sized>(
                 Some(_) => {}
             }
         }
-        for ((z, key), _) in &observed {
+        for (z, key) in observed.keys() {
             if *z == zone && !expected_map.contains_key(&(*z, key.clone())) {
                 extra.push(key.clone());
                 findings.push(Finding::at(

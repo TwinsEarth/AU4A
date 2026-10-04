@@ -319,8 +319,14 @@ mod tests {
             appeal_envelope(&subject, &service.did(), 7, &appeal, &[]),
             Err(CoreError::Encoding)
         );
-        let env =
-            appeal_envelope(&subject, &service.did(), 7, &appeal, &[payload.clone()]).unwrap();
+        let env = appeal_envelope(
+            &subject,
+            &service.did(),
+            7,
+            &appeal,
+            std::slice::from_ref(&payload),
+        )
+        .unwrap();
         match classify(&env).unwrap() {
             SafetyMessage::Appeal {
                 appeal: got,

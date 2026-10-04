@@ -183,7 +183,7 @@ mod tests {
     fn require_well_formed_rejects_empty_and_partial_bundles() {
         let good = EvidenceRef::commit(EvidenceKind::Transcript, &json!({"x": 1})).unwrap();
         assert_eq!(require_well_formed(&[]), Err(CoreError::InvalidSignature));
-        require_well_formed(&[good.clone()]).unwrap();
+        require_well_formed(std::slice::from_ref(&good)).unwrap();
         let bad = EvidenceRef {
             kind: EvidenceKind::Transcript,
             digest: "not-a-digest".to_string(),

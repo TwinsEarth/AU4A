@@ -320,7 +320,7 @@ mod tests {
     fn replaying_a_report_rebuilds_the_case() {
         let event = report_event(0);
         let case_id = event.payload["case"].as_str().unwrap().to_string();
-        let state = replay(&[event.clone()]).unwrap();
+        let state = replay(std::slice::from_ref(&event)).unwrap();
         assert_eq!(state.cases.len(), 1);
         let case = &state.cases[&case_id];
         assert_eq!(case.status, CaseStatus::Reported);

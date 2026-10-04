@@ -85,7 +85,7 @@ pub fn bounded_vertex_scan(
     if lo == 0 || hi < lo {
         return Err(CoreError::InvalidKind);
     }
-    if samples < 2 || samples > MAX_SCAN_SAMPLES {
+    if !(2..=MAX_SCAN_SAMPLES).contains(&samples) {
         return Err(CoreError::InvalidKind);
     }
 

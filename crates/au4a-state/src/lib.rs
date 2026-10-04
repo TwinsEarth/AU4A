@@ -375,7 +375,7 @@ fn check_transfer_resumable() -> SelfCheck {
         Ok((
             dropped,
             accepted_a + accepted_b,
-            duplicates as usize,
+            duplicates,
             to.content_root()?,
             applied.content_root()?,
         ))

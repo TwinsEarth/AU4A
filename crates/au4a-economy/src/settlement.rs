@@ -817,7 +817,7 @@ mod tests {
             closed: false,
         });
         book.close_last_escrow();
-        assert_eq!(book.escrows()[0].closed, true);
+        assert!(book.escrows()[0].closed);
         assert_eq!(book.withheld().len(), 1);
         assert_eq!(book.total_earned().unwrap(), Credits::ZERO);
         assert_eq!(book.to_json()["receipt_count"], json!(0));

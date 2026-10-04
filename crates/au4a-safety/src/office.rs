@@ -1321,7 +1321,7 @@ mod tests {
         assert_eq!(w.office.event_count(), 2);
         let events = w.office.events();
         assert_eq!(events[1].prev, events[0].hash);
-        assert_eq!(w.office.verify_chain().ok, true);
+        assert!(w.office.verify_chain().ok);
     }
 
     #[test]

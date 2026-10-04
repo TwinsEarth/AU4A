@@ -183,7 +183,7 @@ fn the_two_paths_are_independent_and_each_archives_cleanly() {
         let row = &both[path];
         assert_eq!(row["replay_byte_exact"], true, "{path}");
         assert_eq!(row["replay_digest"].as_str().unwrap().len(), 64, "{path}");
-        assert_eq!(row["transitions"].as_u64().unwrap() >= 7, true, "{path}");
+        assert!(row["transitions"].as_u64().unwrap() >= 7, "{path}");
     }
     assert!(au4a_core::all_passed(&au4a_negotiate::self_check()));
 }
@@ -213,7 +213,7 @@ fn the_example_agents_are_self_sovereign() {
 
     // 归档可被任意一方带走并离线解码（不含私钥，只含签名与消息）。
     let archived = Journal::decode(
-        &both["success"]["transcript"][0]["id"]
+        both["success"]["transcript"][0]["id"]
             .as_str()
             .unwrap_or_default(),
     );

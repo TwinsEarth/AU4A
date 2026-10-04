@@ -319,8 +319,8 @@ fn malformed_inputs_never_panic_across_a_deterministic_sweep() {
     for i in 0..300u64 {
         let id_len = rng.below(160) as usize;
         let ctx_len = rng.below(600) as usize;
-        let task_id: String = std::iter::repeat('x').take(id_len).collect();
-        let context: String = std::iter::repeat('y').take(ctx_len).collect();
+        let task_id: String = std::iter::repeat_n('x', id_len).collect();
+        let context: String = std::iter::repeat_n('y', ctx_len).collect();
         let task_type = ["x", "bad type", "", "ok.type"][rng.below(4) as usize];
         let action = ["deliver", "", "a b"][rng.below(3) as usize];
         let reward = rng.range_i64(0, 100);

@@ -211,7 +211,7 @@ fn node_ids_are_validated_and_unknown_nodes_refused() {
     assert_eq!(NodeId::new(""), Err(CoreError::Encoding));
     let na = NodeId::new("node-a").unwrap();
     let nb = NodeId::new("node-b").unwrap();
-    let mut net = LocalNetwork::new(&[na.clone()]);
+    let mut net = LocalNetwork::new(std::slice::from_ref(&na));
     assert_eq!(net.deliver(&na, &nb, vec![]), Err(CoreError::UnknownAgent));
     assert_eq!(net.take(&nb), Err(CoreError::UnknownAgent));
     assert_eq!(net.drop_pending(&nb), Err(CoreError::UnknownAgent));

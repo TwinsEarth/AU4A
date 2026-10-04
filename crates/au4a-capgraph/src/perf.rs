@@ -74,7 +74,7 @@ pub fn rank_top_k(
     if k == 0 || k >= matches.len() {
         perf.full_sorts += 1;
         let mut all = matches;
-        all.sort_by(|a, b| rank_key(a).cmp(&rank_key(b)));
+        all.sort_by_key(rank_key);
         perf.comparisons += all.len() as u64; // 记账：一次全排序至少 n 次比较
         return all;
     }
@@ -318,12 +318,12 @@ mod tests {
         assert_eq!(perf.full_sorts, 0, "有界选择不做全排序");
 
         let mut full = candidates;
-        full.sort_by(|a, b| rank_key(a).cmp(&rank_key(b)));
+        full.sort_by_key(rank_key);
         let expected: Vec<CapabilityMatch> = full.into_iter().take(5).collect();
         assert_eq!(bounded.len(), 5);
         assert_eq!(
-            bounded.iter().map(|m| rank_key(m)).collect::<Vec<_>>(),
-            expected.iter().map(|m| rank_key(m)).collect::<Vec<_>>(),
+            bounded.iter().map(rank_key).collect::<Vec<_>>(),
+            expected.iter().map(rank_key).collect::<Vec<_>>(),
             "有界选择与全排序逐位一致"
         );
     }

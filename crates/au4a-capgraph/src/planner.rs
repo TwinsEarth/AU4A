@@ -632,10 +632,10 @@ fn search_labels(
             };
             let over_budget = request
                 .max_total_price
-                .map_or(false, |budget| candidate_label.price > budget.get());
-            let over_deadline = request.deadline_ms.map_or(false, |deadline| {
-                candidate_label.latency > u64::from(deadline)
-            });
+                .is_some_and(|budget| candidate_label.price > budget.get());
+            let over_deadline = request
+                .deadline_ms
+                .is_some_and(|deadline| candidate_label.latency > u64::from(deadline));
             if over_budget || over_deadline {
                 stats.constraint_pruned += 1;
                 continue;
@@ -680,7 +680,7 @@ fn search_labels(
                 continue;
             }
             let key = (label.cost, label.latency, label.price);
-            if best_key.map_or(true, |known| key < known) {
+            if best_key.is_none_or(|known| key < known) {
                 best_key = Some(key);
                 best = Some((slot, index));
             }
