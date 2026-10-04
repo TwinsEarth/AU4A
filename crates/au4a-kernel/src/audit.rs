@@ -191,7 +191,43 @@ pub fn audit_kernel(kernel: &Kernel) -> HostAudit {
         )
     });
 
-    // 7. 逻辑时钟单调：进度事件不倒退、不超前。
+    // 7. 生命周期台账：每个在册 Agent 都有生命周期记录；台账里没有孤儿。
+    let mut untracked: Vec<String> = Vec::new();
+    for card in kernel.agents() {
+        if kernel.lifecycle_of(&card.did).is_none() {
+            untracked.push(card.display.clone());
+        }
+    }
+    let mut orphans: Vec<String> = Vec::new();
+    for (did, _) in kernel.lifecycles().states() {
+        if let Ok(parsed) = au4a_core::Did::parse(&did) {
+            if !kernel.is_registered(&parsed) {
+                orphans.push(did.clone());
+            }
+        } else {
+            orphans.push(did.clone());
+        }
+    }
+    findings.push(if untracked.is_empty() && orphans.is_empty() {
+        AuditFinding::pass(
+            "lifecycle.tracked",
+            format!(
+                "{} 个 Agent 都有生命周期记录（active {} / degraded {} / quarantined {} / retired {}）",
+                kernel.lifecycles().len(),
+                kernel.lifecycles().count(crate::AgentState::Active),
+                kernel.lifecycles().count(crate::AgentState::Degraded),
+                kernel.lifecycles().count(crate::AgentState::Quarantined),
+                kernel.lifecycles().count(crate::AgentState::Retired),
+            ),
+        )
+    } else {
+        AuditFinding::fail(
+            "lifecycle.tracked",
+            format!("未登记 {untracked:?}，孤儿 {orphans:?}"),
+        )
+    });
+
+    // 8. 逻辑时钟单调：进度事件不倒退、不超前。
     let now = kernel.now();
     let mut last = 0u64;
     let mut backwards = 0usize;

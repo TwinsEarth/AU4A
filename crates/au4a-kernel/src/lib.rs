@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 pub mod audit;
 pub mod autonomy;
 pub mod council;
+pub mod lifecycle;
 pub mod observer;
 pub mod permission;
 pub mod pmb;
@@ -32,6 +33,9 @@ pub use autonomy::{
 pub use council::{
     motions_for_kernel, Ballot, Council, CouncilConfig, CouncilFailure, Decision, Motion,
     MotionKind, Tally, Verdict, Vote,
+};
+pub use lifecycle::{
+    next_state, AgentState, Lifecycle, LifecycleBook, LifecycleEvent, LifecycleOutcome, Transition,
 };
 pub use observer::{
     observer_api, observer_self_checks, Observer, ObserverCapability, ObserverProjection,
@@ -131,6 +135,8 @@ pub struct Kernel {
     clock: LogicalClock,
     ledger: Ledger,
     agents: AgentRegistry,
+    /// Agent 生命周期台账（v1.0.7）：注册即登记，事件溯源。
+    lifecycles: LifecycleBook,
     queue: Vec<Envelope>,
     delivered: u64,
     refusals: Vec<(Did, Refusal)>,
@@ -144,6 +150,7 @@ impl Kernel {
             clock: LogicalClock::new(),
             ledger: Ledger::new(),
             agents: AgentRegistry::new(),
+            lifecycles: LifecycleBook::new(),
             queue: Vec::new(),
             delivered: 0,
             refusals: Vec::new(),
@@ -245,6 +252,52 @@ impl Kernel {
         explain(self, did)
     }
 
+    /// 某个 Agent 的生命周期（v1.0.7）。
+    pub fn lifecycle_of(&self, did: &Did) -> Option<&Lifecycle> {
+        self.lifecycles.get(did)
+    }
+
+    /// 只读的生命周期台账。
+    pub fn lifecycles(&self) -> &LifecycleBook {
+        &self.lifecycles
+    }
+
+    /// 施加一个生命周期事件（返回结果值，含类型化拒绝码，不抛错）。
+    pub fn apply_lifecycle(
+        &mut self,
+        did: &Did,
+        event: LifecycleEvent,
+    ) -> CoreResult<LifecycleOutcome> {
+        let at = self.clock.tick();
+        self.lifecycles
+            .attempt(did, event, at)
+            .ok_or(CoreError::UnknownAgent)
+    }
+
+    /// 执行一条委员会决定：只有 `Upheld` 的决定有执行力。
+    ///
+    /// `Warn`/`Slash` 记录为「降级」；经济后果（罚没金额）由 `au4a-economy`（1.4）决定，
+    /// 本轨道只负责生命周期语义。
+    pub fn apply_council_decision(
+        &mut self,
+        motion: &Motion,
+        decision: &Decision,
+    ) -> CoreResult<Option<LifecycleOutcome>> {
+        if decision.verdict != Verdict::Upheld {
+            return Ok(None);
+        }
+        if decision.motion != motion.id || decision.subject != motion.subject {
+            return Err(CoreError::InvalidKind);
+        }
+        let event = match decision.kind {
+            MotionKind::Quarantine => LifecycleEvent::CouncilQuarantine,
+            MotionKind::Reprieve => LifecycleEvent::CouncilReprieve,
+            MotionKind::Warn | MotionKind::Slash => LifecycleEvent::Refused(motion.cause),
+        };
+        let at = self.clock.tick();
+        Ok(self.lifecycles.attempt(&decision.subject, event, at))
+    }
+
     /// 追加一条进度事件（任何轨道都可以发，观察层只读订阅）。
     pub fn emit(&mut self, kind: &str, detail: impl Into<String>) {
         let at = self.clock.now();
@@ -288,6 +341,10 @@ impl Kernel {
             evidence: EvidenceGrade::Verified,
         };
         self.agents.insert(card.clone())?;
+        // 生命周期：注册即登记为 Provisional 并通过准入（质押与技能检查已在上方完成）。
+        self.lifecycles.enroll(&did);
+        self.lifecycles
+            .try_apply(&did, LifecycleEvent::Admitted, self.clock.now());
         self.clock.tick();
         self.emit(
             "agent.registered",
@@ -729,7 +786,37 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "replays": router.stats().replays,
     });
 
-    // 9. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    // 9. 生命周期：竞争失败只降级（且可恢复），恶意才隔离；退役是终态。
+    let mut lifecycle_applied = 0usize;
+    let mut lifecycle_steps: Vec<Value> = Vec::new();
+    for (did, event) in [
+        (host.did.clone(), LifecycleEvent::WorkStarted),
+        (host.did.clone(), LifecycleEvent::WorkFinished),
+        (
+            settler.did.clone(),
+            LifecycleEvent::Refused(RefusalCode::PolicyDenied),
+        ),
+        (settler.did.clone(), LifecycleEvent::Recovered),
+        (settler.did.clone(), LifecycleEvent::Retired),
+    ] {
+        let outcome = kernel.apply_lifecycle(&did, event)?;
+        if outcome.applied {
+            lifecycle_applied += 1;
+        }
+        lifecycle_steps.push(outcome.to_json());
+    }
+    let retired_is_terminal = kernel
+        .apply_lifecycle(&settler.did, LifecycleEvent::Admitted)
+        .map(|outcome| !outcome.applied)
+        .unwrap_or(false);
+    let lifecycle_json = json!({
+        "states": kernel.lifecycles().to_json(),
+        "applied": lifecycle_applied,
+        "steps": lifecycle_steps,
+        "retired_is_terminal": retired_is_terminal,
+    });
+
+    // 10. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
     let report = Observer::report(kernel);
     let observer_layer = json!({
         "routes": ObserverRoute::ALL.len(),
@@ -745,7 +832,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             .unwrap_or(Value::Null),
     });
 
-    // 10. 审计 + 只读观察。
+    // 11. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -754,7 +841,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": {"host": host.display, "observer": observer.display, "settler": settler.display},
-        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "permission", "pmb", "observe_layer", "audit", "observe"],
+        "steps": ["register", "announce", "deliver", "settle", "autonomy", "council", "permission", "pmb", "lifecycle", "observe_layer", "audit", "observe"],
         "announced": announced,
         "drained": drained,
         "settled_verified": settled_verified,
@@ -764,6 +851,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "council": council_json,
         "permission": permission_json,
         "pmb": pmb_json,
+        "lifecycle": lifecycle_json,
         "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,

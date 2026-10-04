@@ -394,14 +394,6 @@ impl LifecycleBook {
             .map(|life| life.attempt(event, at))
     }
 
-    /// 直接摆布状态（仅自测：不变式套件必须能发现「无据隔离」）。
-    #[cfg(test)]
-    pub(crate) fn force_state_for_test(&mut self, did: &Did, state: AgentState) {
-        if let Some(life) = self.lives.get_mut(did.as_str()) {
-            life.state = state;
-        }
-    }
-
     pub fn states(&self) -> BTreeMap<String, AgentState> {
         self.lives
             .iter()

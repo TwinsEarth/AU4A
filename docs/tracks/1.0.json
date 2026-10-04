@@ -221,6 +221,41 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 57 + autonomy 4 + council 5 + host_kernel 9 + observer 5 + permission 6 + pmb 6 = 92 passed，0 failed，0 warning，exit 0。真实跨进程传输属 au4a-node / au4a-scale(1.9)，本版只断言协议语义与线格式合规。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.7",
+      "title": "状态机更新",
+      "goal": "把 Agent 生命周期变成白名单状态机 + 事件溯源，并把治理底线写进迁移表：竞争只降级（可恢复）、隔离只来自恶意证据或委员会决定、退役是终态",
+      "deliverables": [
+        "src/lifecycle.rs: AgentState(6 态) / LifecycleEvent(8 种) / next_state 纯迁移函数 / Transition / Lifecycle(apply/can/allowed_events/replay/attempt/fingerprint) / LifecycleOutcome / LifecycleBook",
+        "src/lib.rs: Kernel 增加 lifecycles 台账（注册即 Admitted）+ lifecycle_of/lifecycles/apply_lifecycle/apply_council_decision，scenario() 新增 lifecycle 阶段",
+        "src/audit.rs: 新增审计项 lifecycle.tracked（在册必有台账、台账无孤儿）",
+        "src/observer.rs: 「结果」面板加入生命周期状态分布",
+        "tests/lifecycle.rs: 6 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum AgentState { Provisional, Active, Busy, Degraded, Quarantined, Retired }",
+        "pub enum LifecycleEvent { Admitted, WorkStarted, WorkFinished, Refused(RefusalCode), Recovered, CouncilQuarantine, CouncilReprieve, Retired }",
+        "pub fn next_state(AgentState, LifecycleEvent) -> Result<AgentState, RefusalCode>",
+        "pub struct Lifecycle; pub struct LifecycleBook; pub struct LifecycleOutcome; pub struct Transition",
+        "impl Kernel { lifecycle_of / lifecycles / apply_lifecycle / apply_council_decision }"
+      ],
+      "acceptance": [
+        "注册 3 个 Agent 后各 1 条 Admitted、状态 Active、count(Active)==3、audit 的 lifecycle.tracked 通过、self_check 全绿",
+        "10 个拒绝码穷举：恶意 2 码 -> Quarantined，其余 8 码 -> Degraded；连续 20 次限流仍 Degraded 且 count(Quarantined)==0；Recovered 直接回 Active",
+        "伪造信封 -> Quarantined；仅 Upheld 的 Reprieve 决定能回 Active；Rejected 无执行力(None)；决定与动议不匹配 -> Err(InvalidKind)；Upheld Quarantine 动议使目标隔离",
+        "退役后 5 种事件全部 applied==false 且 code==stale_epoch；重复退役幂等",
+        "未注册 DID 施加事件 -> Err(UnknownAgent)",
+        "同事件序列两次运行台账指纹相等；can() 与 apply() 在所有可达状态×事件样本上一致；allowed_events() 恰为 can 为真集合"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 106,
+        "tests_total": 106,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 65 + autonomy 4 + council 5 + host_kernel 9 + lifecycle 6 + observer 5 + permission 6 + pmb 6 = 106 passed，0 failed，0 warning，exit 0。Slash 的经济执行属 au4a-economy(1.4)，跨节点同步属 1.3/1.7。"
+      },
+      "status": "done"
     }
   ]
 }
