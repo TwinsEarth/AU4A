@@ -243,20 +243,29 @@
         "tests/reproducibility.rs",
         "tests/refusals.rs"
       ],
-      "interfaces": [],
+      "interfaces": [
+        "tests/invariants.rs: 32 种子不变式扫描（复用 sim::ab_test / MarketConfig / MarketRun）",
+        "tests/reproducibility.rs: 规范 JSON 逐字节复现与摘要敏感性",
+        "tests/refusals.rs: 7 类 CoreError 清单 + 3 类软拒绝 + 300 次畸形输入扫描"
+      ],
       "acceptance": [
-        "64 个种子扫描下全部不变式成立",
-        "两次独立运行规范 JSON 逐字节相同",
-        "每一个 CoreError 路径都被显式触发过"
+        "32 个种子扫描下全部结构性不变式成立（tick/结局/轮内聚合/边界/代际/窗口）",
+        "32 个种子中 29 个成功率与收益同时提升，平均成功率提升 +1025bp",
+        "两次独立流水线（含经验库→反馈→调整→模型→公开视图→加密）规范 JSON 逐字节相同",
+        "默认市场 ab_test 与 scenario 双跑逐字节一致，内核账本视图与逻辑时钟读数也一致",
+        "摘要对追加顺序敏感（[1,2,3] ≠ [3,2,1]），避免把顺序无关误当可复现",
+        "7 类 CoreError 全部有显式触发用例且清单完整无重复（InvalidKind/Encoding/NegativeAmount/Overflow/InvalidSignature/InvalidVersion/FrameTruncated）",
+        "3 类软拒绝（证据不足不学习、小样本抑制、证据闸门拒付）都有断言",
+        "300 次确定性畸形输入扫描无 panic，且合法/非法输入都被覆盖"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 81,
+        "tests_total": 81,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号 + 3 不变式 + 4 复现 + 3 拒绝。种子扫描实测 32 种子/29 改善/平均 +1025bp。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.7.log"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.6.8",

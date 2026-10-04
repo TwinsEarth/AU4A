@@ -66,7 +66,7 @@ pub const TITLE: &str = "Individual Learning 个体学习";
 /// 版本区间。
 pub const RANGE: &str = "v1.6.1 → v1.6.10";
 /// 已实现到的小版本（每落地一版就前移一格）。
-pub const VERSION: &str = "v1.6.6";
+pub const VERSION: &str = "v1.6.7";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_learning";
 
