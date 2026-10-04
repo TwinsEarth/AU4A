@@ -469,6 +469,21 @@ fn ensure_registered(
     }
 }
 
+/// 为演示主体补足工作余额（创世额度只发一次，重复调用场景时需要补足）。
+///
+/// 这是**网络规则**（创世发放），不是收益、也不是结算：补足量会如实写进场景 JSON 的
+/// `topups` 字段，隐藏不了任何东西。补足后立刻断言守恒。
+fn ensure_working_balance(kernel: &mut Kernel, who: &Did, target: Credits) -> CoreResult<Credits> {
+    let available = kernel.ledger().balance(who).available;
+    if available >= target {
+        return Ok(Credits::ZERO);
+    }
+    let shortfall = target.checked_sub(available)?;
+    kernel.ledger_mut().mint(who, shortfall)?;
+    kernel.ledger().check_conservation()?;
+    Ok(shortfall)
+}
+
 /// 一条公告（场景里 Agent 广播的自有报价）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Announcement {
@@ -526,6 +541,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         Credits(100),
     )?;
     kernel.emit("economy.registered", "3 个 Agent 自证身份并自带质押完成注册");
+
+    // 演示主体需要一笔工作余额：首次运行时创世额度已经够用，重复运行时补足（如实上报）。
+    let seller_topup = ensure_working_balance(kernel, &seller, Credits(900))?;
+    let buyer_topup = ensure_working_balance(kernel, &buyer, Credits(900))?;
 
     // 每个 Agent 自己申报策略——没有任何外部设定入口。
     let mut book = BalanceManager::new();
@@ -632,8 +651,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     );
     kernel.emit("economy.refused", format!("{}：{}", verdict.as_str(), overreach));
 
-    // 自主补足质押：不穿过底线，也不超过预算。
-    let locked = book.autostake(kernel.ledger_mut(), &seller, Credits(1_000))?;
+    // 自主补足质押：不穿过底线，也不超过预算；已经达标时 ZeroAmount 表示「无需补足」。
+    let locked = match book.autostake(kernel.ledger_mut(), &seller, Credits(1_000)) {
+        Ok(amount) => amount,
+        Err(CoreError::ZeroAmount) => Credits::ZERO,
+        Err(err) => return Err(err),
+    };
     kernel.emit("economy.staked", format!("卖方自主锁定 {locked} 微积分质押"));
 
     // 自主兑换路由决策：金额阈值 / 时效 / 费用三个条件决定是否上链。
@@ -894,6 +917,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "scenario": "v1.4.6 余额 + 定价 + 兑换 + 质押 + 仲裁 + 结算路由与收益归属",
+        "topups": { "seller": seller_topup, "buyer": buyer_topup },
         "agents": [row(&seller)?, row(&buyer)?, row(&rival)?, row(&arbiter)?, row(&owner)?],
         "pricing": {
             "knobs": PriceKnobs::DEFAULT,

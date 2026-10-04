@@ -192,6 +192,36 @@
         "notes": "本 crate 0 warning；au4a-kernel 有 1 条 unused import 警告（属轨道 1.0，未越界修改）；日志 _forangent\\logs\\1.4-v1.4.6.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.7",
+      "title": "测试",
+      "goal": "跨模块性质测试与端到端测试：400 步随机操作序列下守恒/质押簿不变式、全域定价单调、分成严格分完、罚没上限、拒绝不改账本、场景逐字节可复现。",
+      "deliverables": [
+        "tests/economy_invariants.rs: 10 个性质测试（确定性 LCG，无外部依赖）",
+        "tests/e2e_scenario.rs: 6 个端到端测试（场景契约、复现、伪造报价=恶意、Unverified 不结算、幂等、节点接线）",
+        "src/lib.rs: ensure_working_balance 补足工作余额并上报 topups；autostake 的 ZeroAmount 作为「无需补足」处理"
+      ],
+      "interfaces": [
+        "cargo test -p au4a-economy 同时运行 lib + 2 个集成测试目标",
+        "scenario JSON 新增 topups 字段（创世补足量，如实上报）"
+      ],
+      "acceptance": [
+        "400 步混合操作序列每步后 check_conservation 与质押簿 assert_consistent 均成立，成功/拒绝路径都覆盖",
+        "同种子两次运行账本视图规范 JSON 逐字节一致，不同种子必须不同",
+        "定价 base∈{1,7,999,1000000} × 负载/信誉 0→10000 全域单调且价格≥1；500 组随机报价可复现无浮点",
+        "300 组随机权重分成 Σ==总额 且每份与理想值偏差 <1 微积分",
+        "40 个随机案件罚没 ≤ 锁定余额且账本 slashed 一致；5 类拒绝后 LedgerView 逐字段不变",
+        "端到端：4 个注册 Agent + 5 个账本账户，人类操作者可用 60/锁定 0；同内核重复运行幂等"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-economy)",
+        "tests_passed": 81,
+        "tests_total": 81,
+        "grade": "verified",
+        "notes": "lib 65 + e2e_scenario 6 + economy_invariants 10；本 crate 0 warning；日志 _forangent\\logs\\1.4-v1.4.7.log"
+      },
+      "status": "done"
     }
   ]
 }
