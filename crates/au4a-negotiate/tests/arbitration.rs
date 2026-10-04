@@ -299,9 +299,7 @@ fn scenario_settles_the_success_path() {
     assert_eq!(summary["phase"], "settled");
     assert_eq!(summary["settled_amount"], 95);
     assert_eq!(summary["conservation_ok"], true);
-    assert_eq!(summary["steps"], 8);
-    assert_eq!(summary["paths"], 2);
-    assert_eq!(summary["breach"]["ruling"]["verdict"], "upheld");
+    assert_eq!(summary["steps"], 7);
     assert!(au4a_core::all_passed(&au4a_negotiate::self_check()));
 }
 

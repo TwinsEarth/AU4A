@@ -15,6 +15,7 @@
 //! * **双方签名**：状态机每一次转换都必须由双方签署（或由双签合约的条款授权），
 //!   单方签名不成立。
 
+pub mod arbitration;
 pub mod breach;
 pub mod contract;
 pub mod journal;
@@ -22,6 +23,9 @@ pub mod msg;
 pub mod rounds;
 pub mod state;
 
+pub use arbitration::{
+    ArbitrationCase, ArbitrationPolicy, Enforcement, Ruling, Verdict,
+};
 pub use breach::BreachClaim;
 pub use contract::{Anchor, Contract, ANCHOR_EVENT};
 pub use journal::{Journal, JOURNAL_VERSION};
@@ -343,6 +347,66 @@ fn breach_requires_contract_check() -> CoreResult<String> {
         .to_string())
 }
 
+fn arbitration_conservation_check() -> CoreResult<String> {
+    let client = au4a_core::AgentKeys::from_seed(&[0xD3; 32]);
+    let provider = au4a_core::AgentKeys::from_seed(&[0xE4; 32]);
+    let arb1 = au4a_core::AgentKeys::from_seed(&[0xF5; 32]);
+    let arb2 = au4a_core::AgentKeys::from_seed(&[0x06; 32]);
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    ensure_agent(&mut kernel, &client, "selfcheck.client", &["summarize.zh"])?;
+    ensure_agent(&mut kernel, &provider, "selfcheck.provider", &["summarize.zh"])?;
+
+    let terms = Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?;
+    let mut negotiation = Negotiation::open(&mut kernel, &client, &provider, terms, 2)?;
+    negotiation.accept(&mut kernel, &provider, &client)?;
+    negotiation.sign_contract(&mut kernel, &client, &provider)?;
+    negotiation.execute(&mut kernel, &client, &provider)?;
+    negotiation.report_breach(
+        &mut kernel,
+        &client,
+        BreachKind::NonDelivery,
+        EvidenceGrade::Verified,
+        "nothing delivered",
+    )?;
+
+    let before = kernel.ledger().view();
+    let case = negotiation.open_case(&[arb1.did(), arb2.did()], 1)?;
+    let price = negotiation
+        .contract()
+        .ok_or(au4a_core::CoreError::NotSealed)?
+        .terms
+        .price;
+    {
+        let case = negotiation
+            .case_mut()
+            .ok_or(au4a_core::CoreError::NotSealed)?;
+        case.rule(
+            &ArbitrationPolicy::default(),
+            &[&arb1, &arb2],
+            price,
+            "non-delivery proven",
+            2,
+        )?;
+        let report = case.enforce(&mut kernel, 3)?;
+        if report.slashed != Credits(20) || report.compensated != Credits(50) {
+            return Err(au4a_core::CoreError::InvalidSignature);
+        }
+    }
+    kernel.ledger().check_conservation()?;
+    let after = kernel.ledger().view();
+    if after.minted != before.minted || after.slashed != before.slashed.checked_add(Credits(20))? {
+        return Err(au4a_core::CoreError::Overflow);
+    }
+    negotiation.resolve(&mut kernel, &client, &provider)?;
+    if negotiation.phase() != Phase::Settled {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    Ok(format!(
+        "案件 {} 双仲裁员裁决：罚没 20（销毁）+ 赔付 50，守恒 Σ可用+Σ锁定+罚没==发行 成立",
+        case.short_id()
+    ))
+}
+
 fn journal_roundtrip_check() -> CoreResult<String> {
     let a = au4a_core::AgentKeys::from_seed(&[0x39; 32]);
     let b = au4a_core::AgentKeys::from_seed(&[0x4A; 32]);
@@ -391,6 +455,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         check("rounds.reject_free", rounds_reject_check()),
         check("contract.dual_signature", contract_dual_signature_check()),
         check("breach.requires_contract", breach_requires_contract_check()),
+        check("arbitration.conservation", arbitration_conservation_check()),
     ]
 }
 
@@ -436,10 +501,11 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &responder,
         Terms::new("summarize.zh", Credits(95), 42, EvidenceGrade::Verified)?,
     )?;
-    // 应答方接受提议方的 95，然后双方签订合约（双方签名 + 锚定哈希），再开始执行。
+    // 应答方接受提议方的 95，然后双方签订合约（双方签名 + 锚定哈希），开始执行并结算。
     negotiation.accept(kernel, &responder, &proposer)?;
     let contract = negotiation.sign_contract(kernel, &proposer, &responder)?;
     negotiation.execute(kernel, &proposer, &responder)?;
+    let paid = negotiation.settle(kernel, &proposer, &responder)?;
 
     let delivered = kernel.drain();
     let mut transcript: Vec<Value> = Vec::new();
@@ -495,7 +561,9 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "replay_digest": replay_digest,
         "contract": contract.summary(),
         "contract_anchored": contract.verify_anchor().is_ok(),
-        "steps": 6,
+        "settled_amount": paid.0,
+        "conservation_ok": kernel.ledger().check_conservation().is_ok(),
+        "steps": 7,
     }))
 }
 

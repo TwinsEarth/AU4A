@@ -195,21 +195,36 @@
       "version": "v1.2.7",
       "title": "仲裁接入",
       "goal": "仲裁案件立案→证据→裁决，罚没与赔付落到内核账本，守恒不变式保持",
-      "deliverables": ["src/arbitration.rs: ArbitrationCase/Ruling/裁决规则"],
-      "interfaces": ["pub struct ArbitrationCase", "ArbitrationCase::file/rule"],
+      "deliverables": [
+        "src/arbitration.rs: ArbitrationCase/Verdict/Ruling/ArbitrationPolicy/Enforcement",
+        "src/rounds.rs: Negotiation::{settle,open_case,case_mut,resolve}（EXECUTING→SETTLED、ARBITRATION→SETTLED）",
+        "tests/arbitration.rs: 完整仲裁链路 + 证据闸门 + 结算角色约束"
+      ],
+      "interfaces": [
+        "pub struct ArbitrationCase { case_id, contract_id, contract_hash, claimant, accused, claim, filed_at, arbiters, ruling }",
+        "ArbitrationCase::{file,rule,verify_ruling,enforce,summary}",
+        "pub struct Ruling { case_id, verdict, slash, compensate, rationale, at, signatures }",
+        "pub struct ArbitrationPolicy { slash_bp, compensate_bp } + assess()",
+        "pub struct Enforcement { case_id, verdict, slashed, compensated, conservation_ok, at }",
+        "Negotiation::{settle,open_case,case,case_mut,resolve}"
+      ],
       "acceptance": [
-        "裁决由两名仲裁 Agent 签名才生效",
-        "罚没走 ledger.slash、赔付走 kernel.settle（证据闸门拦截 unverified）",
-        "裁决前后 check_conservation 均通过"
+        "case_id 内容寻址（合约哈希 + 申诉载荷），不同申诉得不同案件",
+        "当事人不能当仲裁员（unknown_agent）；两名仲裁员必须互不相同（invalid_kind）",
+        "只有本案两名仲裁员共同签名裁决才生效：单签 → not_sealed，名单外 → unknown_agent，改金额 → invalid_signature",
+        "unverified 申诉按政策 Rejected 且金额为 0；执行不动账本",
+        "罚没走 ledger.slash（销毁，发行量不变）、赔付走 kernel.settle（过证据闸门）",
+        "证据闸门拦下超限 cpu-proto 赔付时整案不执行（账本完全不变）并记 policy_denied",
+        "执行前后 check_conservation 均通过；结算必须按合约角色（反向付款 → conflict）"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 93,
+        "tests_total": 93,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：53 单元 + 8 tests/arbitration.rs + 7 tests/breach.rs + 6 tests/contract.rs + 4 tests/journal.rs + 6 tests/messages.rs + 4 tests/rounds.rs + 5 tests/state_machine.rs 全绿、0 warning（日志 1.2-v1.2.7.log）。实测数值：100 微积分合约 → 罚没 20（锁定 50→30，slashed +20，minted 不变）+ 赔付 50（可用 950→900，申诉方 +50）；CPU 原型 1000 合约的 500 赔付被证据闸门拒绝且账本零变化。修复记录：3 处测试借用冲突（enforce(&mut k, k.tick())）与 2 处余额期望值写错，修正后全绿。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.8",
