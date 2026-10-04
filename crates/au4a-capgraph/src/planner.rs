@@ -448,6 +448,9 @@ fn first_format(set: &std::collections::BTreeSet<FormatId>) -> FormatId {
 /// 规划主入口。返回 [`PlanOutcome`]，不返回 `Err`：
 /// 「没有可行流水线」是业务结论，不是程序错误。
 /// 一条能力路径：由 (步骤序号, 提供者下标, 能力下标) 三元组构成。
+/// 堆序键：代价 → 延迟 → 价格 → 步号 → DID → 槽位 → 标签下标（全序，确定性）。
+pub type HeapKey = std::cmp::Reverse<(i64, u64, i64, usize, Did, usize, usize)>;
+
 pub type Path = Vec<(usize, usize, usize)>;
 
 pub fn plan(
@@ -575,8 +578,7 @@ fn search_labels(
         .map(|row| vec![Vec::new(); row.len()])
         .collect();
     // 堆序：代价 → 延迟 → 价格 → 步号 → DID → 槽位 → 标签下标（全序，确定性）。
-    let mut heap: BinaryHeap<Reverse<(i64, u64, i64, usize, Did, usize, usize)>> =
-        BinaryHeap::new();
+    let mut heap: BinaryHeap<HeapKey> = BinaryHeap::new();
 
     for (slot, candidate) in candidates[0].iter().enumerate() {
         if !candidate.capability.accepts_format(&request.input_format) {
