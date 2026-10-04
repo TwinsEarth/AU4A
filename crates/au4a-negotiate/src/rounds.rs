@@ -68,6 +68,8 @@ pub struct Negotiation {
     tip: Option<String>,
     /// 达成后签署的合约（v1.2.5）。
     contract: Option<Contract>,
+    /// 违约申诉（v1.2.6）。
+    breach: Option<crate::breach::BreachClaim>,
     machine: StateMachine,
     journal: Journal,
 }
@@ -118,6 +120,7 @@ impl Negotiation {
             rejections: Vec::new(),
             tip: Some(env.id),
             contract: None,
+            breach: None,
             machine,
             journal,
         })
@@ -304,6 +307,80 @@ impl Negotiation {
         self.contract.as_ref()
     }
 
+    /// 开始执行：`CONTRACT_SIGNED → EXECUTING`（双方联署的转换记录）。
+    pub fn execute(
+        &mut self,
+        kernel: &mut Kernel,
+        initiator: &au4a_core::AgentKeys,
+        counterparty: &au4a_core::AgentKeys,
+    ) -> CoreResult<TransitionRecord> {
+        self.ensure_party(&initiator.did())?;
+        self.ensure_party(&counterparty.did())?;
+        if self.phase() != Phase::ContractSigned {
+            return Err(CoreError::InvalidKind);
+        }
+        let at = kernel.tick();
+        let record = self
+            .machine
+            .transact(Event::Execute, initiator, counterparty, at, &self.parties)?;
+        self.journal.append_transition(&record, None)?;
+        Ok(record)
+    }
+
+    /// 违约申诉：`CONTRACT_SIGNED|EXECUTING → ARBITRATION`。
+    ///
+    /// 转换由**双方已签署的合约**预授权（[`crate::state::Basis::ContractClause`]）：
+    /// 申诉方单签 + 出示双签合约见证；缺合约、单方合约、哈希不符一律拒绝。
+    pub fn report_breach(
+        &mut self,
+        kernel: &mut Kernel,
+        claimant: &au4a_core::AgentKeys,
+        kind: crate::msg::BreachKind,
+        evidence: au4a_core::EvidenceGrade,
+        note: &str,
+    ) -> CoreResult<crate::breach::BreachClaim> {
+        self.ensure_party(&claimant.did())?;
+        if !matches!(self.phase(), Phase::ContractSigned | Phase::Executing) {
+            return Err(CoreError::InvalidKind);
+        }
+        let contract = self.contract.clone().ok_or(CoreError::NotSealed)?;
+        contract.verify()?;
+
+        let at = kernel.tick();
+        let claim = crate::breach::BreachClaim::file(claimant, &contract, kind, evidence, note, at)?;
+        let accused = claim.accused.clone();
+
+        // 一条真实的 CONTRACT_BREACH 消息：被诉方与任何观察者都能独立验签。
+        let env = NegotiationMsg::breach(&contract.id, &contract.hash, kind, note)?.signed(
+            claimant,
+            &accused,
+            kernel.tick(),
+            self.tip.clone(),
+        )?;
+        kernel.send(&env)?;
+        self.journal.append(&env)?;
+        self.tip = Some(env.id);
+
+        // 进入仲裁：条款授权（单签 + 双签合约见证）。
+        let record = self.machine.stage_under_contract(
+            Event::Breach,
+            claimant,
+            at,
+            &contract.id,
+            &contract.hash,
+        )?;
+        self.machine
+            .commit(record.clone(), &self.parties, Some(&contract))?;
+        self.journal.append_transition(&record, Some(&contract))?;
+        self.breach = Some(claim.clone());
+        Ok(claim)
+    }
+
+    /// 本次协商里最近一次违约申诉（若有）。
+    pub fn breach(&self) -> Option<&crate::breach::BreachClaim> {
+        self.breach.as_ref()
+    }
+
     /// 签订合约：`ACCEPTED → CONTRACT_SIGNED`。
     ///
     /// 步骤全部真实发生：双方各自签署同一份条款载荷 → 各自发一条 `CONTRACT_SIGN` 消息（可被任何
@@ -376,6 +453,7 @@ impl Negotiation {
             "journal_bytes": self.archive()?.len(),
             "history_tip": self.machine.verify_history(&self.parties)?,
             "contract": self.contract.as_ref().map(|c| c.summary()),
+            "breach": self.breach.as_ref().map(|b| b.summary()),
         }))
     }
 

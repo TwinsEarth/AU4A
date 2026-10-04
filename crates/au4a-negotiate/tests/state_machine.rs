@@ -170,9 +170,9 @@ fn a_third_party_cannot_push_the_machine_forward() {
 fn scenario_summary_reports_the_machine_state() {
     let mut k = kernel();
     let summary = au4a_negotiate::scenario(&mut k).unwrap();
-    assert_eq!(summary["phase"], "contract_signed");
-    // 开局 + 两次还价 + 一次拒绝 + 接受 + 签合约 = 6 条双签转换；轮数额度只被两次还价消耗。
-    assert_eq!(summary["transitions"], 6);
+    assert_eq!(summary["phase"], "executing");
+    // 开局 + 两次还价 + 一次拒绝 + 接受 + 签合约 + 开始执行 = 7 条双签转换；轮数额度只被两次还价消耗。
+    assert_eq!(summary["transitions"], 7);
     assert_eq!(summary["rounds_used"], 2);
     assert_eq!(summary["offers"], 3);
     assert_eq!(summary["rejections"], 1);

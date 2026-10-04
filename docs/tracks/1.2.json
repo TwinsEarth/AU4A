@@ -161,21 +161,35 @@
       "version": "v1.2.6",
       "title": "违约处理",
       "goal": "CONTRACT_BREACH 申诉：四类违约、证据等级、状态机进入 ARBITRATION",
-      "deliverables": ["src/breach.rs: BreachClaim/违约判定"],
-      "interfaces": ["pub struct BreachClaim", "BreachClaim::file/verify"],
+      "deliverables": [
+        "src/breach.rs: BreachClaim（挂双签合约的签名申诉）",
+        "src/rounds.rs: Negotiation::execute（CONTRACT_SIGNED→EXECUTING）与 report_breach（→ARBITRATION，条款授权）",
+        "tests/breach.rs: 违约进仲裁的集成测试"
+      ],
+      "interfaces": [
+        "pub struct BreachClaim { contract_id, contract_hash, claimant, accused, kind, evidence, note, at, sig }",
+        "BreachClaim::file(&AgentKeys,&Contract,BreachKind,EvidenceGrade,&str,u64) -> CoreResult<BreachClaim>",
+        "BreachClaim::verify/is_against/accused_is_counterparty/summary",
+        "Negotiation::execute(&mut Kernel,&AgentKeys,&AgentKeys) -> CoreResult<TransitionRecord>",
+        "Negotiation::report_breach(&mut Kernel,&AgentKeys,BreachKind,EvidenceGrade,&str) -> CoreResult<BreachClaim>"
+      ],
       "acceptance": [
-        "四类违约都被受理进仲裁",
-        "无有效合约的申诉被拒",
-        "发起方自己不能既当申诉人又当被诉人"
+        "四类违约（non_delivery/late_delivery/under_delivery/wrong_evidence）都可立案，载荷往返一致",
+        "无合约或未达 CONTRACT_SIGNED/EXECUTING 的申诉 → invalid_kind，且不多发一条消息",
+        "非当事人申诉 → unknown_agent；单方签署合约 → not_sealed；条款被改的合约 → invalid_signature",
+        "申诉方=被诉方 → invalid_kind；被诉方必须是合约另一方",
+        "改 kind/合约哈希/note 任一字段 → invalid_signature；被诉方代签无效",
+        "进入 ARBITRATION 的转换记录恰有 1 个当场签名 + 双签合约条款授权；重放与归档往返仍成立",
+        "证据等级如实记录：unverified 的申诉不会绕过结算闸门"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 77,
+        "tests_total": 77,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：45 单元 + 7 tests/breach.rs + 6 tests/contract.rs + 4 tests/journal.rs + 6 tests/messages.rs + 4 tests/rounds.rs + 5 tests/state_machine.rs 全绿、本 crate 0 warning（日志 1.2-v1.2.6.log；该次构建中 au4a-kernel 有 1 条 unused variable 警告，属 track-kernel 正在改的版本，不是本 crate）。修复记录：首轮 1 个测试断言写错（忘了先清空在途的开局报价消息），修正后全绿。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.7",

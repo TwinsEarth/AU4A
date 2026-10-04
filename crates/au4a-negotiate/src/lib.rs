@@ -15,12 +15,14 @@
 //! * **双方签名**：状态机每一次转换都必须由双方签署（或由双签合约的条款授权），
 //!   单方签名不成立。
 
+pub mod breach;
 pub mod contract;
 pub mod journal;
 pub mod msg;
 pub mod rounds;
 pub mod state;
 
+pub use breach::BreachClaim;
 pub use contract::{Anchor, Contract, ANCHOR_EVENT};
 pub use journal::{Journal, JOURNAL_VERSION};
 pub use msg::{kinds, BreachKind, NegotiationMsg, Terms, ALL_KINDS};
@@ -296,6 +298,51 @@ fn contract_dual_signature_check() -> CoreResult<String> {
     ))
 }
 
+fn breach_requires_contract_check() -> CoreResult<String> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let a = au4a_core::AgentKeys::from_seed(&[0xB1; 32]);
+    let b = au4a_core::AgentKeys::from_seed(&[0xC2; 32]);
+    ensure_agent(&mut kernel, &a, "selfcheck.ba", &["summarize.zh"])?;
+    ensure_agent(&mut kernel, &b, "selfcheck.bb", &["summarize.zh"])?;
+    let terms = Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?;
+    let mut negotiation = Negotiation::open(&mut kernel, &a, &b, terms, 2)?;
+
+    // 合约还没签，申诉连门都进不去。
+    if negotiation.report_breach(
+        &mut kernel,
+        &a,
+        BreachKind::NonDelivery,
+        EvidenceGrade::Verified,
+        "too early",
+    ) != Err(au4a_core::CoreError::InvalidKind)
+    {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+
+    negotiation.accept(&mut kernel, &b, &a)?;
+    let contract = negotiation.sign_contract(&mut kernel, &a, &b)?;
+    negotiation.execute(&mut kernel, &a, &b)?;
+    let claim = negotiation.report_breach(
+        &mut kernel,
+        &a,
+        BreachKind::LateDelivery,
+        EvidenceGrade::Verified,
+        "delivered after the deadline",
+    )?;
+    if negotiation.phase() != Phase::Arbitration {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    claim.verify()?;
+    if !claim.is_against(&contract) || claim.accused != b.did() {
+        return Err(au4a_core::CoreError::InvalidSignature);
+    }
+    if negotiation.machine().history().last().map(|r| r.sigs.len()) != Some(1) {
+        return Err(au4a_core::CoreError::NotSealed);
+    }
+    Ok("无合约申诉被拒；双签合约下单签申诉进入 ARBITRATION（1 个当场签名 + 合约条款授权）"
+        .to_string())
+}
+
 fn journal_roundtrip_check() -> CoreResult<String> {
     let a = au4a_core::AgentKeys::from_seed(&[0x39; 32]);
     let b = au4a_core::AgentKeys::from_seed(&[0x4A; 32]);
@@ -343,6 +390,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         check("rounds.cap", rounds_cap_check()),
         check("rounds.reject_free", rounds_reject_check()),
         check("contract.dual_signature", contract_dual_signature_check()),
+        check("breach.requires_contract", breach_requires_contract_check()),
     ]
 }
 
@@ -388,9 +436,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         &responder,
         Terms::new("summarize.zh", Credits(95), 42, EvidenceGrade::Verified)?,
     )?;
-    // 应答方接受提议方的 95，然后双方签订合约（双方签名 + 锚定哈希）。
+    // 应答方接受提议方的 95，然后双方签订合约（双方签名 + 锚定哈希），再开始执行。
     negotiation.accept(kernel, &responder, &proposer)?;
     let contract = negotiation.sign_contract(kernel, &proposer, &responder)?;
+    negotiation.execute(kernel, &proposer, &responder)?;
 
     let delivered = kernel.drain();
     let mut transcript: Vec<Value> = Vec::new();
@@ -446,7 +495,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "replay_digest": replay_digest,
         "contract": contract.summary(),
         "contract_anchored": contract.verify_anchor().is_ok(),
-        "steps": 5,
+        "steps": 6,
     }))
 }
 
