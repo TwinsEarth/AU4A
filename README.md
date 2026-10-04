@@ -21,7 +21,7 @@ AU4A 是对 [agent-universe](https://github.com/TwinsEarth/agent-universe)（及
 
 ```bash
 # 方式一：作为 npm 依赖（已实测可安装）
-npm install github:TwinsEarth/agent-universeForAngent   # 或发布至 npm 后 @twinsearth/agent-universe-for-angent@1.9.9
+npm install @twinsearth/agent-universe-for-angent@1.9.9   # 已发布至公共 npm registry（也可 github:TwinsEarth/agent-universeForAngent）
 
 # 方式二：克隆源码
 git clone https://github.com/TwinsEarth/agent-universeForAngent.git
