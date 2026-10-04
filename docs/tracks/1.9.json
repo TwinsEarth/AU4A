@@ -221,18 +221,19 @@
         "pub fn schema_json() -> CoreResult<Value>"
       ],
       "acceptance": [
-        "schema 覆盖全部度量、单位、档位、裁决码与证据分级，且与代码常量逐个对齐",
-        "schema 是规范 JSON（无浮点）",
-        "文档中的每个数字都能在代码/测试里找到出处"
+        "schema 与代码常量逐个对齐（3 类裁决 / 7 个原因码 / 4 档位 / 求值预算 / MAX_SCAN_SAMPLES）",
+        "每个原因码在 schema 中恰好出现一次；schema 是规范 JSON（无浮点）",
+        "claim_scope 明写「非真实分布式压测」，not_done 列出未做之事，limitations 4 条",
+        "摘要给出 10 条公式、4 个档位、4 条局限"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-scale",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.9.7 全绿后开工"
+        "tests_passed": 45,
+        "tests_total": 45,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.8.log；lib 39 + 集成 6 = 45"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.9.9",

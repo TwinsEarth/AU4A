@@ -19,6 +19,7 @@ pub mod cluster;
 pub mod collect;
 pub mod harness;
 pub mod metrics;
+pub mod schema;
 pub mod verdict;
 
 use au4a_core::{CoreResult, SelfCheck};
@@ -32,6 +33,7 @@ pub use cluster::{
 };
 pub use collect::{collect, sweep, DataBundle, Record, ScenarioSpec};
 pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
+pub use schema::{schema_json, schema_summary};
 pub use verdict::{adjudicate, CapacityVerdict, VerdictKind, VerdictReason};
 pub use metrics::{
     aggregate_throughput_milli, analytic_vertex_floor, completion_bp, coordination_base,
@@ -46,7 +48,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.6";
+pub const CURRENT: &str = "v1.9.8";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -122,6 +124,34 @@ pub fn self_check() -> Vec<SelfCheck> {
                 "metrics.analytic_vertex",
                 format!("解析顶点 {analytic}，期望 1000"),
             )
+        }
+    });
+
+    // v1.9.8：契约必须与代码常量一致。
+    checks.push(match (schema_json(), schema_summary()) {
+        (Ok(schema), Ok(summary)) => {
+            let kinds_ok = schema["verdict"]["kinds"].as_array().map(|v| v.len())
+                == Some(VerdictKind::ALL.len());
+            let reasons_ok = schema["verdict"]["reasons"].as_array().map(|v| v.len())
+                == Some(VerdictReason::ALL.len());
+            if kinds_ok && reasons_ok && au4a_core::canonicalize(&schema).is_ok() {
+                SelfCheck::pass(
+                    TRACK,
+                    "schema.aligned_with_code",
+                    format!(
+                        "{} 条公式、{} 个档位、{} 类裁决、{} 个原因码与代码常量一致，且可规范化",
+                        summary["formulas"],
+                        summary["tiers"],
+                        summary["verdict_kinds"],
+                        summary["verdict_reasons"]
+                    ),
+                )
+            } else {
+                SelfCheck::fail(TRACK, "schema.aligned_with_code", "schema 与代码常量不一致")
+            }
+        }
+        (Err(err), _) | (_, Err(err)) => {
+            SelfCheck::fail(TRACK, "schema.aligned_with_code", err.to_string())
         }
     });
 
@@ -295,6 +325,7 @@ pub fn results_json() -> CoreResult<Value> {
         "current": CURRENT,
         "checks": checks.len(),
         "checks_passed": checks.iter().filter(|c| c.passed).count(),
+        "schema": schema_summary()?,
         "scenario": scenario_value,
     }))
 }
