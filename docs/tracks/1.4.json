@@ -129,6 +129,38 @@
         "notes": "质押/解质押/冷静期/罚没同步均走真实 Ledger 写路径；日志 _forangent\\logs\\1.4-v1.4.4.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.5",
+      "title": "争议仲裁",
+      "goal": "Agent 自主立案/投票/申诉；罚没上限 = 锁定余额（并记录截断来源）；申诉重开投票但已销毁的罚没不可退回。",
+      "deliverables": [
+        "src/arbitration.rs: DisputeState / Vote / Appeal / PenaltyCap / Dispute / ArbitrationTerms / Ruling / is_admissible / Court(open, vote, rule, appeal, close, case_json, to_json)",
+        "src/lib.rs: scenario 未验证证据被拒-立案-两票-罚没截断-申诉-重裁驳回-结案；self_check arbitration.penalty_cap"
+      ],
+      "interfaces": [
+        "pub fn open(&mut self, claimant: &Did, respondent: &Did, claimed: Credits, evidence: EvidenceGrade, now: u64) -> CoreResult<Dispute>",
+        "pub fn vote(&mut self, case_id: &str, arbiter: &Did, uphold: bool, weight_bp: i64) -> CoreResult<()>",
+        "pub fn rule(&mut self, ledger: &mut Ledger, case_id: &str, terms: &ArbitrationTerms, now: u64) -> CoreResult<Ruling>",
+        "pub fn appeal(&mut self, case_id: &str, by: &Did, reason: &str, terms: &ArbitrationTerms, now: u64) -> CoreResult<Appeal>",
+        "pub enum PenaltyCap { None, EvidenceCap, LockedBalance }"
+      ],
+      "acceptance": [
+        "Unverified 证据立案 → InvalidKind；当事人投票 → UnknownAgent；重复投票 → InvalidKind",
+        "1 票 < 法定 2 票 → InvalidKind；支持票权 9000bp ≥ 5000bp → 罚没 50（cap none）",
+        "索赔 1000000、锁定 50 → 罚没 50（cap locked_balance），账本 slashed=50 且可用不变、守恒成立",
+        "cpu-proto 证据罚没被 100 上限截断（cap evidence_cap）；支持票权不足 → 罚没 0 且锁定不变",
+        "申诉后票作废、状态 appealed；窗口外/非当事人/空理由/超次数一律拒绝",
+        "重裁驳回：本次罚没 0、累计 100（销毁不可逆）；结案后 open_cases=0"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-economy)",
+        "tests_passed": 56,
+        "tests_total": 56,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 cargo exit 0、0 warning；冻结错误码映射（state_conflict→InvalidKind、not_a_party→UnknownAgent）已写入文档；日志 _forangent\\logs\\1.4-v1.4.5.log"
+      },
+      "status": "done"
     }
   ]
 }

@@ -14,15 +14,22 @@
 //! 轨道内**串行**开发：每个小版本落地一个职责，并留下自检与证据。
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 
+pub mod arbitration;
 pub mod balance;
 pub mod fx;
 pub mod pricing;
 pub mod stake;
 
-use au4a_core::{AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, Ledger, RefusalCode, SelfCheck};
+use au4a_core::{
+    AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, EvidenceGrade, Ledger, RefusalCode,
+    SelfCheck,
+};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+pub use arbitration::{
+    is_admissible, Appeal, ArbitrationTerms, Court, Dispute, DisputeState, PenaltyCap, Ruling, Vote,
+};
 pub use balance::{AccountDelta, BalanceManager, BalancePolicy, BalanceReport, SpendVerdict};
 pub use fx::{
     ChainExecution, DecisionReason, ExchangeBook, ExchangeIntent, ExchangeRequest, IntentStatus,
@@ -304,6 +311,53 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("arbitration.penalty_cap", || {
+        let claimant = agent(12).did();
+        let respondent = agent(13).did();
+        let mut ledger = Ledger::new();
+        ledger.mint(&respondent, Credits(10_000)).map_err(|e| e.to_string())?;
+        ledger.lock(&respondent, Credits(50)).map_err(|e| e.to_string())?;
+        let terms = ArbitrationTerms::DEFAULT;
+        let mut court = Court::new();
+        let dispute = court
+            .open(&claimant, &respondent, Credits(1_000_000), EvidenceGrade::Verified, 1)
+            .map_err(|e| format!("立案被拒绝：{e}"))?;
+        court.vote(&dispute.id, &agent(14).did(), true, 9_000).map_err(|e| e.to_string())?;
+        court.vote(&dispute.id, &agent(15).did(), true, 1_000).map_err(|e| e.to_string())?;
+        let first = court
+            .rule(&mut ledger, &dispute.id, &terms, 2)
+            .map_err(|e| format!("裁决被拒绝：{e}"))?;
+        if first.slashed != Credits(50) || first.cap != PenaltyCap::LockedBalance {
+            return Err(format!(
+                "罚没未被锁定余额截断：slashed={} cap={}",
+                first.slashed,
+                first.cap.as_str()
+            ));
+        }
+        // 申诉后重开投票：驳回也不会把销毁的罚没退回来。
+        court
+            .appeal(&dispute.id, &respondent, "new evidence", &terms, 3)
+            .map_err(|e| format!("申诉被拒绝：{e}"))?;
+        court.vote(&dispute.id, &agent(14).did(), false, 9_000).map_err(|e| e.to_string())?;
+        court.vote(&dispute.id, &agent(15).did(), false, 1_000).map_err(|e| e.to_string())?;
+        let second = court
+            .rule(&mut ledger, &dispute.id, &terms, 4)
+            .map_err(|e| e.to_string())?;
+        ledger.check_conservation().map_err(|e| format!("守恒断言失败：{e}"))?;
+        if second.slashed != Credits::ZERO || second.slashed_total != Credits(50) {
+            return Err(format!(
+                "驳回后罚没总额应保持 50，实际本次 {} 累计 {}",
+                second.slashed, second.slashed_total
+            ));
+        }
+        Ok(format!(
+            "索赔 1000000、锁定 50 → 罚没 {}（{}），申诉重裁后累计仍为 {}，守恒成立",
+            first.slashed,
+            first.cap.as_str(),
+            second.slashed_total
+        ))
+    }));
+
     checks
 }
 
@@ -323,7 +377,7 @@ pub fn results_json() -> CoreResult<Value> {
         "checks_total": checks.len(),
         "checks_passed": passed,
         "all_passed": au4a_core::all_passed(&checks),
-        "modules": ["balance", "pricing", "fx", "stake"],
+        "modules": ["balance", "pricing", "fx", "stake", "arbitration"],
         "invariants": [
             "Σ可用 + Σ锁定 + 罚没 == 发行",
             "整数微积分与基点运算，规范 JSON 禁浮点",
@@ -382,7 +436,7 @@ fn parse_announcement(env: &Envelope) -> Option<Announcement> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：余额 + 定价 + 兑换路由 + 质押管理（v1.4.4）"),
+        format!("{TITLE} {RANGE}：余额 + 定价 + 兑换 + 质押 + 仲裁（v1.4.5）"),
     );
 
     let seller_keys = agent(41);
@@ -594,6 +648,68 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         format!("冷静期到点，释放 {released} 回可用；质押簿与账本一致"),
     );
 
+    // 自治仲裁：买方对对手方立案 → 两位非当事人 Agent 自主投票 → 罚没被锁定余额截断
+    // → 败方申诉 → 重开投票 → 第二次裁决驳回（已销毁的罚没不可退回）。
+    let arbiter_keys = agent(44);
+    let arbiter = ensure_registered(
+        kernel,
+        &arbiter_keys,
+        "economy.arbiter",
+        &["arbitrate.economy"],
+        Credits(100),
+    )?;
+    let mut court = Court::new();
+    let terms_arb = ArbitrationTerms::DEFAULT;
+    let gate = court.open(
+        &buyer,
+        &rival,
+        Credits(300),
+        EvidenceGrade::Unverified,
+        kernel.now(),
+    );
+    if gate.is_ok() {
+        return Err(CoreError::InvalidKind);
+    }
+    kernel.refuse(
+        &buyer,
+        RefusalCode::PolicyDenied,
+        "unverified evidence cannot open a dispute",
+    );
+    let dispute = court.open(
+        &buyer,
+        &rival,
+        Credits(300),
+        EvidenceGrade::Verified,
+        kernel.now(),
+    )?;
+    court.vote(&dispute.id, &seller, true, 7_000)?;
+    court.vote(&dispute.id, &arbiter, true, 3_000)?;
+    let ruled_at = kernel.now();
+    let first_ruling = court.rule(kernel.ledger_mut(), &dispute.id, &terms_arb, ruled_at)?;
+    kernel.emit(
+        "economy.ruled",
+        format!(
+            "首裁：支持 {}bp，罚没 {}（上限来源 {}）",
+            first_ruling.uphold_bp,
+            first_ruling.slashed,
+            first_ruling.cap.as_str()
+        ),
+    );
+    let appeal_at = kernel.now();
+    let appeal = court.appeal(&dispute.id, &rival, "new evidence submitted", &terms_arb, appeal_at)?;
+    court.vote(&dispute.id, &seller, false, 7_000)?;
+    court.vote(&dispute.id, &arbiter, false, 3_000)?;
+    let second_at = kernel.now();
+    let second_ruling = court.rule(kernel.ledger_mut(), &dispute.id, &terms_arb, second_at)?;
+    court.close(&dispute.id)?;
+    kernel.emit(
+        "economy.appealed",
+        format!(
+            "申诉后重裁：支持 {}，本次罚没 {}，累计 {}（销毁不可逆）",
+            second_ruling.upheld, second_ruling.slashed, second_ruling.slashed_total
+        ),
+    );
+
     // 守恒断言 + 余额变动投影。
     balance::assert_conserved(kernel.ledger())?;
     let after = kernel.ledger().view();
@@ -614,8 +730,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.4.4 余额 + 定价 + 兑换路由 + 质押管理",
-        "agents": [row(&seller)?, row(&buyer)?, row(&rival)?],
+        "scenario": "v1.4.5 余额 + 定价 + 兑换 + 质押 + 争议仲裁",
+        "agents": [row(&seller)?, row(&buyer)?, row(&rival)?, row(&arbiter)?],
         "pricing": {
             "knobs": PriceKnobs::DEFAULT,
             "quotes": quotes_json,
@@ -642,10 +758,20 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "refused_stranger": true,
             "consistent": true,
         },
+        "dispute": {
+            "terms": terms_arb,
+            "case": court.case_json(&dispute.id)?,
+            "unverified_refused": true,
+            "first_ruling": first_ruling,
+            "appeal": appeal,
+            "second_ruling": second_ruling,
+            "court": court.to_json(),
+        },
         "settled": [{ "from": buyer.as_str(), "to": seller.as_str(), "amount": price, "gate": "ledger-direct" }],
         "refusals": [
             { "code": RefusalCode::PolicyDenied.as_str(), "verdict": verdict.as_str(), "amount": overreach },
             { "code": RefusalCode::PolicyDenied.as_str(), "verdict": "unstake_without_position", "amount": Credits(10) },
+            { "code": RefusalCode::PolicyDenied.as_str(), "verdict": "unverified_evidence", "amount": Credits(300) },
         ],
         "staked": locked,
         "conservation": {
@@ -710,6 +836,19 @@ mod tests {
         assert_eq!(a["stake"]["refused_stranger"], json!(true));
         assert_eq!(a["stake"]["consistent"], json!(true));
         assert_eq!(a["refusals"][1]["verdict"], json!("unstake_without_position"));
+        // 仲裁：索赔 300、对手锁定 100 → 罚没被锁定余额截断为 100；申诉后重裁驳回，累计仍为 100。
+        assert_eq!(a["dispute"]["unverified_refused"], json!(true));
+        assert_eq!(a["dispute"]["first_ruling"]["upheld"], json!(true));
+        assert_eq!(a["dispute"]["first_ruling"]["slashed"], json!(100));
+        assert_eq!(a["dispute"]["first_ruling"]["cap"], json!("locked_balance"));
+        assert_eq!(a["dispute"]["appeal"]["round"], json!(1));
+        assert_eq!(a["dispute"]["second_ruling"]["upheld"], json!(false));
+        assert_eq!(a["dispute"]["second_ruling"]["slashed"], json!(0));
+        assert_eq!(a["dispute"]["second_ruling"]["slashed_total"], json!(100));
+        assert_eq!(a["dispute"]["case"]["state"], json!("closed"));
+        assert_eq!(a["dispute"]["court"]["total_slashed"], json!(100));
+        assert_eq!(a["refusals"][2]["verdict"], json!("unverified_evidence"));
+        assert_eq!(a["conservation"]["slashed"], json!(100));
         assert_eq!(a["conservation"]["ok"], json!(true));
         assert!(first.ledger().check_conservation().is_ok());
         assert!(second.ledger().check_conservation().is_ok());
