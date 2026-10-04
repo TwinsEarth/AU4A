@@ -23,7 +23,7 @@ members = [
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/TwinsEarth/agent-universeForAngent"
+repository = "https://github.com/TwinsEarth/AU4A"
 authors = ["TwinsEarth"]
 rust-version = "1.88"
 

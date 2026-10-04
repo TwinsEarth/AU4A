@@ -25,7 +25,7 @@ const WORK = 'E:\\DS\\_forangent';
 const MAT = path.join(WORK, 'mat');
 const STATE_FILE = path.join(WORK, 'publish-state.json');
 const TOKEN_FILE = 'E:\\DS\\_work\\token.json';
-const REPO = 'TwinsEarth/agent-universeForAngent';
+const REPO = 'TwinsEarth/AU4A';
 const BRANCH = 'master';
 const ARCHIVE_BRANCH = 'archive/js-line-2026-10-04';
 
