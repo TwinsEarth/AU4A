@@ -14,7 +14,8 @@ const arg = (n, d = null) => {
 };
 const has = (n) => argv.includes(n);
 
-const ROOT = arg('--root', 'E:\\DS\\AU4A');
+// 默认取当前工作目录（CI 的 GITHUB_WORKSPACE / 本地在仓库根目录运行时都成立），不写死 Windows 路径。
+const ROOT = path.resolve(arg('--root', process.cwd()));
 const version = arg('--version');
 if (!version) {
   console.error('usage: node tools/pack-npm.mjs --version vX.Y.Z --out <dir> [--major]');
