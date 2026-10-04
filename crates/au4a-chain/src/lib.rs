@@ -26,6 +26,7 @@ pub mod erc8004;
 pub mod rgb;
 pub mod taproot;
 pub mod testnet;
+pub mod x402;
 
 use au4a_core::{AgentKeys, CoreError, CoreResult, Credits, Did, Ledger, RefusalCode, SelfCheck};
 use au4a_kernel::Kernel;
@@ -45,6 +46,9 @@ pub use taproot::{
 };
 pub use testnet::{
     ChainId, ChainRefusal, ChainTx, Receipt, RefusalSpec, Testnet, ONCHAIN_GRADE,
+};
+pub use x402::{
+    Invoice, Payment, X402Adapter, X402Outcome, X402_REFUSALS, X402_SUPPORTED,
 };
 
 /// 轨道号。
@@ -316,7 +320,7 @@ fn adapter_ok<T>(
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：RGB + Taproot + ERC-8004（v1.8.3，确定性测试网）"),
+        format!("{TITLE} {RANGE}： RGB + Taproot + ERC-8004 + x402（v1.8.4，确定性测试网）"),
     );
 
     let alice_keys = agent(81);
@@ -476,6 +480,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     // ETH 侧：ERC-8004 身份与信誉注册表（v1.8.3）。
     let mut ethnet = Testnet::new(ChainId::EthLocal, 1);
     let mut erc = Erc8004Adapter::new();
+    let mut x402 = X402Adapter::new();
     for (keys, nonce) in [(&alice_keys, 1u64), (&bob_keys, 1)] {
         let tx = ChainTx::new(ChainId::EthLocal, "erc8004.register", &keys.did(), nonce, json!({}))?;
         adapter_ok(&mut *kernel, &keys.did(), erc.execute(&mut ethnet, &tx))?;
@@ -524,6 +529,61 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         ),
     );
 
+    // ETH 侧：x402 发票 → 支付 → 最终性 → 领取（v1.8.4）。
+    let expires_at = kernel.now() + 50;
+    let invoice_tx = ChainTx::new(
+        ChainId::EthLocal,
+        "x402.invoice",
+        &alice,
+        3,
+        json!({ "amount": 100, "asset": "usdc-eth", "expires_at": expires_at, "memo": "settlement" }),
+    )?;
+    let invoiced = adapter_ok(&mut *kernel, &alice, x402.execute(&mut ethnet, &invoice_tx))?;
+    // 发票 id 由适配器按交易内容计算，这里从适配器取回（不自己算）。
+    let invoice = x402
+        .last_invoice()
+        .cloned()
+        .ok_or(CoreError::UnknownAgent)?;
+    let pay_tx = ChainTx::new(
+        ChainId::EthLocal,
+        "x402.pay",
+        &bob,
+        3,
+        json!({ "invoice_id": invoice.id, "amount": 100, "now": kernel.now() }),
+    )?;
+    let paid = adapter_ok(&mut *kernel, &bob, x402.execute(&mut ethnet, &pay_tx))?;
+    let escrow_before = book.bridge_out(
+        kernel.ledger_mut(),
+        &bob,
+        Credits(100),
+        "usdc-eth",
+        "x402",
+    )?;
+    let pay_height = paid
+        .receipt
+        .as_ref()
+        .map(|r| r.height)
+        .ok_or(CoreError::InvalidKind)?;
+    ethnet.mine_to(pay_height + ethnet.finality_depth());
+    let claim_tx = ChainTx::new(
+        ChainId::EthLocal,
+        "x402.claim",
+        &alice,
+        4,
+        json!({ "invoice_id": invoice.id }),
+    )?;
+    let claim_result = x402.claim(&mut ethnet, kernel.ledger_mut(), &mut book, &claim_tx);
+    let claimed = adapter_ok(&mut *kernel, &alice, claim_result)?;
+    kernel.emit(
+        "chain.x402",
+        format!(
+            "x402：发票 {} → 支付 100 → 托管 {} → 最终性后领取；已结清 = {}",
+            au4a_core::short_id(&invoice.id),
+            escrow_before.amount,
+            x402.is_settled(&invoice.id)
+        ),
+    );
+
     // 双轨对账（fail-closed）：本地托管 == 链上表示 == RGB 流通量 == Taproot 锚定总量。
     let report = book.require_consistent(kernel.ledger())?;
     rgb.contract()?.check_supply_conservation()?;
@@ -541,7 +601,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.8.3 RGB + Taproot Assets + ERC-8004（确定性测试网）",
+        "scenario": "v1.8.4 RGB + Taproot Assets + ERC-8004 + x402（确定性测试网）",
         "agents": [alice.as_str(), bob.as_str()],
         "bridge": {
             "out": bridged,
@@ -584,6 +644,18 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "weight_bp": reputation_weight_bp(&reputation),
             "self_feedback_code": self_code.as_str(),
             "summary": reputation.to_json(),
+        },
+        "x402": {
+            "invoice_id": invoice.id,
+            "amount": invoice.amount,
+            "asset": invoice.asset,
+            "invoice": invoiced.detail,
+            "pay": paid.detail,
+            "escrow_before_claim": escrow_before.amount,
+            "claim": claimed.detail,
+            "settled": x402.is_settled(&invoice.id),
+            "escrow_after_claim": book.escrowed(),
+            "chain_supply_after_claim": book.chain_supply(),
         },
         "refusals": [
             { "op": early_refusal.op, "code": early_refusal.code.as_str(), "detail": early_refusal.detail },
@@ -638,6 +710,12 @@ mod tests {
         assert_eq!(a["erc8004"]["average_bp"], json!(8_500));
         assert_eq!(a["erc8004"]["weight_bp"], json!(1_700));
         assert_eq!(a["erc8004"]["self_feedback_code"], json!("policy_denied"));
+        // x402：发票 100 → 支付 → 托管 100 → 最终性后领取 → 托管回到 400（链上表示销毁）。
+        assert_eq!(a["x402"]["amount"], json!(100));
+        assert_eq!(a["x402"]["settled"], json!(true));
+        assert_eq!(a["x402"]["escrow_before_claim"], json!(100));
+        assert_eq!(a["x402"]["escrow_after_claim"], json!(400));
+        assert_eq!(a["x402"]["chain_supply_after_claim"], json!(400));
         // 锁定 = 注册质押 100 + 桥出托管 400 = 500。
         assert_eq!(a["conservation"]["locked"], json!(500));
         first.ledger().check_conservation().unwrap();

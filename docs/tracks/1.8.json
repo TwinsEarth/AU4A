@@ -103,6 +103,37 @@
         "notes": "注册表语义原型：无真实合约、无事件日志、无 gas、无 EVM；日志 _forangent\\logs\\1.8-v1.8.3.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.4",
+      "title": "x402",
+      "goal": "402 支付流程语义：开票-支付-最终性-领取；金额必须完全相等；领取走双轨托管解锁（fail-closed）。",
+      "deliverables": [
+        "src/x402.rs: Invoice / Payment / X402Adapter(execute, execute_with_ledger, claim, invoice_of, last_invoice, is_settled, to_json) / X402_SUPPORTED / X402_REFUSALS",
+        "src/lib.rs: 场景 x402 段（开票 100 → 支付 → 托管 100 → 最终性 → 领取）"
+      ],
+      "interfaces": [
+        "pub fn Invoice::new(payee: &Did, amount: Credits, asset: &str, nonce: u64, expires_at: u64, memo: &str) -> CoreResult<Invoice>",
+        "pub fn X402Adapter::execute(&mut self, net: &mut Testnet, tx: &ChainTx) -> Result<X402Outcome, ChainRefusal>",
+        "pub fn X402Adapter::execute_with_ledger(&mut self, net: &mut Testnet, ledger: &mut Ledger, book: &mut BridgeBook, tx: &ChainTx) -> Result<X402Outcome, ChainRefusal>",
+        "pub fn X402Adapter::claim(&mut self, net: &mut Testnet, ledger: &mut Ledger, book: &mut BridgeBook, tx: &ChainTx) -> Result<X402Outcome, ChainRefusal>"
+      ],
+      "acceptance": [
+        "发票 id 内容寻址并绑定全部条款；改一个条件即不同 id",
+        "199 → partial_payment/Malformed；201 → Malformed；过期 → Timeout；重复支付 → Conflict",
+        "未达最终性领取 → Timeout；叠够深度后领取成功：链上表示与托管归零、服务方 +200、付款方 800、守恒成立",
+        "重复领取 / 未支付领取 → Conflict；无发票付款 → pay_without_invoice/Malformed",
+        "5 个具名拒绝（partial_payment/stream_payment/fiat_onramp/offchain_settle/未知）逐个断言 op 与 code",
+        "托管缺失时领取被 fail-closed 拒绝且服务方余额为 0；投影 JSON 无浮点且 grade=cpu-proto"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-chain)",
+        "tests_passed": 51,
+        "tests_total": 51,
+        "grade": "cpu-proto",
+        "notes": "无真实 HTTP、无真实结算层；发票/支付/领取为本地确定性状态机；日志 _forangent\\logs\\1.8-v1.8.4.log"
+      },
+      "status": "done"
     }
   ]
 }
