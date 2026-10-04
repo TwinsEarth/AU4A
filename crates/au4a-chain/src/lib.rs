@@ -20,6 +20,30 @@
 //!
 //! 轨道内**串行**开发：每个小版本落地一个职责，并留下自检与证据。
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
+//!
+//! # 模块地图
+//!
+//! | 版本 | 模块 | 职责 |
+//! |---|---|---|
+//! | v1.8.1 | [`testnet`] / [`bridge`] / [`rgb`] | 确定性测试网、双轨账本、RGB 密封转移 |
+//! | v1.8.2 | [`taproot`] | 资产锚定与 Merkle 证明 |
+//! | v1.8.3 | [`erc8004`] | 身份 / 声誉 / 验证注册表语义 |
+//! | v1.8.4 | [`x402`] | 发票 / 支付 / 领取 |
+//! | v1.8.5 | [`routing`] | 金额/时效/费用阈值选轨 + fail-closed 闸门 |
+//! | v1.8.6 | [`reputation`] | 链上事件 → 本地 4 维信誉 |
+//! | v1.8.7 | `tests/` | 跨模块不变量与端到端（87 个断言） |
+//! | v1.8.8 | 本文件 + `README.md` | 文档与证据汇总 |
+//! | v1.8.9 | `examples/chain_tour.rs` | 可运行示例 |
+//! | v1.8.10 | `audit` | 安全审计：风险清单 + 攻击测试 |
+//!
+//! # 最短上手路径
+//!
+//! ```text
+//! let mut kernel = au4a_kernel::Kernel::new(Default::default());
+//! let panel = au4a_chain::scenario(&mut kernel)?;   // 端到端跑一遍（可复现）
+//! let checks = au4a_chain::self_check();             // 节点 verify 聚合它
+//! let results = au4a_chain::results_json()?;         // 只读产物摘要
+//! ```
 
 pub mod bridge;
 pub mod erc8004;

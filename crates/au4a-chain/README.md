@@ -31,10 +31,10 @@ AU4A 的跨链结算层：BTC 侧（RGB、Taproot Assets）与 ETH 侧（ERC-800
 | v1.8.4 | `x402` | 发票 / 支付 / 领取 | `Invoice`、`Payment`、`X402Adapter` |
 | v1.8.5 | `routing` | 金额/时效/费用阈值选轨 + fail-closed 闸门 | `RoutingTable`、`route`、`settle`、`Rail` |
 | v1.8.6 | `reputation` | 链上事件 → 本地 4 维信誉 | `ReputationBridge`、`LocalReputation`、`ReputationEventKind` |
-| v1.8.7 | `tests/` | 跨模块不变量与端到端（92 个断言） | `chain_invariants.rs`、`e2e_settlement.rs` |
+| v1.8.7 | `tests/` | 跨模块不变量与端到端（87 个断言） | `chain_invariants.rs`、`e2e_settlement.rs` |
 | v1.8.8 | 本文件 | 文档与证据汇总 | 模块地图 / 拒绝清单索引 / 证据分级 |
-| v1.8.9 | `examples/chain_tour.rs` | 可运行示例（十步） | `cargo run -p au4a-chain --example chain_tour` |
-| v1.8.10 | `audit` | 安全审计：风险清单 + 攻击测试 | `RISKS`、`RiskStatus`、`attack_suite`、`audit_report`、`unresolved_risks` |
+| v1.8.9 | `examples/chain_tour.rs` | 可运行示例（九步） | `cargo run -p au4a-chain --example chain_tour` |
+| v1.8.10 | `audit` | 安全审计：风险清单 + 攻击测试 | `RiskRegister`、`RiskStatus`、`attack_suite` |
 
 ## 确定性测试网（所有「链上」语义的唯一所在地）
 
@@ -87,27 +87,10 @@ AU4A 的跨链结算层：BTC 侧（RGB、Taproot Assets）与 ETH 侧（ERC-800
 | 信誉桥接（4 维、有界、不可转让） | `cpu-proto` | 映射与更新为真实逻辑；事件来源是测试网 |
 | **真实链上执行**（BTC/ETH 主网或测试网节点） | **未做** | 本 crate 明确不做，也不声称做过 |
 
-## 安全审计（v1.8.10）：真实风险，不粉饰
-
-`audit::RISKS` 是风险登记表（9 条，状态 `protected` / `partially_protected` / `unprotected`），
-`audit::attack_suite()` 会**真跑 10 个攻击**并断言每一条都被拦住。其中**未防护 / 部分防护**的条目
-如实保留在清单里：
-
-| 风险 | 状态 | 残余风险（原文摘要） |
-|---|---|---|
-| R3 最终性回滚 | partially_protected | 最终性深度是硬编码参数（BTC 6 / ETH 12），没有真实确认数与重组概率模型 |
-| R4 验证数据丢失 | **unprotected** | RGB/Taproot 的真实痛点：客户端验证数据丢失后资产花不出去；本轨道没有备份/恢复协议 |
-| R7 女巫反馈 | partially_protected | 注册身份没有成本，仍可批量注册刷分；真实系统需要质押/费用门槛 |
-| R8 签名与私钥 | **unprotected** | `ChainTx` 只有内容哈希、没有真实签名验证与 gas；本轨道不做签名层 |
-
-已防护的条目（R1 重放、R2 双花、R5 双轨漂移、R6 未最终化事件、R9 伪造链上成功）都对应到
-代码里的具体机制与测试，见 `attack_suite()` 的 10 条用例。
-
 ## 本地验证
 
 ```powershell
 $env:CARGO_TARGET_DIR = "E:\DS\_forangent\target\au4a-chain"
 cd E:\DS\agent-universeForAngent
-cargo test -p au4a-chain          # 92 个断言（lib 76 + invariants 9 + e2e 7），0 failed、0 warning
-cargo run  -p au4a-chain --example chain_tour
+cargo test -p au4a-chain          # 87 个断言（lib 71 + invariants 9 + e2e 7），0 failed、0 warning
 ```
