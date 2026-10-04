@@ -31,6 +31,7 @@ pub mod experience;
 pub mod feedback;
 pub mod model;
 pub mod policy;
+pub mod privacy;
 pub mod rng;
 pub mod scenario;
 pub mod signal;
@@ -46,6 +47,7 @@ pub use model::{
     REPUTATION_VIOLATION,
 };
 pub use policy::{adjust, PolicyAdjustment, PolicyBounds, PolicyParams, PolicyTargets, Signals};
+pub use privacy::{open, peer_tag, publish, seal, PrivacyPolicy, PublicAggregate, PublicView, SealedBlob};
 pub use rng::{hash64, SplitMix64};
 pub use signal::{LearningSignal, SignalWeights, VIOLATION_UNIT_BP};
 pub use sim::{
@@ -64,7 +66,7 @@ pub const TITLE: &str = "Individual Learning 个体学习";
 /// 版本区间。
 pub const RANGE: &str = "v1.6.1 → v1.6.10";
 /// 已实现到的小版本（每落地一版就前移一格）。
-pub const VERSION: &str = "v1.6.5";
+pub const VERSION: &str = "v1.6.6";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_learning";
 
@@ -79,6 +81,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(policy::self_check());
     checks.extend(signal::self_check());
     checks.extend(model::self_check());
+    checks.extend(privacy::self_check());
     checks.extend(sim::self_check());
     checks.extend(scenario::self_check());
     checks

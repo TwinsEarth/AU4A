@@ -200,28 +200,39 @@
     {
       "version": "v1.6.6",
       "title": "隐私保护",
-      "goal": "本地经验库可加密视图 + 对外公开视图脱敏：不泄露上下文原文与协作者明细，小样本聚合被抑制。",
+      "goal": "本地明文经验库 / 本地加密视图 / 对外公开视图三条路径彻底分开：公开视图无上下文原文、无 peer DID、无精确金额，小样本聚合被抑制。",
       "deliverables": [
-        "src/privacy.rs: PrivacyPolicy / PublicView / SealedBlob / seal() / open()"
+        "src/privacy.rs: PrivacyPolicy / PublicAggregate / PublicView / SealedBlob / publish() / seal() / open() / peer_tag()",
+        "src/scenario.rs: 端到端摘要输出 privacy（公开视图 + 加密视图字节数）",
+        "tests/privacy.rs: 8 个集成测试"
       ],
       "interfaces": [
+        "pub const DEFAULT_MIN_BUCKET_SAMPLE: usize = 3; pub const MIN_SALT_LEN: usize = 8",
+        "pub struct PrivacyPolicy { salt, min_bucket_sample, reward_bucket_credits, context_bucket_chars }",
+        "pub struct PublicAggregate { task_type, sample, suppressed, success_bp, mean_reward_bucket, context_bucket, distinct_peers }",
+        "pub fn peer_tag(&PrivacyPolicy, &Did) -> CoreResult<String>",
+        "pub fn publish(&ExperienceStore, &PrivacyPolicy) -> CoreResult<PublicView>",
         "pub fn seal(&ExperienceStore, key: &[u8; 32]) -> CoreResult<SealedBlob>",
-        "pub fn open(&SealedBlob, key: &[u8; 32]) -> CoreResult<ExperienceStore>",
-        "pub fn publish(&ExperienceStore, &PrivacyPolicy, key: &[u8; 32]) -> CoreResult<PublicView>"
+        "pub fn open(&SealedBlob, key: &[u8; 32]) -> CoreResult<ExperienceStore>"
       ],
       "acceptance": [
-        "公开视图 JSON 中不出现任何 context 原文、不出现任何 peer DID",
-        "错误密钥打开 → CoreError::InvalidSignature；正确密钥往返摘要一致",
-        "样本数低于阈值的聚合被抑制并计数"
+        "公开视图不含 SECRET-CONTEXT/不可外泄（上下文原文）、不含 did:au4a:、不含 task_id",
+        "金额只以桶出现（37 → 25）；协作者只以 distinct_peers 计数出现",
+        "阈值 6 → 2 组全抑制且统计字段全为 None；阈值 5 → 只抑制冷门组（>= 边界）；阈值 1 → 无抑制",
+        "密文 ≠ 明文；正确密钥往返摘要一致；同密钥同内容两次加密逐字节一致；不同密钥密文与标签都不同",
+        "错密钥/篡改 → InvalidSignature（先比标签再解码）；长度不一致 → FrameTruncated；非法 hex → Encoding；版本 2 → InvalidVersion",
+        "换盐换标签、同盐稳定、标签不含 DID 片段；公开视图不发布标签明文只发布计数",
+        "盐 <8 / min_bucket_sample=0 → InvalidKind；负金额桶宽 → NegativeAmount；桶宽 0 表示不发布该类信息",
+        "端到端 privacy 投影无 DID、无上下文原文，view.total>0、sealed_bytes>0"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 71,
+        "tests_total": 71,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：5 单元 + 10 经验库 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号。脱敏/抑制/加盐/键流加密与完整性校验为 verified；『生产级机密性』不做主张（原型：SHA-256 计数器模式密钥流 + XOR + 明文摘要标签，无 AEAD/KDF/nonce 管理）→ 该部分 cpu-proto。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.6.log"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.6.7",

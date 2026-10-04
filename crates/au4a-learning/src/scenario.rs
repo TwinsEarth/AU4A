@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use crate::experience::{Experience, ExperienceStore, Outcome};
 use crate::feedback::FeedbackAnalyser;
 use crate::policy::{adjust, PolicyBounds, PolicyParams, PolicyTargets, Signals};
+use crate::privacy::{publish, seal, PrivacyPolicy};
 use crate::rng::hash64;
 use crate::signal::{LearningSignal, SignalWeights};
 use crate::sim::{ab_test, MarketConfig};
@@ -196,6 +197,20 @@ pub fn run(kernel: &mut Kernel) -> CoreResult<Value> {
 
     let stats = serde_json::to_value(store.stats()).map_err(|_| CoreError::Encoding)?;
 
+    // v1.6.6：本地加密视图 + 对外公开视图（脱敏、小样本抑制）
+    let privacy_policy = PrivacyPolicy::default();
+    let view = publish(&store, &privacy_policy)?;
+    let sealed = seal(&store, &AgentKeys::from_seed(&[0x16; 32]).seed())?;
+    kernel.emit(
+        &format!("{TRACK}.privacy.publish"),
+        format!(
+            "隐私：公开视图 {} 个聚合（抑制 {} 个）、本地加密视图 {} 字节；协作者只以计数出现",
+            view.aggregates.len(),
+            view.suppressed_groups,
+            sealed.plaintext_len
+        ),
+    );
+
     // v1.6.4：四类学习信号（完成质量 / 结算金额 / 信誉变化 / 违规记录）折算成统一向量
     let violations = ViolationLog::new();
     let signal = LearningSignal::from_store(&store, &violations, 0, &SignalWeights::default())?;
@@ -271,6 +286,11 @@ pub fn run(kernel: &mut Kernel) -> CoreResult<Value> {
         "store": stats,
         "feedback": report.public_json()?,
         "learning_signal": signal.to_value()?,
+        "privacy": {
+            "policy_tag": view.policy_tag,
+            "view": view.to_value()?,
+            "sealed_bytes": sealed.plaintext_len,
+        },
         "ledger_conserved": kernel.ledger().check_conservation().is_ok(),
         "policy_adjustment": adjustment.public_json()?,
         "policy_before": baseline.public_json()?,
