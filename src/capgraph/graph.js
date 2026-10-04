@@ -18,6 +18,7 @@ export class Capability {
 export class CapabilityGraph {
   constructor(bus = null) {
     this.graph = new Map();   // did → Capability[]
+    this._index = new Map();  // v1.1.7 skill → Set<did>（查询倒排索引）
     this.bus = bus;           // 可选内存总线：{ publish(topic, payload), subscribe(topic, fn) }
     this._topics = new Map(); // topic → Set<fn>（无 bus 时本地订阅）
   }
@@ -26,6 +27,12 @@ export class CapabilityGraph {
   declare(did, caps) {
     const arr = caps.map((c) => (c instanceof Capability ? c : new Capability(c)));
     this.graph.set(did, arr);
+    // 重建该 Agent 的索引条目（先摘除旧 skill 再登记新 skill）
+    for (const [skill, set] of this._index) set.delete(did);
+    for (const c of arr) {
+      if (!this._index.has(c.skill)) this._index.set(c.skill, new Set());
+      this._index.get(c.skill).add(did);
+    }
     this._publish('/capgraph/1.0.0', { type: 'UPDATE', did, caps: arr.map((c) => c.version) });
     return arr;
   }
@@ -43,11 +50,12 @@ export class CapabilityGraph {
     return () => this._topics.get(topic).delete(fn);
   }
 
-  /** 查询：按 skill + 可选过滤条件 */
+  /** 查询：按 skill + 可选过滤条件（v1.1.7：走 skill 倒排索引，不扫描全图） */
   query(skill, { format = null, maxLatency = Infinity, maxLoad = 1.0, maxPrice = Infinity } = {}) {
     const out = [];
-    for (const [did, caps] of this.graph) {
-      for (const c of caps) {
+    const dids = this._index.get(skill) || new Set();
+    for (const did of dids) {
+      for (const c of this.graph.get(did) || []) {
         if (c.skill !== skill) continue;
         if (format && c.supportedFormats.length && !c.supportedFormats.includes(format)) continue;
         if (c.latencyP50 > maxLatency) continue;
