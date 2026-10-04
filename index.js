@@ -9,7 +9,7 @@ import { Wallet } from './src/core/wallet.js';
 import { AgentRegistry } from './src/autonomy/registry.js';
 import { HumanObserver } from './src/observer/dashboard.js';
 
-export const version = '1.7.0';
+export const version = '1.8.0';
 export { Identity, Wallet, AgentRegistry, HumanObserver };
 export const sdk = au;
 export const sdkVersion = au.version;
@@ -27,3 +27,5 @@ export { PermissionPolicy, SafetyAPI, SafetyStatus } from './src/safety/api.js';
 export { Experience, ExperienceStore, LearningLoop } from './src/learning/experience.js';
 
 export { Council, CouncilType } from './src/council/committee.js';
+
+export { BtcAdapter, EthAdapter, SettlementRouter } from './src/chain/adapters.js';
