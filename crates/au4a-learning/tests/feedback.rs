@@ -279,8 +279,10 @@ fn scenario_settles_successes_through_the_kernel_ledger() {
 fn settlement_refusal_is_counted_not_swallowed() {
     // 把 cpu-proto 结算上限压到 0，会让每笔结算被证据闸门拒绝；
     // 场景必须如实记录拒绝次数而不是假装成功。
-    let mut config = KernelConfig::default();
-    config.cpu_proto_settle_cap = Credits::ZERO;
+    let config = KernelConfig {
+        cpu_proto_settle_cap = Credits::ZERO,
+        ..KernelConfig::default()
+    };
     let mut kernel = Kernel::new(config);
     let summary = au4a_learning::scenario(&mut kernel).unwrap();
     assert!(summary["settled_total"].as_i64().unwrap() == 0);

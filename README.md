@@ -6,7 +6,7 @@
 
 <!-- 徽章：状态类走 GitHub 实时数据；静态类是本仓库的实测事实（口径见下方说明） -->
 <p align="center">
-  <a href="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TwinsEarth/AU4A/workflows/CI/badge.svg?branch=master"></a>
+  <a href="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml/badge.svg?branch=master"></a>
   <a href="https://github.com/TwinsEarth/AU4A/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/TwinsEarth/AU4A?label=release&sort=semver&color=brightgreen"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/TwinsEarth/AU4A?label=license&color=blue"></a>
   <img alt="versions" src="https://img.shields.io/badge/versions-99%20small%20%C3%97%2010%20medium-blueviolet">
