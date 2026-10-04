@@ -102,7 +102,11 @@ jobs:
         run: |
           set -euo pipefail
           printf '@twinsearth:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > .npmrc
-          npm publish --registry=https://npm.pkg.github.com || echo "already published to GitHub Packages"
+          if ! out=$(npm publish --registry=https://npm.pkg.github.com 2>&1); then
+            echo "$out"
+            echo "$out" | grep -qiE 'already exists|EPUBLISHCONFLICT|409' || { echo "::error::GitHub Packages publish failed"; exit 1; }
+            echo "already published to GitHub Packages — ok"
+          fi
       - name: medium dist-tag (npmjs)
         if: ${{ !inputs.skip_npmjs }}
         env:
@@ -138,7 +142,11 @@ jobs:
           if [ -z "${NODE_AUTH_TOKEN}" ]; then
             echo "::error::secret NPM_TOKEN is not set — cannot publish to npmjs"; exit 1
           fi
-          npm publish --access public --registry=https://registry.npmjs.org || echo "already published"
+          if ! out=$(npm publish --access public --registry=https://registry.npmjs.org 2>&1); then
+            echo "$out"
+            echo "$out" | grep -qiE 'already exists|EPUBLISHCONFLICT|cannot publish over' || { echo "::error::npmjs publish failed"; exit 1; }
+            echo "already published to npmjs — ok"
+          fi
           latest=${{ needs.plan.outputs.major }}; latest=${latest#v}
           npm dist-tag add "@twinsearth/au4a@${latest}" latest --registry=https://registry.npmjs.org
           npm dist-tag add "@twinsearth/au4a@${latest}" major-v1 --registry=https://registry.npmjs.org
@@ -149,7 +157,11 @@ jobs:
         run: |
           set -euo pipefail
           printf '@twinsearth:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > .npmrc
-          npm publish --registry=https://npm.pkg.github.com || echo "already published to GitHub Packages"
+          if ! out=$(npm publish --registry=https://npm.pkg.github.com 2>&1); then
+            echo "$out"
+            echo "$out" | grep -qiE 'already exists|EPUBLISHCONFLICT|409' || { echo "::error::GitHub Packages publish failed"; exit 1; }
+            echo "already published to GitHub Packages — ok"
+          fi
 
   container:
     name: container (ghcr.io/twinsearth/au4a)
