@@ -188,25 +188,26 @@
       "title": "测试",
       "goal": "端到端 + 确定性 + 性能上界 + 收益转负的独立测试套件",
       "deliverables": [
-        "tests/scale_end_to_end.rs / tests/determinism.rs / tests/bounds.rs"
+        "tests/scale_end_to_end.rs: 全链路一致性 / 确定性 / 有界性 / 收益转负 / scenario 复现"
       ],
       "interfaces": [
         "pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value>（确定性契约）"
       ],
       "acceptance": [
-        "端到端：收集→分析→裁决全链路断言",
-        "同一输入两次运行的 report/digest/verdict 完全一致",
-        "10k 档位 < 1s（实测断言）且行数有上界",
-        "收益转负用例：净收益由正转负的档位被明确标出"
+        "端到端：收集→拟合→裁决全链路断言（α 命中 2、N0 误差 ≤ 50、顶点与解析同一步长）",
+        "同一输入两次运行的 digest / verdict / scenario 输出完全一致",
+        "10k 档位 + 裁决 < 1s（实测墙钟断言），求值次数 ≤ 预算、档位数固定",
+        "收益转负：首次转负点净收益 < 0、起点 > 0；零成本场景不出现该原因码",
+        "档位报告与实验框架对同一档位给出同一数值"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-scale",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.9.6 全绿后开工"
+        "tests_passed": 42,
+        "tests_total": 42,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.7.log；lib 36 + 集成 6 = 42"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.9.8",
