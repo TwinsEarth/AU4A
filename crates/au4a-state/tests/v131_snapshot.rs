@@ -162,7 +162,7 @@ fn store_rejects_non_canonical_values_before_they_enter() {
 #[test]
 fn track_self_check_is_green() {
     let checks = self_check();
-    assert_eq!(checks.len(), 4);
+    assert_eq!(checks.len(), 7);
     assert!(au4a_core::all_passed(&checks), "{checks:?}");
     assert!(checks.iter().all(|c| c.track == "1.3"));
 }
@@ -176,10 +176,12 @@ fn scenario_runs_the_full_snapshot_chain_on_a_shared_kernel() {
     assert_eq!(out["track"], json!("1.3"));
     assert_eq!(out["identical"], json!(true));
     assert_eq!(out["tamper_rejected"], json!(true));
-    assert_eq!(out["before_root"], out["after_root"]);
+    assert_eq!(out["migration_identical"], json!(true));
+    assert_eq!(out["source_content_root"], out["target_content_root"]);
     assert_eq!(out["blocks"]["fs"], json!(2));
     assert_eq!(out["blocks"]["memory"], json!(2));
     assert_eq!(out["blocks"]["context"], json!(2));
+    assert_eq!(out["transfer"]["evidence_grade"], json!("cpu-proto"));
     assert!(out["before_root"].as_str().unwrap().len() == 64);
     kernel.ledger().check_conservation().unwrap();
 }

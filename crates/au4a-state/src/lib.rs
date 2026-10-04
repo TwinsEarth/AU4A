@@ -6,20 +6,30 @@
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 //!
 //! v1.3.1 落地的是地基：**三区状态快照 + 内容寻址 + 本地状态存储**。
+//! v1.3.2 让状态能**跨节点移动**：块级增量 diff（三区 set/del）+ 可续跑的本地双节点传输
+//! （证据等级 `cpu-proto`：语义完整、可重放，但没有真实网络）。
 //! 之后每一版都在同一 crate 内增量实现，公共 API 只增不改。
 
+pub mod diff;
 pub mod snapshot;
 pub mod store;
+pub mod transfer;
 
 use au4a_core::{AgentKeys, CoreResult, Did, SelfCheck};
 use serde_json::{json, Value};
 
+pub use diff::{DelOp, DeltaChunk, DeltaOp, StateDelta};
 pub use snapshot::{
     StateBlock, StateSnapshot, StateZone, MAX_BLOCKS, MAX_KEY_LEN, MAX_NODE_LEN, MAX_VALUE_LEN,
 };
 pub use store::{
     clear_namespace, read_snapshot, split_store_key, store_key, write_snapshot, MemoryStore,
     StateStore, StoreCounters, ZONE_SEP,
+};
+pub use transfer::{
+    decode_frame, encode_frame, pull_into_session, send_chunks, send_delta, AcceptOutcome,
+    LocalNetwork, NetworkStats, NodeId, TransferReport, TransferSession, DEFAULT_CHUNK_OPS,
+    MAX_FRAME,
 };
 
 /// 轨道号。
@@ -69,6 +79,12 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.push(check_store_roundtrip());
     // 4) 篡改必被拒。
     checks.push(check_tamper_refused());
+    // 5) v1.3.2：块级增量 diff 覆盖三区 set/del，且能重建目标内容。
+    checks.push(check_delta_three_zones());
+    // 6) v1.3.2：断线后从断点续跑，不重头开始，也不丢块。
+    checks.push(check_transfer_resumable());
+    // 7) v1.3.2：base 不对（过期/被换）时拒绝应用。
+    checks.push(check_stale_base_refused());
 
     checks
 }
@@ -185,6 +201,141 @@ fn sample_snapshot(agent: &Did) -> CoreResult<StateSnapshot> {
     StateSnapshot::capture(agent, "node-a", 1, sample_state()?)
 }
 
+/// v1.3.2 演进后的样例状态：三区都有改动，用来证明 diff 不是只看一个区。
+fn evolved_state() -> CoreResult<Vec<StateBlock>> {
+    Ok(vec![
+        // fs：改一块、删一块
+        StateBlock::new(StateZone::Fs, "/work/notes.md", json!({"sha256": "11aa", "bytes": 77}))?,
+        // memory：改一块、加一块
+        StateBlock::new(StateZone::Memory, "last_task", json!("summarize.zh-en"))?,
+        StateBlock::new(StateZone::Memory, "plan_version", json!(2))?,
+        // context：改一块、加一块
+        StateBlock::new(
+            StateZone::Context,
+            "goal",
+            json!({"text": "已经在节点 B 上继续", "priority": 5}),
+        )?,
+        StateBlock::new(StateZone::Context, "done", json!(["capture", "transfer"]))?,
+    ])
+}
+
+fn check_delta_three_zones() -> SelfCheck {
+    let name = "delta.three_zone_set_del";
+    let agent = track_agent();
+    let result = (|| -> CoreResult<(Value, bool, String, String)> {
+        let from = sample_snapshot(&agent.did())?;
+        let to = StateSnapshot::capture(&agent.did(), "node-a", 1, evolved_state()?)?;
+        let delta = StateDelta::between(&from, &to)?;
+        let applied = delta.apply_to(&from)?;
+        let same = applied.content_root()? == to.content_root()?;
+        Ok((delta.per_zone(), same, to.content_root()?, applied.content_root()?))
+    })();
+    match result {
+        Ok((per_zone, true, expect, _got)) => {
+            let has_fs = per_zone["fs"]["set"].as_u64().unwrap_or(0)
+                + per_zone["fs"]["del"].as_u64().unwrap_or(0)
+                > 0;
+            let has_mem = per_zone["memory"]["set"].as_u64().unwrap_or(0)
+                + per_zone["memory"]["del"].as_u64().unwrap_or(0)
+                > 0;
+            let has_ctx = per_zone["context"]["set"].as_u64().unwrap_or(0)
+                + per_zone["context"]["del"].as_u64().unwrap_or(0)
+                > 0;
+            if has_fs && has_mem && has_ctx {
+                SelfCheck::pass(
+                    TRACK,
+                    name,
+                    format!("三区均有 set/del；应用后 content_root={}", short(&expect)),
+                )
+            } else {
+                SelfCheck::fail(TRACK, name, format!("有区没有差异: {per_zone}"))
+            }
+        }
+        Ok((_, false, expect, got)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("应用差异后内容不一致: {expect} != {got}"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("diff 失败: {e}")),
+    }
+}
+
+fn check_transfer_resumable() -> SelfCheck {
+    let name = "transfer.resumable";
+    let agent = track_agent();
+    let result = (|| -> CoreResult<(usize, usize, usize, String, String)> {
+        let from = sample_snapshot(&agent.did())?;
+        let to = StateSnapshot::capture(&agent.did(), "node-a", 1, evolved_state()?)?;
+        let delta = StateDelta::between(&from, &to)?;
+        let chunks = delta.chunked(2)?;
+        let na = NodeId::new("node-a")?;
+        let nb = NodeId::new("node-b")?;
+        let mut net = LocalNetwork::new(&[na.clone(), nb.clone()]);
+        // 第一批 2 块送达；第二批在「断线」中全丢；然后从断点续跑补齐。
+        send_chunks(&mut net, &na, &nb, &delta, 2, 0, 2)?;
+        let (session, accepted_a, _) = pull_into_session(&mut net, &nb, None)?;
+        let resumed_from = session.resume_from();
+        send_chunks(&mut net, &na, &nb, &delta, 2, 2, usize::MAX)?;
+        let dropped = net.drop_pending(&nb)?;
+        send_chunks(&mut net, &na, &nb, &delta, 2, resumed_from, usize::MAX)?;
+        let (session, accepted_b, duplicates) =
+            pull_into_session(&mut net, &nb, Some(session))?;
+        let rebuilt = session.assemble(chunks.len(), agent.did())?;
+        let applied = rebuilt.apply_to(&from)?;
+        Ok((
+            dropped,
+            accepted_a + accepted_b,
+            duplicates as usize,
+            to.content_root()?,
+            applied.content_root()?,
+        ))
+    })();
+    match result {
+        Ok((dropped, accepted, duplicates, expect, got)) if expect == got => SelfCheck::pass(
+            TRACK,
+            name,
+            format!(
+                "丢 {dropped} 帧、续收 {accepted} 块、重复 {duplicates} 块后内容根一致 {}",
+                short(&expect)
+            ),
+        ),
+        Ok((dropped, accepted, _, expect, got)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("续跑后不一致（丢 {dropped}，续收 {accepted}）: {expect} != {got}"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("传输失败: {e}")),
+    }
+}
+
+fn check_stale_base_refused() -> SelfCheck {
+    let name = "delta.stale_base_refused";
+    let agent = track_agent();
+    let result = (|| -> CoreResult<(bool, bool)> {
+        let from = sample_snapshot(&agent.did())?;
+        let to = StateSnapshot::capture(&agent.did(), "node-a", 1, evolved_state()?)?;
+        let delta = StateDelta::between(&from, &to)?;
+        // 用「目标」当 base：起点不对，必须拒绝（StaleEpoch 语义 → CoreError::InvalidSignature）。
+        let wrong_base = delta.apply_to(&to).is_err();
+        // 用正确的 base：必须成功。
+        let right_base = delta.apply_to(&from).is_ok();
+        Ok((wrong_base, right_base))
+    })();
+    match result {
+        Ok((true, true)) => SelfCheck::pass(
+            TRACK,
+            name,
+            "错误 base 返回 Err；正确 base 应用成功",
+        ),
+        Ok((wrong, right)) => SelfCheck::fail(
+            TRACK,
+            name,
+            format!("stale={wrong} correct={right}（期望 true/true）"),
+        ),
+        Err(e) => SelfCheck::fail(TRACK, name, format!("diff 失败: {e}")),
+    }
+}
+
 fn short(s: &str) -> String {
     s.chars().take(16).collect()
 }
@@ -224,7 +375,8 @@ pub fn results_json() -> CoreResult<Value> {
     }))
 }
 
-/// 端到端自有流程（v1.3.1）：注册 Agent → 冻结三区快照 → 落库 → 同源/跨节点读回 → 篡改拒绝。
+/// 端到端自有流程（v1.3.2）：注册 Agent → 冻结三区快照 → 落库读回 →
+/// 状态演进 → 块级增量 diff → 双节点传输（中途断线）→ 从断点续跑 → 目标节点重建 → 篡改拒绝。
 ///
 /// 契约（不可改）：不 panic、不读文件、不开网络、不读墙钟；同样的输入给同样的输出。
 pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
@@ -235,6 +387,7 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     }
     let epoch = kernel.tick();
 
+    // 1) 源节点 A 上的状态，冻结并落库。
     let before = StateSnapshot::capture(&did, "node-a", epoch, sample_state()?)?;
     let mut store = MemoryStore::new();
     let written = write_snapshot(&mut store, "live:", &before)?;
@@ -242,7 +395,29 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     let restored = read_snapshot(&store, "live:", &did, "node-a", epoch)?;
     let moved = read_snapshot(&store, "live:", &did, "node-b", epoch)?;
 
-    // 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
+    // 2) Agent 继续工作，状态演进（此前 B 上已有 before 的全量）。
+    let after = StateSnapshot::capture(&did, "node-a", epoch, evolved_state()?)?;
+    let delta = StateDelta::between(&before, &after)?;
+    let chunks = delta.chunked(2)?;
+
+    // 3) 跨节点传输：第一批送达 → 第二批「断线」全丢 → 从断点续跑补齐。
+    let na = NodeId::new("node-a")?;
+    let nb = NodeId::new("node-b")?;
+    let mut net = LocalNetwork::new(&[na.clone(), nb.clone()]);
+    let first_batch = 2usize;
+    send_chunks(&mut net, &na, &nb, &delta, 2, 0, first_batch)?;
+    let (session, accepted, duplicates) = pull_into_session(&mut net, &nb, None)?;
+    let resumed_from = session.resume_from();
+    send_chunks(&mut net, &na, &nb, &delta, 2, first_batch, usize::MAX)?;
+    let dropped = net.drop_pending(&nb)?;
+    let resume = send_chunks(&mut net, &na, &nb, &delta, 2, resumed_from, usize::MAX)?;
+    let (session, accepted_resume, duplicates_resume) =
+        pull_into_session(&mut net, &nb, Some(session))?;
+    let rebuilt = session.assemble(chunks.len(), did.clone())?;
+    let target = rebuilt.apply_moved(&before, "node-b", epoch)?;
+    let network = net.stats();
+
+    // 4) 篡改路径：必须有拒绝证据，否则「内容寻址」只是口号。
     let mut tampered = before.to_value()?;
     if let Some(first) = tampered
         .get_mut("blocks")
@@ -252,6 +427,8 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         first["value"] = json!({"tampered": true});
     }
     let tamper_rejected = StateSnapshot::from_value(&tampered).is_err();
+    // 被换过的 base 也必须被拒（竞争/过期语义 → StaleEpoch）。
+    let stale_refused = delta.apply_to(&after).is_err();
 
     kernel.emit(
         &format!("{TRACK}.snapshot"),
@@ -263,12 +440,24 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         ),
     );
     kernel.emit(
+        &format!("{TRACK}.transfer"),
+        format!(
+            "delta_ops={} chunks={} dropped={} resumed_from={} frames={} bytes={}",
+            delta.op_count(),
+            chunks.len(),
+            dropped,
+            resumed_from,
+            resume.frames,
+            resume.bytes
+        ),
+    );
+    kernel.emit(
         &format!("{TRACK}.restore"),
         format!(
-            "restored={} identical={} moved={}",
-            short(restored.root()),
-            before.same_state(&restored),
-            short(&moved.content_root()?)
+            "source={} target={} content_identical={}",
+            short(&after.content_root()?),
+            short(&target.content_root()?),
+            after.same_content(&target)
         ),
     );
 
@@ -279,20 +468,41 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         "agent": did.as_str(),
         "epoch": epoch,
         "before_root": before.root(),
-        "after_root": restored.root(),
+        "after_root": target.root(),
         "before_content_root": before.content_root()?,
-        "moved_content_root": moved.content_root()?,
+        "source_content_root": after.content_root()?,
+        "target_content_root": target.content_root()?,
         "identical": before.same_state(&restored),
-        "migration_identical": before.same_content(&moved),
+        "migration_identical": after.same_content(&target),
+        "moved_content_root": moved.content_root()?,
         "blocks": {
             "fs": before.block_count(StateZone::Fs),
             "memory": before.block_count(StateZone::Memory),
             "context": before.block_count(StateZone::Context),
         },
+        "delta": {
+            "ops": delta.op_count(),
+            "per_zone": delta.per_zone(),
+            "id": delta.id()?,
+        },
+        "transfer": {
+            "chunks": chunks.len(),
+            "dropped_frames": dropped,
+            "resumed_from": resumed_from,
+            "resume_frames": resume.frames,
+            "resume_bytes": resume.bytes,
+            "accepted": accepted + accepted_resume,
+            "duplicates": duplicates + duplicates_resume,
+            "network_frames_sent": network.frames_sent,
+            "network_bytes": network.bytes,
+            "evidence_grade": "cpu-proto",
+            "note": "本地双节点内存通道；无真实网络/文件 I/O",
+        },
         "written": written,
         "store_keys": store.len(),
         "tamper_rejected": tamper_rejected,
-        "events": 2,
+        "stale_base_refused": stale_refused,
+        "events": 3,
     }))
 }
 
@@ -312,7 +522,7 @@ mod tests {
     fn self_check_all_passed() {
         let checks = self_check();
         assert!(au4a_core::all_passed(&checks));
-        assert_eq!(checks.len(), 4);
+        assert_eq!(checks.len(), 7);
     }
 
     #[test]
@@ -334,8 +544,12 @@ mod tests {
         assert_eq!(a["identical"], json!(true));
         assert_eq!(a["migration_identical"], json!(true));
         assert_eq!(a["tamper_rejected"], json!(true));
-        assert_eq!(a["before_root"], a["after_root"]);
-        assert_eq!(a["before_content_root"], a["moved_content_root"]);
+        assert_eq!(a["stale_base_refused"], json!(true));
+        // 迁移后「内容一致」，但出处（node-b）不同 → 文档 root 必须不同。
+        assert_eq!(a["source_content_root"], a["target_content_root"]);
+        assert_ne!(a["before_root"], a["after_root"]);
+        assert_eq!(a["transfer"]["resumed_from"], json!(2));
+        assert_eq!(a["transfer"]["dropped_frames"], json!(2));
         k1.ledger().check_conservation().unwrap();
     }
 

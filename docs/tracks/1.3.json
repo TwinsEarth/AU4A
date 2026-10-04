@@ -48,17 +48,38 @@
       "version": "v1.3.2",
       "title": "跨节点传输",
       "goal": "块级增量 diff（三区 set/del）+ 可切块、可续跑的双节点内存传输。",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/diff.rs: DeltaOp/DelOp/StateDelta（between/validate/apply_to/apply_moved/chunked/id）+ DeltaChunk",
+        "src/transfer.rs: NodeId/帧编解码/LocalNetwork（本地双节点内存 + 断线注入）/TransferSession/send_chunks/pull_into_session",
+        "tests/v132_transfer.rs: 11 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn StateDelta::between(from, to) -> CoreResult<StateDelta>",
+        "pub fn StateDelta::apply_to(&self, base) -> CoreResult<StateSnapshot>",
+        "pub fn StateDelta::apply_moved(&self, base, node, epoch) -> CoreResult<StateSnapshot>",
+        "pub fn StateDelta::chunked(&self, max_ops) -> CoreResult<Vec<DeltaChunk>>",
+        "pub fn send_chunks(net, from, to, delta, max_ops, start, count) -> CoreResult<TransferReport>",
+        "pub fn pull_into_session(net, node, session) -> CoreResult<(TransferSession, usize, usize)>",
+        "pub fn TransferSession::accept(&mut self, chunk) -> CoreResult<AcceptOutcome>",
+        "pub fn TransferSession::assemble(&self, total, agent) -> CoreResult<StateDelta>",
+        "pub fn TransferSession::resume_from(&self) -> usize"
+      ],
+      "acceptance": [
+        "三区（fs/memory/context）均有 set 与 del",
+        "应用 diff 后 content_root 与目标一致",
+        "base 不对时拒绝（InvalidSignature / StaleEpoch 语义）",
+        "断线注入后只补发缺失块，重新拼装内容根一致",
+        "重复块幂等；同 index 不同内容被拒；跨会话块被拒",
+        "帧截断/超 1 MiB 在分配前被拒"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-state",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 59,
+        "tests_total": 59,
+        "grade": "cpu-proto",
+        "notes": "lib 35 + v131 13 + v132 11 全绿 0 warning。跨节点传输是本地双节点内存实现（cpu-proto）：协议与失败注入真实可重放，但没有真实网络/丢包/TLS；diff 与内容寻址为 verified。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.2.log"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.3.3",
