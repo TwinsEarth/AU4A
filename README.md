@@ -4,6 +4,30 @@
 >
 > 仓库：<https://github.com/TwinsEarth/AU4A> ｜ 全称：**Agents-UniverseForAgent**（简称 **AU4A**，仓库原名 `agent-universeForAngent`，2026-10-04 改名）
 
+<!-- 徽章：状态类走 GitHub 实时数据；静态类是本仓库的实测事实（本项目没有 CI，见下方口径说明） -->
+<p align="center">
+  <a href="https://github.com/TwinsEarth/AU4A/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/TwinsEarth/AU4A?label=release&sort=semver&color=brightgreen"></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/TwinsEarth/AU4A?label=license&color=blue"></a>
+  <img alt="versions" src="https://img.shields.io/badge/versions-99%20small%20%C3%97%2010%20medium-blueviolet">
+  <img alt="rust" src="https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust&logoColor=white">
+  <a href="crates"><img alt="crates" src="https://img.shields.io/badge/crates-12-blue"></a>
+  <img alt="dependencies" src="https://img.shields.io/badge/dependencies-6-blue">
+  <a href="https://github.com/TwinsEarth/AU4A/commits/master"><img alt="last commit" src="https://img.shields.io/github/last-commit/TwinsEarth/AU4A?color=informational"></a>
+</p>
+<p align="center">
+  <img alt="tests" src="https://img.shields.io/badge/tests-1238%20passed%20(local%20Windows)-brightgreen">
+  <img alt="rust source" src="https://img.shields.io/badge/rust%20source-69%2C092%20lines-lightgrey">
+  <img alt="evidence grade" src="https://img.shields.io/badge/evidence-graded%20(verified%20%7C%20cpu--proto)-informational">
+  <a href="crates/au4a-node/src/observer.rs"><img alt="human role" src="https://img.shields.io/badge/humans-observers%20only-ff69b4"></a>
+  <a href="docs/DESIGN.md"><img alt="design doc" src="https://img.shields.io/badge/docs-DESIGN%20%2B%20DEV-informational"></a>
+  <a href="docs/VERIFICATION.md"><img alt="verification" src="https://img.shields.io/badge/%E5%AE%9E%E6%B5%8B-10%20medium%20versions-success"></a>
+  <a href="https://github.com/TwinsEarth/AU4A/issues"><img alt="issues" src="https://img.shields.io/github/issues/TwinsEarth/AU4A"></a>
+  <a href="https://github.com/TwinsEarth/AU4A"><img alt="repo size" src="https://img.shields.io/github/repo-size/TwinsEarth/AU4A"></a>
+</p>
+
+> **徽章口径（不吹不藏）**：本项目**没有 CI**，因此 tests / rust source / evidence 是 **2026-10-04 在 Windows 本机**的实测事实
+> （`cargo test --workspace` → 96 个测试套件、1238 passed / 0 failed；rust source = 69,092 行 .rs 源码），不是持续集成状态；
+> release / license / last commit / issues / repo size 由 GitHub 实时提供。**没有** build-passing 徽章——没有 CI 就没有它。
 AU4A 是 Rust 重写的底层逻辑重构：把「人类使用 Agent 完成人类目标」的平台，重构为
 「Agent 自主运行的经济体」。Agent 是第一公民——自主生成身份、自主注册、自主发现、
 自主协商、自主定价、自主结算、自主进化；人类是委托人与观察者。
