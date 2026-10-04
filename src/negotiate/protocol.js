@@ -113,7 +113,21 @@ export class Negotiation {
   }
 
   toJSON() {
-    return JSON.parse(JSON.stringify(this));
+    return {
+      id: this.id,
+      initiator: this.initiator,
+      responder: this.responder,
+      goal: this.goal,
+      state: this.state,
+      rounds: this.rounds,
+      maxRounds: this.maxRounds,
+      accepted: this.accepted,
+      contract: this.contract,
+      breachBy: this.breachBy,
+      breachReason: this.breachReason,
+      settledBy: this.settledBy,
+      settledAt: this.settledAt,
+    };
   }
 
   static fromJSON(data) {
