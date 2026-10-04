@@ -26,6 +26,7 @@ pub mod election;
 pub mod execution;
 pub mod human;
 pub mod proposal;
+pub mod veto;
 pub mod voting;
 
 pub use committee::{Committee, CommitteeKind, Member, COMMITTEE_COUNT};
@@ -36,6 +37,7 @@ pub use election::{
 pub use execution::{ExecutionEffect, ExecutionReceipt};
 pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
 pub use proposal::{Action, AgentIdentity, Proposal, ProposalDraft, ProposalState};
+pub use veto::{HumanVeto, Veto, VetoReceipt};
 pub use voting::{Choice, RoundOutcome, RoundState, Tally, Vote, VotingRound};
 
 use std::collections::BTreeMap;
@@ -109,6 +111,7 @@ pub struct Council {
     rounds: BTreeMap<(String, u32), VotingRound>,
     policies: BTreeMap<String, i64>,
     executions: BTreeMap<String, ExecutionReceipt>,
+    vetoes: BTreeMap<String, Veto>,
     events: Vec<CouncilEvent>,
 }
 
@@ -128,6 +131,7 @@ impl Council {
             rounds: BTreeMap::new(),
             policies: BTreeMap::new(),
             executions: BTreeMap::new(),
+            vetoes: BTreeMap::new(),
             events: Vec::new(),
         }
     }
@@ -726,6 +730,28 @@ impl Council {
         execution::execute(self, kernel, executor, proposal_id)
     }
 
+    /// 保存一张人类否决记录（否决落地内部使用）。
+    pub(crate) fn store_veto(&mut self, veto: Veto) {
+        self.vetoes.insert(veto.target().to_string(), veto);
+    }
+
+    /// 读某条动议的否决记录。
+    pub fn veto_record(&self, proposal_id: &str) -> Option<&Veto> {
+        self.vetoes.get(proposal_id)
+    }
+
+    /// 全部否决记录（按动议 id 升序）。
+    pub fn vetoes(&self) -> impl Iterator<Item = &Veto> {
+        self.vetoes.values()
+    }
+
+    /// 人类行使否决权：把动议推进到 `blocked`（唯一结局），理由必须公开。
+    ///
+    /// 这是人类在治理层**唯一**的写入口；它没有对应的「提案/修改/执行」兄弟方法。
+    pub fn apply_veto(&mut self, kernel: &mut Kernel, veto: &Veto) -> CoreResult<VetoReceipt> {
+        veto::apply(self, kernel, veto)
+    }
+
     /// 治理层自检（v1.7.2 覆盖选举、席位与动议；后续版本追加表决、否决、审计）。
     pub fn checks(&self) -> Vec<SelfCheck> {
         let mut checks = Vec::new();
@@ -882,6 +908,34 @@ impl Council {
             )
         } else {
             SelfCheck::fail(TRACK, "council.executions.state_matches", "executed 状态与执行收据不一一对应")
+        });
+
+        // 否决不变式：否决只通向 blocked，理由公开，且被阻断的动议永远没有执行收据。
+        let vetoes = self.vetoes.len();
+        let blocked_ok = self.vetoes.values().all(|v| {
+            matches!(
+                self.proposals.get(v.target()).map(|p| p.state),
+                Some(ProposalState::Blocked)
+            ) && !self.executions.contains_key(v.target())
+        });
+        checks.push(if blocked_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.vetoes.blocks_only",
+                format!("{vetoes} 张人类否决全部只把动议推进到 blocked，且被阻断的动议没有任何执行收据"),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.vetoes.blocks_only", "存在没有阻断、或被阻断后仍被执行的非决")
+        });
+        let reasons_public = self.vetoes.values().all(|v| !v.reason().trim().is_empty());
+        checks.push(if reasons_public {
+            SelfCheck::pass(
+                TRACK,
+                "council.vetoes.reasons_public",
+                format!("{vetoes} 张否决全部带非空公开理由"),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.vetoes.reasons_public", "存在没有理由的否决")
         });
         checks
     }
@@ -1045,6 +1099,67 @@ fn build_full() -> CoreResult<Build> {
     })
 }
 
+/// 人类否决的完整路径（自检与结果摘要共用）：提案 → 表决通过 → 人类否决 → 只能被阻断。
+struct VetoRun {
+    council: Council,
+    veto: Veto,
+    proposal_id: String,
+    proposals_before: usize,
+    proposals_after: usize,
+    execute_refused: bool,
+    action_unchanged: bool,
+}
+
+fn build_vetoed() -> CoreResult<VetoRun> {
+    let mut kernel = Kernel::new(KernelConfig::default());
+    let mut council = Council::new(CouncilConfig::default());
+    let (agents, socks) = enroll(&mut kernel, &mut council)?;
+    seat_all_committees(&mut kernel, &mut council, &agents, &socks)?;
+
+    let member = council
+        .committee(CommitteeKind::Task)
+        .and_then(|c| c.members.first())
+        .map(|m| m.did.clone());
+    let proposer = match agents.iter().find(|k| Some(&k.did()) == member.as_ref()) {
+        Some(k) => k,
+        None => return Err(CoreError::UnknownAgent),
+    };
+    let identity = AgentIdentity::from_keys(proposer);
+    let draft = ProposalDraft::by(
+        proposer,
+        CommitteeKind::Task,
+        "把任务准入门槛提高到 400",
+        Action::SetPolicy { key: String::from("task_entry_bar"), value: 400 },
+    )?;
+    let proposal = council.propose(&mut kernel, &identity, draft)?;
+    let _ = vote_yes_all(&mut kernel, &mut council, &agents, &proposal.id)?;
+
+    let proposals_before = council.proposals().len();
+    let human = HumanObserver::new("operator");
+    let veto = human.veto(
+        &council,
+        &proposal.id,
+        "该门槛会把新加入的长期贡献者挡在外面：只阻断，不修改",
+    )?;
+    council.apply_veto(&mut kernel, &veto)?;
+    let proposals_after = council.proposals().len();
+    let execute_refused = council.execute(&mut kernel, &identity, &proposal.id).is_err();
+    let action_unchanged = council
+        .proposal(&proposal.id)
+        .map(|p| p.action == proposal.action && p.title == proposal.title)
+        .unwrap_or(false);
+
+    Ok(VetoRun {
+        council,
+        veto,
+        proposal_id: proposal.id,
+        proposals_before,
+        proposals_after,
+        execute_refused,
+        action_unchanged,
+    })
+}
+
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 ///
 /// 每一项都是**真实断言**（会真的跑选举与提案），不是占位。
@@ -1154,8 +1269,7 @@ pub fn self_check() -> Vec<SelfCheck> {
             checks.push(if a.receipt.conservation_ok
                 && a.receipt.ledger_effect_consistent()
                 && a.council.policy("cpu_proto_settle_cap") == Some(250)
-            {
-                SelfCheck::pass(
+            {                SelfCheck::pass(
                     TRACK,
                     "council.execution.applied",
                     format!(
@@ -1179,6 +1293,51 @@ pub fn self_check() -> Vec<SelfCheck> {
         }
     }
 
+    match build_vetoed() {
+        Ok(v) => {
+            let blocked = matches!(
+                v.council.proposal(&v.proposal_id).map(|p| p.state),
+                Some(ProposalState::Blocked)
+            );
+            checks.push(if blocked && v.execute_refused && v.action_unchanged {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.veto.blocks_only",
+                    format!(
+                        "人类否决 {} 后动议进入 blocked：不可执行（{}）、内容未被改写、人类未新增动议（{}→{}）",
+                        au4a_core::short_id(&v.proposal_id),
+                        if v.execute_refused { "执行被拒" } else { "执行竟然成功" },
+                        v.proposals_before,
+                        v.proposals_after
+                    ),
+                )
+            } else {
+                SelfCheck::fail(
+                    TRACK,
+                    "council.veto.blocks_only",
+                    format!("否决后状态异常：blocked={blocked} execute_refused={} action_unchanged={}", v.execute_refused, v.action_unchanged),
+                )
+            });
+            checks.push(if v.proposals_after == v.proposals_before
+                && !v.veto.reason().trim().is_empty()
+                && v.council.veto_record(&v.proposal_id).is_some()
+            {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.veto.read_only",
+                    format!(
+                        "人类只有否决：理由公开（{} 字）、动议总数不变、Veto 类型无 propose/edit（见 compile_fail 文档测试）",
+                        v.veto.reason().chars().count()
+                    ),
+                )
+            } else {
+                SelfCheck::fail(TRACK, "council.veto.read_only", "人类否决越界或理由未公开")
+            });
+            checks.extend(v.council.checks());
+        }
+        Err(err) => checks.push(SelfCheck::fail(TRACK, "council.veto.blocks_only", err.to_string())),
+    }
+
     checks
 }
 
@@ -1186,6 +1345,7 @@ pub fn self_check() -> Vec<SelfCheck> {
 pub fn results_json() -> CoreResult<Value> {
     let run = build_full()?;
     let repeat = build_full()?;
+    let vetoed = build_vetoed()?;
     let checks = self_check();
     let resource = run.council.committee(CommitteeKind::Resource);
     let repeat_resource = repeat.council.committee(CommitteeKind::Resource);
@@ -1229,6 +1389,14 @@ pub fn results_json() -> CoreResult<Value> {
             "ledger_effect_consistent": run.receipt.ledger_effect_consistent(),
             "policies": run.council.policies(),
         },
+        "veto": {
+            "proposal": vetoed.proposal_id,
+            "reason": vetoed.veto.reason(),
+            "state": vetoed.council.proposal(&vetoed.proposal_id).map(|p| p.state.as_str()).unwrap_or("unknown"),
+            "execute_after_veto_refused": vetoed.execute_refused,
+            "proposals_unchanged": vetoed.proposals_before == vetoed.proposals_after,
+            "action_unchanged": vetoed.action_unchanged,
+        },
         "events": run.council.events().len(),
         "agents_enrolled": run.agents.len(),
         "kernel_delivered": run.kernel.observe().messages_delivered,
@@ -1268,8 +1436,28 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     // 执行：通过的决议落成真实状态变更。
     let receipt = council.execute(kernel, &identity, &proposal.id)?;
 
+    // 第二条动议：通过之后由人类否决——**只能阻断**，不能改写、不能执行。
+    let draft2 = ProposalDraft::by(
+        proposer,
+        CommitteeKind::Resource,
+        "把任务准入门槛提高到 400",
+        Action::SetPolicy { key: String::from("task_entry_bar"), value: 400 },
+    )?;
+    let second = council.propose(kernel, &identity, draft2)?;
+    let second_round = vote_yes_all(kernel, &mut council, &agents, &second.id)?;
+    let proposals_before_veto = council.proposals().len();
+
     // 人类只观察：拿到的只是一个值，没有任何写入口。
     let human = HumanObserver::new("operator");
+    let veto = human.veto(
+        &council,
+        &second.id,
+        "该门槛会挡住新加入的长期贡献者：只阻断，不修改",
+    )?;
+    let veto_receipt = council.apply_veto(kernel, &veto)?;
+    let proposals_after_veto = council.proposals().len();
+    // 被阻断的动议不能被任何 Agent 执行。
+    let execute_after_veto = council.execute(kernel, &identity, &second.id);
     let view = human.observe(&council);
 
     let committees: Vec<Value> = council
@@ -1298,12 +1486,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "五类委员会 {} 席；动议 {} 由 Agent 提交并经第 {} 轮表决（{}）；观察者只读看到 {} 条动议",
+            "五类委员会 {} 席；动议 {} 已执行；动议 {} 被人类否决阻断（{}）；观察者只读看到 {} 条动议 / {} 条否决",
             seats,
             au4a_core::short_id(&proposal.id),
-            round.round,
-            round.outcome.as_str(),
-            view.proposals.len()
+            au4a_core::short_id(&second.id),
+            if execute_after_veto.is_err() { "执行被拒" } else { "执行竟然成功" },
+            view.proposals.len(),
+            view.vetoes.len()
         ),
     );
 
@@ -1347,10 +1536,33 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "ledger_effect_consistent": receipt.ledger_effect_consistent(),
             "policies": council.policies(),
         },
+        "second_motion": {
+            "id": second.id,
+            "title": second.title,
+            "round": second_round.round,
+            "vote_outcome": second_round.outcome.as_str(),
+            "state_after_veto": council.proposal(&second.id).map(|p| p.state.as_str()).unwrap_or("unknown"),
+            "previous_state": veto_receipt.previous_state.as_str(),
+        },
+        "veto": {
+            "id": veto.id(),
+            "observer": veto.observer(),
+            "proposal": veto.target(),
+            "reason": veto.reason(),
+            "state": veto_receipt.state.as_str(),
+            "proposals_unchanged": proposals_before_veto == proposals_after_veto,
+            "action_unchanged": council
+                .proposal(&second.id)
+                .map(|p| p.action == second.action && p.title == second.title)
+                .unwrap_or(false),
+            "execute_after_veto_refused": execute_after_veto.is_err(),
+            "execute_after_veto_error": execute_after_veto.err().map(|e| format!("{e:?}")),
+        },
         "human_view": {
             "label": view.label,
             "seats_filled": view.seats_filled,
             "proposals": view.proposals.len(),
+            "vetoes": view.vetoes.len(),
             "events": view.events,
         },
         "events": council.events().len(),

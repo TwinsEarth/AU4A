@@ -339,6 +339,8 @@ fn self_check_results_and_scenario_cover_the_proposal_flow() {
     let mut kernel = Kernel::new(KernelConfig::default());
     let scenario = au4a_council::scenario(&mut kernel).expect("scenario");
     assert_eq!(scenario["proposals"][0]["state"], "executed");
-    assert_eq!(scenario["human_view"]["proposals"], 1);
+    // 到 v1.7.5 为止，scenario 已经跑了两条动议：一条执行、一条被人否决阻断。
+    assert_eq!(scenario["human_view"]["proposals"], 2);
+    assert_eq!(scenario["human_view"]["vetoes"], 1);
     assert_eq!(scenario["sock_elected"], 0);
 }

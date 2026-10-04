@@ -146,6 +146,42 @@
         "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + execution 10 + doc-tests 3，本 crate 0 warning"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.5",
+      "title": "否决权",
+      "goal": "人类唯一的写能力是否决：类型层面无 propose/edit/cast_vote/execute，只能阻断，理由必须公开",
+      "deliverables": [
+        "src/veto.rs: Veto（私有字段+只读访问器）/ HumanVeto / VetoReceipt / apply / vetoable / is_blocked + 2 个 compile_fail 文档测试",
+        "src/human.rs: HumanObserver::veto 唯一写能力 + HumanView.vetoes + compile_fail 扩到 4 段",
+        "src/lib.rs: Council::apply_veto / veto_record / vetoes + 否决自检 + scenario 否决分支",
+        "tests/veto.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub struct Veto  // 只有 id/observer/target/reason/at/payload 只读方法",
+        "pub fn HumanObserver::veto(&self, &Council, &str, reason) -> CoreResult<Veto>",
+        "pub fn Council::apply_veto(&mut self, &mut Kernel, &Veto) -> CoreResult<VetoReceipt>",
+        "pub struct VetoReceipt { veto, proposal, previous_state, state, reason, at }",
+        "pub fn veto::{vetoable, is_blocked, vetoed_by, label_has_no_did, observer_is_not_an_agent}"
+      ],
+      "acceptance": [
+        "否决把 passed 动议推入 blocked，决议内容/动议总数/策略表不变",
+        "阻断后不可执行、不可复活、不可重开轮次、不可二次否决",
+        "空理由在铸造阶段被拒；理由进入事件与只读投影",
+        "open 动议也可否决，同样只通向 blocked",
+        "已执行动议不可被事后否决（否决不能回滚）",
+        "否决不存在的动议 → UnknownAgent，无记录",
+        "Veto 载荷不含 action/patch/alternative/payload/value/sig",
+        "6 段 compile_fail 文档测试：HumanObserver 无 propose/edit_proposal/cast_vote/execute，Veto 无 propose/edit_proposal"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 73,
+        "tests_total": 73,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + execution 10 + veto 8 + doc-tests 7（6 compile_fail + 1 正例），本 crate 0 warning；人类无密钥这一限制已在 md 中明说"
+      },
+      "status": "done"
     }
   ]
 }
