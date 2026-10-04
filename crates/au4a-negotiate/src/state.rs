@@ -514,18 +514,33 @@ impl StateMachine {
     ///
     /// 返回末端记录哈希（空历史时返回会话开局哈希），v1.2.3 用它做逐字节一致性比对。
     pub fn verify_history(&self, parties: &[Did]) -> CoreResult<String> {
-        let mut tip = canonical_hash(&json!({"session": self.session, "seq": 0}))?;
-        let mut machine = Self::open(&self.session)?;
-        for record in &self.history {
+        let rebuilt = Self::rebuild(&self.session, parties, &self.history)?;
+        if rebuilt.phase != self.phase || rebuilt.seq != self.seq || rebuilt.round != self.round {
+            return Err(CoreError::InvalidKind);
+        }
+        match self.history.last() {
+            Some(record) => record.record_hash(),
+            None => canonical_hash(&json!({"session": self.session, "seq": 0})),
+        }
+    }
+
+    /// 由一串归档记录重建状态机（journal 重放路径）。
+    ///
+    /// 与 [`StateMachine::verify_history`] 同样逐条校验双方签名与相位链；
+    /// 差别在合约条款型记录：重放时只有记录里的 `contract_hash` 锚点，
+    /// 合约本体是否双签由立案方在 `commit`（v1.2.6 违约处理）时核对。
+    pub fn rebuild(
+        session: &str,
+        parties: &[Did],
+        records: &[TransitionRecord],
+    ) -> CoreResult<Self> {
+        let mut machine = Self::open(session)?;
+        for record in records {
             record.verify_against(parties)?;
             machine.check_chain(record)?;
             machine.apply(record.clone());
-            tip = record.record_hash()?;
         }
-        if machine.phase != self.phase || machine.seq != self.seq || machine.round != self.round {
-            return Err(CoreError::InvalidKind);
-        }
-        Ok(tip)
+        Ok(machine)
     }
 }
 

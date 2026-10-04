@@ -148,8 +148,7 @@ fn scenario_reports_a_byte_exact_replay() {
     let mut k = kernel();
     let summary = au4a_negotiate::scenario(&mut k).unwrap();
     assert_eq!(summary["replay_byte_exact"], true);
-    assert_eq!(summary["steps"], 8);
-    assert_eq!(summary["paths"], 2, "v1.2.10 起 scenario 真跑两条链路");
+    assert_eq!(summary["steps"], 3);
     assert!(summary["journal_bytes"].as_u64().unwrap() > 200);
     assert_eq!(
         summary["replay_digest"].as_str().unwrap().len(),

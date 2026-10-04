@@ -15,9 +15,11 @@
 //! * **双方签名**：状态机每一次转换都必须由双方签署（或由双签合约的条款授权），
 //!   单方签名不成立。
 
+pub mod journal;
 pub mod msg;
 pub mod state;
 
+pub use journal::{Journal, JOURNAL_VERSION};
 pub use msg::{kinds, BreachKind, NegotiationMsg, Terms, ALL_KINDS};
 pub use state::{
     transition, Basis, DualSigned, Event, PartySignature, Phase, StateMachine, TransitionRecord,
@@ -212,6 +214,39 @@ fn state_round_quota_check() -> CoreResult<String> {
     Ok("3 次 REJECT 后轮数仍为 0，1 次 COUNTER 后为 1".to_string())
 }
 
+fn journal_roundtrip_check() -> CoreResult<String> {
+    let a = au4a_core::AgentKeys::from_seed(&[0x39; 32]);
+    let b = au4a_core::AgentKeys::from_seed(&[0x4A; 32]);
+    let parties = vec![a.did(), b.did()];
+    let terms = Terms::new("summarize.zh", Credits(120), 40, EvidenceGrade::Verified)?;
+    let session = msg::session_id(&a.did(), &b.did(), &terms)?;
+    let mut journal = Journal::open(&session, &parties)?;
+    let request = NegotiationMsg::request(&session, terms)?.signed(&a, &b.did(), 1, None)?;
+    journal.append(&request)?;
+    let mut machine = StateMachine::open(&session)?;
+    let record = machine.transact(Event::Request, &a, &b, 1, &parties)?;
+    journal.append_transition(&record, None)?;
+
+    let text = journal.encode()?;
+    let restored = Journal::decode(&text)?;
+    let again = restored.encode()?;
+    if again != text {
+        return Err(au4a_core::CoreError::Encoding);
+    }
+    if restored.replay_digest()? != journal.replay_digest()? {
+        return Err(au4a_core::CoreError::Encoding);
+    }
+    // 篡改版本必须被明确拒绝，而不是被猜着接受。
+    let bumped = text.replace("\"version\":1", "\"version\":2");
+    if Journal::decode(&bumped) != Err(au4a_core::CoreError::InvalidVersion) {
+        return Err(au4a_core::CoreError::InvalidVersion);
+    }
+    Ok(format!(
+        "{} 字节归档：encode→decode→encode 逐字节相同，重放摘要一致，版本篡改被拒",
+        text.len()
+    ))
+}
+
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 pub fn self_check() -> Vec<SelfCheck> {
     vec![
@@ -222,6 +257,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         check("state.legal_table", state_legal_table_check()),
         check("state.dual_signature", state_dual_signature_check()),
         check("state.round_quota", state_round_quota_check()),
+        check("journal.roundtrip", journal_roundtrip_check()),
     ]
 }
 
@@ -235,6 +271,7 @@ pub fn results_json() -> CoreResult<Value> {
         "phases": Phase::ALL.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
         "events": Event::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>(),
         "legal_transitions": LEGAL_TRANSITIONS.len(),
+        "journal_version": JOURNAL_VERSION,
         "checks": self_check().len(),
         "checks_passed": self_check().iter().filter(|c| c.passed).count(),
     }))
@@ -294,14 +331,27 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     )?;
     let tip = machine.verify_history(&parties)?;
 
+    // 归档：把这次交换持久化成规范 JSON，再解回来做逐字节比对（纯内存，无文件 I/O）。
+    let mut journal = Journal::open(&session, &parties)?;
+    journal.append(&delivered[0])?;
+    journal.append(&delivered[1])?;
+    journal.append_transition(&request_record, None)?;
+    journal.append_transition(&counter_record, None)?;
+    let archived = journal.encode()?;
+    let restored = Journal::decode(&archived)?;
+    let byte_exact = restored.encode()? == archived;
+    let replay_digest = restored.replay_digest()?;
+
     kernel.emit(
         format!("{TRACK}.scenario").as_str(),
         format!(
-            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；状态机 {} → {}（{} 条双签记录）",
+            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；状态机 {} → {}（{} 条双签记录）；归档 {} 字节，重放{}",
             transcript.len(),
             Phase::Idle.as_str(),
             machine.phase().as_str(),
-            machine.seq()
+            machine.seq(),
+            archived.len(),
+            if byte_exact { "逐字节一致" } else { "不一致" }
         ),
     );
 
@@ -317,7 +367,10 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "rounds_used": machine.round(),
         "history_tip": tip,
         "signed_by": [request_record.sigs.len(), counter_record.sigs.len()],
-        "steps": 2,
+        "journal_bytes": archived.len(),
+        "replay_byte_exact": byte_exact,
+        "replay_digest": replay_digest,
+        "steps": 3,
     }))
 }
 

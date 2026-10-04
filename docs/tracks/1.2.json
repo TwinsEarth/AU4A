@@ -67,26 +67,35 @@
       "version": "v1.2.3",
       "title": "持久化",
       "goal": "协商记录导出为规范 JSON 快照并可重放，重放后逐字节一致（纯内存，无文件 I/O）",
-      "deliverables": ["src/journal.rs: Journal::encode/decode/replay"],
+      "deliverables": [
+        "src/journal.rs: Journal（唯一事实来源=已签名信封+双方签署的转换记录）",
+        "src/state.rs: StateMachine::rebuild（journal 重放路径）",
+        "tests/journal.rs: 归档往返/篡改/乱序集成测试"
+      ],
       "interfaces": [
         "pub struct Journal",
-        "Journal::encode(&self) -> CoreResult<String>",
+        "Journal::open(&str,&[Did]) -> CoreResult<Journal>",
+        "Journal::append(&Envelope) / append_transition(&TransitionRecord, Option<&dyn DualSigned>)",
+        "Journal::encode(&self) -> CoreResult<String>（规范 JSON，纯内存）",
         "Journal::decode(&str) -> CoreResult<Journal>",
-        "Journal::replay(&self) -> CoreResult<Session>"
+        "Journal::replay(&self) -> CoreResult<StateMachine> / replay_digest() -> CoreResult<String>",
+        "StateMachine::rebuild(&str,&[Did],&[TransitionRecord]) -> CoreResult<StateMachine>"
       ],
       "acceptance": [
-        "encode→decode→encode 逐字节相同",
-        "重放出的会话规范 JSON 与首次运行逐字节相同",
-        "截断/多余字段/乱序的日志被拒"
+        "encode→decode→encode 逐字节相同（定点）",
+        "重放摘要与重放出的状态机与实时状态完全相同",
+        "截断/多字段/错版本/乱序/篡改价格或签名/跨会话消息/重复消息全部被拒",
+        "单签转换不能归档；归档路径与实时路径用同一把尺子",
+        "归档文本里不存在可被直接篡改的 phase 冗余字段"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 40,
+        "tests_total": 40,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：25 单元 + 4 tests/journal.rs + 6 tests/messages.rs + 5 tests/state_machine.rs 全绿、0 warning（日志 1.2-v1.2.3.log）。encode→decode→encode 定点、重放摘要一致、版本篡改→invalid_version、条款篡改→invalid_signature、乱序→invalid_kind。纯内存规范 JSON，无文件 I/O。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.4",
