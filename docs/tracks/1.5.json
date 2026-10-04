@@ -1,0 +1,311 @@
+{
+  "track": "1.5",
+  "crate": "au4a-safety",
+  "medium_title": "Safety API 安全 API",
+  "range": "v1.5.1 → v1.5.10",
+  "owner": "track-safety",
+  "versions": [
+    {
+      "version": "v1.5.1",
+      "title": "权限查询",
+      "goal": "Agent 能查询自己的权限边界，返回结构化的允许/禁止/需质押，而不是自由文本",
+      "deliverables": [
+        "src/config.rs: SafetyConfig（服务身份 + 仲裁者信任锚）与 require_arbiter 闸门",
+        "src/permission.rs: Permission / DenialReason / PermissionBoundary / PermissionQuery / stake_requirement / query_permissions",
+        "src/setup.rs: 确定性轨道种子与幂等 ensure_agent",
+        "src/lib.rs: self_check / results_json / scenario 首次落地真实流程"
+      ],
+      "interfaces": [
+        "pub enum Permission { Register, SendMessage, QuerySafety, ReportViolation, AppealPenalty, SubscribeCase, Settle, IssueVerdict }",
+        "pub enum DenialReason { AlreadyRegistered, NotRegistered, StakeBelowMinimum { required: Credits, actual: Credits }, ArbiterOnly }",
+        "pub struct PermissionBoundary { did, registered, allowed, denied, stake_gates }",
+        "pub fn PermissionBoundary::of(kernel: &Kernel, config: &SafetyConfig, did: &Did) -> Self",
+        "pub fn stake_requirement(p: Permission, min_stake: Credits) -> Credits",
+        "pub fn query_permissions(kernel, config, about) -> CoreResult<Value>"
+      ],
+      "acceptance": [
+        "已注册 Agent：6 个权限可达，Register 得 already_registered，IssueVerdict 得 arbiter_only",
+        "未注册 DID：allowed == [Register]，其余 7 个权限全部 not_registered",
+        "余额 3 < min_stake 10 的 DID：注册被 stake_below_minimum{required:10,actual:3} 拒绝",
+        "罚没清零锁定质押后举报权被收回（stake_below_minimum），免费查询权不受影响",
+        "边界 JSON 的拒绝原因必为带 code 的结构化对象，allowed+denied == 8，可 JSON 往返"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 14,
+        "tests_total": 14,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-safety；日志 _forangent\\logs\\1.5-v1.5.1.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.2",
+      "title": "违规举报",
+      "goal": "Agent 举报他人违规，必须携带可验证证据哈希；未确认的举报不改变任何余额",
+      "deliverables": [
+        "src/evidence.rs: EvidenceRef（canonical_hash 承诺 + 复算校验）",
+        "src/chain.rs: SafetyEvent 哈希链（prev + 内容 → hash）与断链检测",
+        "src/case.rs: ViolationKind / CaseStatus / Case",
+        "src/office.rs: SafetyOffice::report + 事件追加"
+      ],
+      "interfaces": [
+        "pub struct EvidenceRef { kind, digest }",
+        "pub fn EvidenceRef::commit(kind, payload: &Value) -> CoreResult<EvidenceRef>",
+        "pub struct SafetyOffice { .. }",
+        "pub fn SafetyOffice::report(&mut self, kernel, keys, subject, kind, evidence) -> CoreResult<ViolationReport>"
+      ],
+      "acceptance": [
+        "伪造/缺失证据的举报被拒（InvalidSignature / Encoding），案件数 0、事件数 0",
+        "举报前后账本快照与 AgentCard 逐字段相等（无罪不罚），slashed == 0",
+        "举报写入哈希链事件，链头 64 位 hex 且可复算",
+        "篡改内容/删除记录/改写前驱/伪造 hash 分别报 hash_mismatch/seq_mismatch/prev_mismatch",
+        "未注册举报者 unauthorized、自举报 InvalidKind、未知主体 stale_epoch，均留下结构化拒绝记录"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 44,
+        "tests_total": 44,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.2.log；累计 44 个测试（v1.5.1 的 14 个 + 本版 30 个）"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.3",
+      "title": "申诉提交",
+      "goal": "被处罚方本人提交申诉证据，状态机进入 APPEALED，申诉本身不动账本",
+      "deliverables": [
+        "src/appeal.rs: Appeal（主体签名）+ 证据列表",
+        "src/office.rs: appeal + REPORTED/APPEALED 状态迁移"
+      ],
+      "interfaces": [
+        "pub struct Appeal { id, case, appellant, evidence, at, sig }",
+        "pub fn SafetyOffice::appeal(&mut self, kernel, keys, case_id, evidence) -> CoreResult<Appeal>"
+      ],
+      "acceptance": [
+        "第三方代签的申诉被拒（InvalidSignature + unauthorized），状态仍为 reported",
+        "未知案件被拒（UnknownAgent + stale_epoch）；空证据或载荷数不匹配被拒",
+        "申诉前后账本快照与 AgentCard 逐字段不变（slashed == 0）",
+        "主体申诉后状态 appealed、Case.appeals 按顺序记录、事件链 2 条且完好",
+        "新证据可再次申诉（申诉权不被终局性剥夺）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 56,
+        "tests_total": 56,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.3.log；累计 56 个测试"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.4",
+      "title": "处罚查询",
+      "goal": "查询处罚记录；处罚只能由仲裁者签名的数据契约触发，且罚没受锁定余额约束",
+      "deliverables": [
+        "src/penalty.rs: SanctionKind / PenaltyOrder（数据契约）/ PenaltyRecord",
+        "src/office.rs: apply_penalty_order + penalties_for 查询"
+      ],
+      "interfaces": [
+        "pub enum SanctionKind { Warning, StakeSlash, Quarantine }",
+        "pub struct PenaltyOrder { case, subject, sanction, amount, arbiter, issued_at, sig }",
+        "pub fn SafetyOffice::apply_penalty_order(&mut self, kernel, order) -> CoreResult<PenaltyRecord>",
+        "pub fn SafetyOffice::penalties_for(&self, did: &Did) -> Vec<PenaltyRecord>"
+      ],
+      "acceptance": [
+        "非仲裁者签名的处罚契约被拒（unauthorized），账本逐字段不变",
+        "篡改金额的契约验签失败，账本不变；种类与金额不一致的契约被拒（InvalidKind/ZeroAmount）",
+        "罚没额超过锁定余额时按锁定余额封顶：requested 保留原值、applied 记录实际值，守恒仍成立",
+        "warning 类处罚写入记录但不动账本",
+        "penalties_for 按主体隔离查询，slashed_total == 账本 slashed"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 68,
+        "tests_total": 68,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.4.log；累计 68 个测试"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.5",
+      "title": "通知机制",
+      "goal": "按案件订阅状态变更（REPORTED/APPEALED/ARBITRATED），可退订，只投递给订阅者",
+      "deliverables": [
+        "src/notify.rs: Subscription / Notification / 投递规则",
+        "src/office.rs: subscribe / unsubscribe / inbox"
+      ],
+      "interfaces": [
+        "pub struct Subscription { id, subscriber, case, statuses, at, sig }",
+        "pub struct Notification { sub, to, case, status, seq, at }",
+        "pub fn SafetyOffice::subscribe(&mut self, keys, case, statuses) -> CoreResult<Subscription>",
+        "pub fn SafetyOffice::unsubscribe(&mut self, keys, sub_id) -> CoreResult<()>",
+        "pub fn SafetyOffice::inbox(&self, did: &Did) -> Vec<Notification>"
+      ],
+      "acceptance": [
+        "订阅即刻回放当前状态快照（seq 指向造成该状态的事件），此后只投递增量",
+        "未订阅的状态不投递；旁观者收件箱 0 条；通知彼此不可见",
+        "退订后不再投递且链上出现 unsubscribed；非本人退订被拒（unauthorized）",
+        "空状态集合被拒（InvalidKind + policy_denied），订阅 id 对状态集合规范化",
+        "订阅/退订前后账本逐字段不变；迟到的订阅不重放历史"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 83,
+        "tests_total": 83,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.5.log；累计 83 个测试"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.6",
+      "title": "PMB扩展",
+      "goal": "安全 API 接入 PMB：SAFETY_QUERY / SAFETY_REPORT / SAFETY_APPEAL 三种消息类型，Envelope 真签名",
+      "deliverables": [
+        "src/pmb.rs: 消息类型常量、信封构造、SafetyMessage 解析与校验、safety.receipt 回执",
+        "src/office.rs: handle 服务侧分发"
+      ],
+      "interfaces": [
+        "pub mod kinds { SAFETY_QUERY, SAFETY_REPORT, SAFETY_APPEAL, SAFETY_RECEIPT }",
+        "pub fn report_envelope(keys, to, ts, report) -> CoreResult<Envelope>",
+        "pub fn classify(env: &Envelope) -> CoreResult<SafetyMessage>",
+        "pub fn SafetyOffice::handle(&mut self, kernel, env) -> CoreResult<Option<Envelope>>"
+      ],
+      "acceptance": [
+        "三种消息经 Envelope::seal/verify 与 encode_frame/decode_frame 往返一致，MsgKind 合法",
+        "篡改 body 后 verify 失败，Kernel::send 记 unauthorized（单次即恶意码）",
+        "回执由服务身份签名，in_reply_to 指向请求 id，带结构化权限边界",
+        "非本人 about 的查询被拒；封 from 与记录作者不一致被拒",
+        "经 PMB 的举报同样复算证据：摘要不符即拒（policy_denied），不留案件与事件",
+        "经 PMB 的申诉把案件推到 appealed；本地 API 与网络路径共用 accept_report/accept_appeal"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 98,
+        "tests_total": 98,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.6.log；累计 98 个测试"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.7",
+      "title": "仲裁接入",
+      "goal": "申诉进入仲裁：用数据契约与 au4a-council 解耦，案件进入 ARBITRATED，误判可回滚",
+      "deliverables": [
+        "src/arbitration.rs: ArbitrationRequest / ArbitrationVerdict（纯 JSON 数据契约）",
+        "src/office.rs: resolve（UPHELD 执行处罚 / REJECTED 归还罚没）+ ARBITRATED 终局"
+      ],
+      "interfaces": [
+        "pub struct ArbitrationRequest { case, subject, reporter, violation, evidence, appeals, requested_at }",
+        "pub struct ArbitrationVerdict { case, outcome, sanction, amount, rationale_hash, arbiter, issued_at, sig }",
+        "pub enum VerdictOutcome { Upheld, Rejected }",
+        "pub fn SafetyOffice::resolve(&mut self, kernel, verdict) -> CoreResult<CaseOutcome>"
+      ],
+      "acceptance": [
+        "非法仲裁者/伪造签名的裁决被拒（InvalidSignature + unauthorized），账本不变",
+        "UPHELD：罚没执行（受锁定余额封顶）、状态 arbitrated、订阅者收到终局通知",
+        "REJECTED：罚没等额归还并重新锁定（质押回到原值），净罚没归零、守恒成立",
+        "裁决契约可仅用 serde_json 与手写 JSON 往返（不依赖 au4a-council crate）",
+        "理由哈希必须是 64 位 hex 承诺；rejected 不得携带金额",
+        "终局后新证据可再申诉（状态回 appealed），第二次裁决可统一回滚"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 113,
+        "tests_total": 113,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测；本 crate 0 warning；日志 _forangent\\logs\\1.5-v1.5.7.log；累计 113 个测试。回滚实现由测试修正：mint 之外必须 lock 回锁定质押"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.8",
+      "title": "测试",
+      "goal": "端到端 + 对抗 + 确定性重放的独立测试套件",
+      "deliverables": [
+        "tests/end_to_end.rs: 完整案件生命周期",
+        "tests/adversarial.rs: 伪造证据/伪造裁决/第三方申诉/链篡改",
+        "tests/determinism.rs: scenario 两次运行字节一致"
+      ],
+      "interfaces": [
+        "pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value>（确定性契约）"
+      ],
+      "acceptance": [
+        "端到端：PMB 查询→举报→订阅→处罚→申诉→裁决 ARBITRATED 全程断言（含事件链 5 条）",
+        "对抗用例全部被拒且账本快照逐字段不变（伪造证据/裁决、第三方申诉/退订、无授权处罚）",
+        "链篡改在每一个位置都能被定位（broken_at == 篡改位置）",
+        "误判回滚后锁定质押回到原值，权限完好（不是「拿回钱丢了权」）",
+        "两个新内核上 scenario 字节一致；同一内核重复调用语义正确且账本守恒"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 128,
+        "tests_total": 128,
+        "grade": "verified",
+        "notes": "本版交付 15 个集成测试（end_to_end 3 / adversarial 7 / determinism 5）全绿；lib 113 + 集成 15 = 128，0 warning。外部阻塞说明见 1.5.md 附录：v1.5.8/v1.5.9 的全绿取证与 v1.5.10 合并执行，快照取自最终树"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.9",
+      "title": "文档",
+      "goal": "机器可读契约导出与文档定稿（线格式、错误映射表、证据分级）",
+      "deliverables": [
+        "src/schema.rs: schema_json() 导出消息类型/事件种类/案件状态/证据种类/链格式",
+        "docs/tracks/1.5.md 与 1.5.json 定稿"
+      ],
+      "interfaces": [
+        "pub fn schema_json() -> CoreResult<Value>"
+      ],
+      "acceptance": [
+        "schema_json 可解析、覆盖消息类型/事件种类/状态/证据/处罚/权限/拒绝码",
+        "每个事件种类与权限点在 schema 中恰好出现一次（代码与文档同一来源）",
+        "线格式名与 au4a_core::kinds::SAFETY_REPORT 一致；genesis_prev 与 MAX_FRAME 与基元层一致",
+        "错误映射表 ≥ 10 条且每条三段式（情形 / core_error / refusal）",
+        "schema 本身是规范 JSON（无浮点，可 canonicalize）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 127,
+        "tests_total": 127,
+        "grade": "verified",
+        "notes": "schema 测试 5 个全绿（lib 累计 127 = 122 lib + 5 schema，随最终树合并取证）；0 warning"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.5.10",
+      "title": "审计",
+      "goal": "审计报告：链完整性、状态==重放(事件链)、账本罚没与处罚记录交叉核对",
+      "deliverables": [
+        "src/audit.rs: AuditReport / AuditFinding / AuditCode",
+        "src/office.rs: from_journal 重放 + audit"
+      ],
+      "interfaces": [
+        "pub fn SafetyOffice::audit(&self, kernel: &Kernel) -> AuditReport",
+        "pub fn SafetyOffice::from_journal(events, config, keys) -> CoreResult<SafetyOffice>",
+        "pub fn verify_chain(events: &[SafetyEvent]) -> ChainVerdict"
+      ],
+      "acceptance": [
+        "干净案件：audit ok、findings 为空、计数与四个金额（gross/net/refunded/ledger）正确",
+        "状态 == 重放(事件链)：from_journal 重建的实例链头/案件/处罚完全一致且审计同样干净",
+        "篡改事件后 verify_chain 指向断裂序号，from_journal 返回 InvalidSignature",
+        "账本被绕过改动时交叉核对发现 LedgerMismatch（而守恒式仍成立，证明守恒不够）",
+        "手工构造「给不存在案件开罚单」的日志被 flagged 为 case_missing 而不是被隐藏",
+        "self_check 聚合审计结论（audit.clean 项）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-safety",
+        "tests_passed": 137,
+        "tests_total": 137,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 全绿：lib 122 + adversarial 7 + determinism 5 + end_to_end 3 = 137，0 failed、本 crate 0 warning；日志 _forangent\\logs\\1.5-v1.5.10.log。审计检查抓出并修正了两处真实的状态/重放不一致（status_seq 与裁决时间戳）"
+      },
+      "status": "done"
+    }
+  ]
+}

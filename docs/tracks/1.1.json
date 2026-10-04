@@ -1,0 +1,363 @@
+{
+  "track": "1.1",
+  "crate": "au4a-capgraph",
+  "medium_title": "Capability Graph 能力图",
+  "range": "v1.1.1 → v1.1.10",
+  "owner": "track-capgraph",
+  "versions": [
+    {
+      "version": "v1.1.1",
+      "title": "数据结构",
+      "goal": "给「一条能力」一个整数、可校验、可内容寻址的表示（skill/latency_p50/latency_p99/throughput/current_load/price/reliability/supported_formats/constraints）",
+      "deliverables": [
+        "src/capability.rs: SkillId/FormatId/Constraints/Capability 及校验、加权度量、格式接续、指纹",
+        "src/lib.rs: 模块接入 + 5 条真实自检 + v1.1.1 scenario",
+        "tests/data_structures.rs: 7 个集成测试"
+      ],
+      "interfaces": [
+        "pub struct Capability { skill, latency_p50_ms, latency_p99_ms, throughput_per_min, current_load_bp, price_per_unit, reliability_bp, supported_formats, produced_formats, constraints }",
+        "pub fn Capability::validate(&self) -> CoreResult<()>",
+        "pub fn Capability::effective_latency_ms(&self) -> u64",
+        "pub fn Capability::effective_reliability_bp(&self) -> u16",
+        "pub fn Capability::handoff_format(&self, next: &Capability) -> Option<FormatId>",
+        "pub fn Capability::fingerprint(&self) -> CoreResult<String>",
+        "pub struct Constraints { max_input_bytes, min_deadline_ms, max_concurrency, regions }"
+      ],
+      "acceptance": [
+        "9 个度量字段在规范 JSON 中均为整数，含浮点的值被 canonicalize 以 FloatForbidden 拒绝",
+        "p99<p50 / load>10000bp / reliability>10000bp / 空格式集合 均被 validate() 拒绝",
+        "p50=100,p99=300,load=5000bp 时加权延迟=200ms、加权可靠度=4500bp（整数运算，实测相等）",
+        "同一能力两次构造指纹相同；改价后指纹改变（SHA-256 内容寻址）",
+        "产出∩接受={application/json} 判定可接续；产出∩接受=∅ 判定不可接续",
+        "scenario 在同样输入下两次运行返回完全相同 JSON（可重放）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph",
+        "tests_passed": 14,
+        "tests_total": 14,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 7 passed + tests/data_structures 7 passed，0 failed，本 crate 0 warning。唯一警告来自冻结的 au4a-kernel（unused import all_passed），不在本轨道写作用域。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.2",
+      "title": "声明 API",
+      "goal": "Agent 用自签声明把自己的能力写进图，且任何人都不能替他人声明",
+      "deliverables": [
+        "src/declaration.rs: Declaration（自洽校验、按技能排序、拒绝重复技能）/ SignedDeclaration（验签）",
+        "src/graph.rs: AgentCapabilityGraph / CapGraphConfig / NeighborRecord / DeclareOutcome",
+        "tests/declaration.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn Declaration::new(agent: Did, epoch: u64, issued_at: u64, capabilities: Vec<Capability>) -> CoreResult<Declaration>",
+        "pub fn Declaration::sign(self, keys: &AgentKeys) -> CoreResult<SignedDeclaration>",
+        "pub fn SignedDeclaration::verify(&self) -> CoreResult<()>",
+        "pub fn AgentCapabilityGraph::apply(&mut self, signed: &SignedDeclaration, now: u64) -> DeclareOutcome",
+        "pub fn AgentCapabilityGraph::capabilities_of(&self, did: &Did) -> Option<&[Capability]>",
+        "pub enum DeclareOutcome { Applied, Unchanged, Rejected }"
+      ],
+      "acceptance": [
+        "自签声明入图；同一份声明重放 4 次全部 Unchanged 且 own_epoch 不推进（幂等）",
+        "B 用自己私钥替 A 声明返回 InvalidSignature；把已签声明的 agent 改成 B 被图判 unauthorized",
+        "篡改已签声明的 price/throughput → unauthorized（恶意码 is_misconduct()==true），邻居视图保持为空",
+        "epoch 回退→stale_epoch；同 epoch 异内容→conflict；epoch 递增→接受并完整替换旧能力集",
+        "超过 max_skills_per_agent→policy_denied，且被拒声明不改变 capability_count()",
+        "邻居声明不触碰自有状态；skills() 去重列出全部提供者"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph",
+        "tests_passed": 35,
+        "tests_total": 35,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 20 passed + tests/data_structures 7 passed + tests/declaration 8 passed，0 failed，本 crate 0 warning。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.3",
+      "title": "广播协议",
+      "goal": "用 PMB Envelope + MsgKind 广播能力通告，真签名验签，篡改被拒",
+      "deliverables": [
+        "src/broadcast.rs: announce/announce_to/query_skill/parse_announcement/parse_query/ingest/pump + Ingest/PumpReport",
+        "src/lib.rs: demo_agents() 确定性角色集合 + scenario 改为真广播 + 4 条新自检",
+        "tests/broadcast.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub const PROTOCOL: &str = \"au4a.capgraph/1\"",
+        "pub const KIND_ANNOUNCE: &str = \"capgraph.announce\" / KIND_REQUEST: &str = \"capgraph.request\"",
+        "pub fn announce(keys: &AgentKeys, declaration: &Declaration, ts: u64) -> CoreResult<Envelope>",
+        "pub fn parse_announcement(env: &Envelope) -> Result<Announcement, (RefusalCode, String)>",
+        "pub fn ingest(graph: &mut AgentCapabilityGraph, env: &Envelope, now: u64) -> Ingest",
+        "pub fn pump(kernel: &mut Kernel, graph: &mut AgentCapabilityGraph, now: u64) -> PumpReport"
+      ],
+      "acceptance": [
+        "announce 的信封 verify() 通过、to==None、kind==capgraph.announce；分帧往返后信封相等且内容寻址 id 不变",
+        "篡改 price/throughput/reliability/load 任一字段 → unauthorized（is_misconduct()==true）",
+        "B 的信封装 A 的合法声明 → 身份错配判 unauthorized，图不变（capability_count()==0）",
+        "错误 kind 或错误 protocol → unsupported，且不触图",
+        "5 Agent 全量广播 → pump 报 routed=4/applied=4/refused=0，known_agents=5，内核 refusals 为空",
+        "他轨道信封被转发回队列（id 不变）；伪造通告的拒绝记在伪造者头上（escalation_for==Quarantine）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph",
+        "tests_passed": 52,
+        "tests_total": 52,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 27 + tests/broadcast 10 + tests/data_structures 7 + tests/declaration 8，0 failed，本 crate 0 warning。签名/验签/内容寻址/分帧/内核准入为真实实现；同进程内的队列传递标注 cpu-proto（本 crate 禁止网络 I/O）。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.4",
+      "title": "缓存层",
+      "goal": "邻居能力缓存：容量上限 + TTL 失效 + LRU 淘汰，全部确定性",
+      "deliverables": [
+        "src/cache.rs: CapabilityCache（容量上限/TTL/LRU/命中统计）+ CacheStats + CacheInsert",
+        "src/graph.rs: 邻居侧改由缓存托管；新增 get_neighbor/expire_neighbors/invalidate_neighbor/cache_stats/lru_order/live_neighbor_count",
+        "tests/cache.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn CapabilityCache::new(capacity: usize, ttl_ticks: u64) -> Self",
+        "pub fn CapabilityCache::get(&mut self, did: &Did, now: u64) -> Option<&NeighborRecord>",
+        "pub fn CapabilityCache::insert(&mut self, record: NeighborRecord, now: u64) -> CacheInsert",
+        "pub fn CapabilityCache::is_live(&self, did: &Did, now: u64) -> bool",
+        "pub fn CapabilityCache::expire(&mut self, now: u64) -> Vec<Did>",
+        "pub fn CapabilityCache::evict_lru(&mut self) -> Option<Did>",
+        "pub struct CacheStats { hits, misses, inserts, updates, evictions, expirations, invalidations }"
+      ],
+      "acceptance": [
+        "容量 8 写入 64 条过程中 len 峰值<=8、末尾 len=8、evictions=56；容量 3 时 evictions=7（硬上限）",
+        "触碰 1、2 后 lru_order 恰为 [3,1,2]，下一次写入淘汰 3；重跑同一序列得到同一淘汰结果",
+        "TTL 用逻辑刻：at=1000,ttl=20 时 1020 刻存活、1021 刻失效并计入 expirations；ttl=0 永不过期",
+        "邻居过期后同 epoch 异内容不再判 conflict 而是重新接受（旧世界已不存在）",
+        "invalidate 只移除指定邻居；重复失效为空操作且不再计数",
+        "容量 0 时返回 resource_exhausted，且 is_misconduct()==false（容量是竞争语义）",
+        "真实广播下容量 2 的图：4 条通告全部 applied、保留 2 条、淘汰 2 条；两个独立图 lru_order 相同"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph",
+        "tests_passed": 69,
+        "tests_total": 69,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 35 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 = 69，0 failed，本 crate 0 warning。语义变更：v1.1.2 的“满了就拒”占位策略被 LRU 淘汰取代。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.5",
+      "title": "查询接口",
+      "goal": "按技能/格式/价格/可靠度查询能力，走倒排索引而不是全图扫描",
+      "deliverables": [
+        "src/index.rs: CapabilityIndex（by_skill/by_input_format 倒排表，键为 (did,slot)）+ CapabilityQuery/CapabilityMatch/QueryStats/QueryResult",
+        "src/graph.rs: query/best_for/providers_of/capability_at/index_consistent/index_summary，索引在声明/淘汰/过期/失效四个入口同步",
+        "tests/query_index.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn AgentCapabilityGraph::query(&mut self, q: &CapabilityQuery, now: u64) -> QueryResult",
+        "pub fn AgentCapabilityGraph::best_for(&mut self, skill: &SkillId, now: u64) -> QueryResult",
+        "pub fn AgentCapabilityGraph::providers_of(&self, skill: &SkillId) -> Vec<Did>",
+        "pub fn AgentCapabilityGraph::index_consistent(&self) -> bool",
+        "pub struct QueryStats { candidates, scanned, matched, nodes_total }",
+        "pub fn CapabilityIndex::candidates_for(&self, skill: &SkillId, input_format: Option<&FormatId>) -> Vec<CapKey>"
+      ],
+      "acceptance": [
+        "视图 200 条能力时按技能查询 candidates==scanned==100、nodes_total==200，scanned < nodes_total",
+        "索引结果与朴素全扫（遍历全部邻居能力逐个过滤）集合完全相同",
+        "max_price/min_reliability/max_latency/min_throughput/min_available_bp/region/输入输出格式 均为硬条件",
+        "输入格式过滤 = by_skill ∩ by_input_format：2 条候选中 application/json 只命中 1 条",
+        "排序第一关键字为负载加权可靠度：9000/9000/8000bp → 价格序 5,5,4，两次查询逐位相同",
+        "淘汰/过期/显式失效后 index_consistent()==true，indexed_entries 与实际能力数一致；自有能力也被索引",
+        "查不到给出 QueryResult::refusal_code()==Some(unsupported)（非恶意、非异常）",
+        "scenario 报告 nodes_total=5、translate scanned=2"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph",
+        "tests_passed": 82,
+        "tests_total": 82,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 40 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + query_index 8 = 82，0 failed，本 crate 0 warning。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.6",
+      "title": "路径规划",
+      "goal": "真图搜索：给定技能序列与格式，返回最小代价流水线或明确的「无路径」",
+      "deliverables": [
+        "src/planner.rs: PipelineRequest/PipelineStep/PlanCost/PlanOutcome/Pipeline/PipelineNode/NoPath/NoPathReason/SearchStats + 多准则标签设定搜索",
+        "src/graph.rs: AgentCapabilityGraph::plan(request, cost, now)",
+        "tests/planner.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn plan(graph: &mut AgentCapabilityGraph, request: &PipelineRequest, cost: &PlanCost, now: u64) -> PlanOutcome",
+        "pub fn AgentCapabilityGraph::plan(&mut self, request, cost, now) -> PlanOutcome",
+        "pub struct PlanCost { latency_price_per_ms: i64, handoff_price: i64 }",
+        "pub enum PlanOutcome { Path(Pipeline), NoPath(NoPath) }",
+        "pub enum NoPathReason { EmptyRequest, NoProvider, NoCompatibleFormat, ConstraintRejected, BudgetExceeded, DeadlineExceeded }",
+        "pub struct SearchStats { settled, dominance_pruned, constraint_pruned, labels_capped, candidates }"
+      ],
+      "acceptance": [
+        "text/plain + translate+sentiment → bob(→application/json) → carol，总价 5、总延迟 200ms、1 次换手",
+        "贪心反例：最便宜的第一步 dave(1 微积分, text/html) 的可接续下一步数==0，规划改选 bob(3)",
+        "强制中间格式 text/html → NoCompatibleFormat{step:1} + unsupported，且 search.settled>0",
+        "预算 4 → BudgetExceeded{4}+policy_denied；期限 150ms → DeadlineExceeded{150}+timeout；预算 5/期限 200ms 恰好可行",
+        "未知技能 → NoProvider{step:0}；空请求 → EmptyRequest+malformed",
+        "载荷 >1MiB 上限 → ConstraintRejected{step:0}+policy_denied；1KiB 可行",
+        "三步链 audio/wav→text/plain→application/json 绕开 1 微积分诱饵，总价 14、换手 2",
+        "两个相同图的规划输出逐字节相同（含无路径）",
+        "scenario 返回 plan.outcome==path（bob→carol、总价 5）与 no_path_demo（unsupported）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 101,
+        "tests_total": 101,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 50 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + planner 9 + query_index 8 = 101，0 failed，0 warning（含依赖）。注：CARGO_INCREMENTAL=0 用于规避 Windows 增量目录复制失败（os error 5）产生的非代码警告。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.7",
+      "title": "版本化",
+      "goal": "能力变更自动递增版本，能识别陈旧通告与同版本异内容冲突",
+      "deliverables": [
+        "src/version.rs: VersionRecord + VersionHistory（append-only、有界 256、按 Agent 可查、hash_of 内容寻址）",
+        "src/declaration.rs: Declaration::capabilities_fingerprint()（只对能力集合取指纹）",
+        "src/graph.rs: declare() 自动递增 + history()/last_version_of()/version_summary() + 历史兜底的陈旧/冲突判定",
+        "tests/versioning.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn AgentCapabilityGraph::declare(&mut self, keys: &AgentKeys, capabilities: Vec<Capability>, now: u64) -> CoreResult<DeclareOutcome>",
+        "pub fn AgentCapabilityGraph::history(&self) -> &VersionHistory",
+        "pub fn AgentCapabilityGraph::last_version_of(&self, did: &Did) -> Option<u64>",
+        "pub fn AgentCapabilityGraph::version_summary(&self) -> Value",
+        "pub fn Declaration::capabilities_fingerprint(&self) -> CoreResult<String>",
+        "pub const HISTORY_CAPACITY: usize = 256"
+      ],
+      "acceptance": [
+        "三次内容变更 → 版本 1→2→3、历史 3 条、bumps==3；每条历史哈希 == 该版能力集合指纹",
+        "内容不变的重发 → Unchanged 且版本不推进、历史不新增",
+        "非 owner 调用 declare → Err(InvalidSignature)，版本保持 0",
+        "缓存存活时 stale_epoch / conflict / 递增接受三条路径均成立",
+        "缓存过期后同版本异内容仍 conflict、更旧版本仍 stale_epoch（历史兜底）、更高版本接受",
+        "历史有界：写入 HISTORY_CAPACITY+7 次后 len()==256，版本号涨到 263",
+        "version_summary() 报告自有版本、邻居版本映射、历史条数、递增次数",
+        "广播：v1→v2 均 applied；重放 v1 被 pump 判 stale_epoch 且非恶意码，图停在 v2",
+        "scenario: version_bump_applied/idempotent_ignored/stale_rejected 均为 true，versions.own==2、bumps==6"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 113,
+        "tests_total": 113,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 53 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + planner 9 + query_index 8 + versioning 9 = 113，0 failed，0 warning。语义变更：v1.1.4 的「缓存过期=当作没听过」被 v1.1.7 的「历史兜底版本判定」取代（同版本异内容过期后仍 conflict）。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.8",
+      "title": "性能优化",
+      "goal": "增量索引维护 + 有界 top-k 选择 + 查询结果缓存，用操作计数而非墙钟证明",
+      "deliverables": [
+        "src/perf.rs: QueryPerf / rank_top_k（有界选择）/ QueryCache+QueryCacheStats / rebuild_index",
+        "src/graph.rs: revision()/query_cached()/query_perf()/query_cache_stats()/query_cache_capacity()/reindex()/perf_summary()",
+        "src/index.rs: rank_and_truncate 作为全排序参考实现（等价性对照）",
+        "tests/perf.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn rank_top_k(matches: Vec<CapabilityMatch>, k: usize, perf: &mut QueryPerf) -> Vec<CapabilityMatch>",
+        "pub fn AgentCapabilityGraph::query_cached(&mut self, q: &CapabilityQuery, now: u64) -> QueryResult",
+        "pub fn AgentCapabilityGraph::revision(&self) -> u64",
+        "pub fn AgentCapabilityGraph::reindex(&mut self)",
+        "pub fn AgentCapabilityGraph::perf_summary(&self) -> Value",
+        "pub struct QueryPerf { queries, full_sorts, bounded_selections, comparisons, candidates_scanned, index_rebuilds }"
+      ],
+      "acceptance": [
+        "80 邻居×2 能力增量入图：index_rebuilds==0、entries==160、writes==160、索引自洽",
+        "容量 4 缓存淘汰后索引同步（被淘汰邻居不在 providers_of 中）",
+        "64 候选取前 3：bounded_selections==1、full_sorts==0，且与全排序前 3 逐位相同",
+        "rank_top_k 与 rank_and_truncate 结果一致",
+        "同一查询第二次命中；apply 推进修订号后 invalidated==1；只读查询不推进修订号",
+        "缓存容量 0 → 关闭缓存但结果与直接查询一致",
+        "reindex() 使 index_rebuilds==1 且索引仍自洽、查询结果不变",
+        "同一负载两次运行 perf_summary() 逐字节相同（证据不依赖时间）",
+        "scenario.perf: index_rebuilds==0、index.entries==5、bounded_selections>=1、full_sorts>=1、query_cache.misses>=1、query_cache_hit==true"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 126,
+        "tests_total": 126,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 57 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + perf 9 + planner 9 + query_index 8 + versioning 9 = 126，0 failed，0 warning。性能以操作计数（扫描/比较/排序/淘汰）为证据，不含任何墙钟读数。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.9",
+      "title": "测试",
+      "goal": "端到端场景 + 不变式 + 对抗用例的完整测试面，并提供独立校验器",
+      "deliverables": [
+        "src/planner.rs: verify_pipeline() 独立校验器（格式链/度量/约束/代价自洽）",
+        "tests/end_to_end.rs: 9 个端到端测试（全链路、换图独立验通、逐字节可重放、索引==全扫）",
+        "tests/invariants.rs: 5 个不变式测试（确定性 LCG 8 种子×60 步，逐步断言 I1–I7）",
+        "tests/adversarial.rs: 11 个对抗测试（改价/重放/冲突/走私/轰炸/饥饿/容量 0/极端查询）",
+        "src/lib.rs: checks_v119（校验器正反用例 + scenario 逐版字段覆盖）"
+      ],
+      "interfaces": [
+        "pub fn verify_pipeline(graph: &AgentCapabilityGraph, request: &PipelineRequest, cost: &PlanCost, pipeline: &Pipeline) -> Result<(), String>"
+      ],
+      "acceptance": [
+        "规划结果能被 verify_pipeline 逐项验通；换一张图（仅凭同样的广播数据）也能验通",
+        "改价 / 改格式 / 少一步 / 换 DID 四种篡改方案全部被校验器拒绝",
+        "全链路逐字节可重放：规划结论、图状态、版本摘要、操作计数四项两次运行完全相同",
+        "索引结果与朴素全扫（含自有能力）逐条相同",
+        "陈旧广播进不了规划：重放 v1 被判 stale_epoch，规划仍用 v2 的价格",
+        "I1–I7 在 8 个种子 × 60 步随机操作序列的每一步后都成立",
+        "无路径与放宽后有路径一致：预算 1 → policy_denied；期限 1ms → timeout；去约束后可行",
+        "对抗 11 例：拒绝码正确、且被拒之后图状态逐字节不变",
+        "scenario 输出包含 8 个版本的证据字段（指针检查）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 151,
+        "tests_total": 151,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 57 + adversarial 11 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + end_to_end 9 + invariants 5 + perf 9 + planner 9 + query_index 8 + versioning 9 = 151，0 failed，0 warning（含依赖）。"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.1.10",
+      "title": "文档与证据汇总",
+      "goal": "10 个版本的目标/接口/验收/证据齐备，results_json 汇总可被节点聚合",
+      "deliverables": [
+        "src/lib.rs: pub const VERSIONS[10] + schema_json()（机器可读 self-description）+ results_json()（证据索引）+ checks_v110",
+        "tests/end_to_end.rs: self_check_and_results_json_are_fully_exercised（跑完整棵自检树）",
+        "docs/tracks/1.1.md: 10 版小节 + 轨道总结 + 复现命令 + 证据分级",
+        "docs/tracks/1.1.json: 10 版元数据齐全"
+      ],
+      "interfaces": [
+        "pub const VERSIONS: [&str; 10]",
+        "pub fn schema_json() -> CoreResult<serde_json::Value>",
+        "pub fn results_json() -> CoreResult<serde_json::Value>",
+        "pub fn self_check() -> Vec<au4a_core::SelfCheck>"
+      ],
+      "acceptance": [
+        "self_check() 返回 >=25 条自检且全部 passed、detail 非空、all_passed() 为真",
+        "results_json()['versions'] 与 VERSIONS 常量逐项相同",
+        "schema_json() 含 10 个能力字段、3 种消息类型、floats=false，可被规范 JSON 编码",
+        "results_json() 内嵌 schema、模块表与证据摘要",
+        "v1.1.10 自检树暴露的 3 个真实缺陷（整数性判据/历史版本号/缓存作废断言）已修复并有回归测试"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 152,
+        "tests_total": 152,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 57 + adversarial 11 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + end_to_end 10 + invariants 5 + perf 9 + planner 9 + query_index 8 + versioning 9 = 152，0 failed，0 warning（含依赖）。"
+      },
+      "status": "done"
+    }
+  ]
+}

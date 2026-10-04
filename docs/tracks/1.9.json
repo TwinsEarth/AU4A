@@ -1,0 +1,265 @@
+{
+  "track": "1.9",
+  "crate": "au4a-scale",
+  "medium_title": "Network Scaling 网络扩展",
+  "range": "v1.9.1 → v1.9.9",
+  "owner": "track-safety",
+  "versions": [
+    {
+      "version": "v1.9.1",
+      "title": "缩放定律度量",
+      "goal": "把节点数/交互复杂度/算力预算 ↔ 群体智能水平形式化为整数度量，数学表达=代码=数值测试",
+      "deliverables": [
+        "src/metrics.rs: ScalingParams + 9 个度量函数 + analytic_vertex_floor（整数二分）",
+        "src/lib.rs: self_check（4 项真实断言）/ results_json / scenario（4 档位度量表）"
+      ],
+      "interfaces": [
+        "pub struct ScalingParams { n0: u64, alpha: u32, p0_milli: i64, interaction_cost_milli: i64 }",
+        "pub fn effective_per_node_milli(n, params) -> CoreResult<i64>",
+        "pub fn aggregate_throughput_milli(n, params) -> CoreResult<i64>",
+        "pub fn orchestration_overhead_milli(n, params) -> CoreResult<i64>",
+        "pub fn net_throughput_milli / completion_bp / overhead_ratio_bp / marginal_gain_milli",
+        "pub fn analytic_vertex_floor(n0, alpha) -> u64"
+      ],
+      "acceptance": [
+        "手算一致：p(N0)=p0/2、p(100)=500、T(100)=50000、T(10)=9900",
+        "独立 u128 复算与实现逐点相等（n=1,7,50,100,250,1000）",
+        "α=2 有峰值、α=1 严格单调；解析极值点与离散 argmax 相差 ≤1（α=2→1000，α=3→793）",
+        "编排开销二次增长（比值 4.0±0.2 倍）；成本高时净收益为负、开销占比 >100%",
+        "完成率饱和 10000bp；demand=0 被拒；参数非法（n0=0/α∉[1,3]/p0≤0/c<0）被拒",
+        "所有输出为整数（可 canonicalize，无浮点）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 8,
+        "tests_total": 8,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.1.log；模型为解析式聚合（10k 节点为模型推论，cpu-proto，不冒充真实压测）"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.2",
+      "title": "实验框架",
+      "goal": "确定性实验框架：给定节点档位与参数，产出可复现的实验报告与规范摘要",
+      "deliverables": [
+        "src/harness.rs: ExperimentConfig / Row / ExperimentReport / run（含 digest）",
+        "src/lib.rs: scenario 使用框架产出报告"
+      ],
+      "interfaces": [
+        "pub struct ExperimentConfig { nodes: Vec<u64>, params: ScalingParams, demand_milli: i64 }",
+        "pub struct Row { nodes, per_node_milli, aggregate_milli, overhead_milli, net_milli, completion_bp, overhead_ratio_bp, marginal_gain_milli }",
+        "pub struct ExperimentReport { config, rows, digest }",
+        "pub fn run(config: &ExperimentConfig) -> CoreResult<ExperimentReport>"
+      ],
+      "acceptance": [
+        "同一配置两次 run 的 rows 与 digest 完全相同",
+        "row 的每个字段与 metrics 函数逐个相等（框架不引入第二套算法）",
+        "空档位/重复档位/非法参数被拒",
+        "报告 JSON 可规范化（无浮点），digest == canonical_hash(rows)"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 14,
+        "tests_total": 14,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.2.log；累计 14 个测试"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.3",
+      "title": "大规模集群",
+      "goal": "10/100/1k/10k 节点的有界评估：秒级完成、内存有界（O(1) 分配，不随 N 增长）",
+      "deliverables": [
+        "src/cluster.rs: TierSpec / TierReport / 有界窗口扫描求顶点",
+        "tests 中的墙钟上界断言（仅测试读时钟）"
+      ],
+      "interfaces": [
+        "pub const TIERS: [u64; 4] = [10, 100, 1000, 10000]",
+        "pub fn tier_report(params, demand_milli) -> CoreResult<TierReport>",
+        "pub fn bounded_vertex_scan(params, lo, hi, samples) -> CoreResult<VertexScan>"
+      ],
+      "acceptance": [
+        "10k 档位评估在 1 秒内完成（本机实测 + 测试墙钟断言，实际毫秒级）",
+        "求值次数 ≤ samples + span/step + 2·step + 3，与节点数无关（有两组范围的逐项上界断言）",
+        "有界扫描顶点与全量逐点扫描顶点相差 ≤ 1 个粗扫步长（三组参数对照）",
+        "档位行与 metrics 函数逐字段一致；报告确定性与 digest 一致",
+        "lo=0 / hi<lo / samples∉[2,4096] / demand=0 全部被拒"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 20,
+        "tests_total": 20,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.3.log；模型为解析式聚合（10k 为模型评估，非真实分布式压测）"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.4",
+      "title": "效果评估",
+      "goal": "容量顶点裁决：完成率峰值 + 峰值后编排开销恶化 + 边际收益转负（含「收益转负」测试）",
+      "deliverables": [
+        "src/verdict.rs: CapacityVerdict / VerdictKind / VerdictReason / adjudicate"
+      ],
+      "interfaces": [
+        "pub enum VerdictKind { VertexFound, MonotonicNoVertex, InsufficientRange }",
+        "pub struct CapacityVerdict { kind, vertex_nodes, peak_completion_bp, peak_aggregate_milli, peak_net_milli, overhead_ratio_at_peak_bp, overhead_ratio_after_peak_bp, marginal_negative_from, reasons }",
+        "pub fn adjudicate(params, demand_milli, lo, hi, step) -> CoreResult<CapacityVerdict>"
+      ],
+      "acceptance": [
+        "α=2 场景判定 VertexFound 且顶点与解析式相差 ≤ 1 个步长",
+        "峰值后开销占比严格上升（OverheadWorsened，比较用 ppm 保留分辨率）",
+        "边际收益在顶点后转负（MarginalTurnedNegative，含具体起始 n）",
+        "收益转负：交互成本 10 任务时 net_negative_from 给出首次转负点，该点净收益 < 0 且起点 > 0",
+        "α=1 场景判定 MonotonicNoVertex；区间过窄判定 InsufficientRange",
+        "同一输入裁决结果可复现（两次调用相等），JSON 可规范化"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 26,
+        "tests_total": 26,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.4.log；开销占比比较改用 ppm（bp 在 O/T≈1e-5 时截断为 0，由测试发现）"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.5",
+      "title": "数据收集",
+      "goal": "确定性数据收集：把多个场景的观测记录成可复现的 bundle（内容寻址摘要）",
+      "deliverables": [
+        "src/collect.rs: Record / DataBundle / collect / sweep"
+      ],
+      "interfaces": [
+        "pub struct Record { scenario, nodes, params, aggregate_milli, net_milli, completion_bp, overhead_ratio_bp }",
+        "pub struct DataBundle { records: Vec<Record>, digest: String }",
+        "pub fn collect(specs: &[ScenarioSpec]) -> CoreResult<DataBundle>",
+        "pub fn sweep(nodes, n0_values, alphas, ...) -> CoreResult<DataBundle>"
+      ],
+      "acceptance": [
+        "bundle 的 digest == canonical_hash(records)，且 recompute_digest 可独立复算",
+        "同一 spec 两次 collect 完全一致；bundle 可 JSON 往返且可规范化",
+        "空场景列表 / 空档位 / demand=0 / 非法参数在收集阶段就被拒",
+        "sweep 覆盖 |nodes|×|N0|×|α| 个组合且确定性；每条记录自带完整参数",
+        "改动任一参数即改变 digest（内容寻址）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 31,
+        "tests_total": 31,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.5.log；累计 31 个测试"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.6",
+      "title": "分析工具",
+      "goal": "从观测数据反推模型参数（整数网格搜索）并给出残差报告",
+      "deliverables": [
+        "src/analyze.rs: FitReport / fit_by_grid_search / residual 统计"
+      ],
+      "interfaces": [
+        "pub struct FitReport { n0_estimate, alpha_estimate, p0_estimate_milli, max_residual_ppm, mean_residual_ppm, samples, evaluated_candidates }",
+        "pub struct FitSearch { n0_min, n0_max, n0_step, alphas }（around(...) 构造）",
+        "pub fn fit(bundle: &DataBundle, search: &FitSearch) -> CoreResult<FitReport>",
+        "pub fn residuals(bundle: &DataBundle, params: &ScalingParams) -> CoreResult<Vec<i64>>（ppm）"
+      ],
+      "acceptance": [
+        "从 6 条合成观测恢复真值：α 精确命中 2，N0 误差 ≤ 50（真值 1000）",
+        "真值参数残差 ≤ 1000 ppm；换错参数残差显著变大（区分度）",
+        "样本 < 2 条或搜索空间非法时被拒（不给出无依据的拟合）",
+        "扫描数据能被拟合回被扫描的参数（N0 误差 ≤ 30）",
+        "拟合确定性（两次相等）且 JSON 可规范化"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 36,
+        "tests_total": 36,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.6.log；累计 36 个测试"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.7",
+      "title": "测试",
+      "goal": "端到端 + 确定性 + 性能上界 + 收益转负的独立测试套件",
+      "deliverables": [
+        "tests/scale_end_to_end.rs: 全链路一致性 / 确定性 / 有界性 / 收益转负 / scenario 复现"
+      ],
+      "interfaces": [
+        "pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value>（确定性契约）"
+      ],
+      "acceptance": [
+        "端到端：收集→拟合→裁决全链路断言（α 命中 2、N0 误差 ≤ 50、顶点与解析同一步长）",
+        "同一输入两次运行的 digest / verdict / scenario 输出完全一致",
+        "10k 档位 + 裁决 < 1s（实测墙钟断言），求值次数 ≤ 预算、档位数固定",
+        "收益转负：首次转负点净收益 < 0、起点 > 0；零成本场景不出现该原因码",
+        "档位报告与实验框架对同一档位给出同一数值"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 42,
+        "tests_total": 42,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.7.log；lib 36 + 集成 6 = 42"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.8",
+      "title": "文档",
+      "goal": "机器可读契约（度量/单位/裁决码/证据分级）与文档定稿",
+      "deliverables": [
+        "src/schema.rs: schema_json() / schema_summary()",
+        "docs/tracks/1.9.md 与 1.9.json 定稿"
+      ],
+      "interfaces": [
+        "pub fn schema_json() -> CoreResult<Value>"
+      ],
+      "acceptance": [
+        "schema 与代码常量逐个对齐（3 类裁决 / 7 个原因码 / 4 档位 / 求值预算 / MAX_SCAN_SAMPLES）",
+        "每个原因码在 schema 中恰好出现一次；schema 是规范 JSON（无浮点）",
+        "claim_scope 明写「非真实分布式压测」，not_done 列出未做之事，limitations 4 条",
+        "摘要给出 10 条公式、4 个档位、4 条局限"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 45,
+        "tests_total": 45,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.8.log；lib 39 + 集成 6 = 45"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.9.9",
+      "title": "论文",
+      "goal": "论文稿：方法/指标/结果/局限，逐条标注模型推论 vs 本机实测",
+      "deliverables": [
+        "src/paper.rs: paper_json()（结论 + 证据分级）",
+        "docs/tracks/1.9.md 论文节（含局限与未做之事）"
+      ],
+      "interfaces": [
+        "pub fn paper_json() -> CoreResult<Value>"
+      ],
+      "acceptance": [
+        "6 条结论全部带合法证据等级（verified 4 / cpu-proto 2），摘要计数与结论数一致",
+        "结论与实验数据一致（顶点/解析值/开销占比/拟合恢复值由测试现场重算并比对）",
+        "局限 5 条、未做 3 项，且明确写出无真实分布式压测、参数为本模型标定",
+        "论文稿可规范化（无浮点）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-scale",
+        "tests_passed": 48,
+        "tests_total": 48,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.9.log；lib 42 + 集成 6 = 48。论文数值部分为 verified（本机复算），10k 节点推论为 cpu-proto（非真实分布式压测）"
+      },
+      "status": "done"
+    }
+  ]
+}

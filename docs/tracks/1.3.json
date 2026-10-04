@@ -1,0 +1,362 @@
+{
+  "track": "1.3",
+  "crate": "au4a-state",
+  "medium_title": "Portable State 可移植状态",
+  "range": "v1.3.1 → v1.3.10",
+  "owner": "track-state",
+  "versions": [
+    {
+      "version": "v1.3.1",
+      "title": "状态快照",
+      "goal": "把 Agent 的三区（文件系统/内存/上下文）状态冻结成内容寻址的块集合，并落到可替换的状态存储上。",
+      "deliverables": [
+        "src/snapshot.rs: StateZone/StateBlock/StateSnapshot（capture/verify/content_root/zone_root/rebase/JSON 往返）",
+        "src/store.rs: StateStore trait（put/get/list/remove/len）+ MemoryStore + 命名空间化 write_snapshot/read_snapshot",
+        "src/lib.rs: self_check/results_json/scenario 真实链路",
+        "tests/v131_snapshot.rs: 13 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum StateZone { Fs, Memory, Context }",
+        "pub fn StateBlock::new(zone, key, value) -> CoreResult<StateBlock>",
+        "pub fn StateSnapshot::capture(agent: &Did, node: &str, epoch: u64, blocks: Vec<StateBlock>) -> CoreResult<StateSnapshot>",
+        "pub fn StateSnapshot::root(&self) -> &str",
+        "pub fn StateSnapshot::content_root(&self) -> CoreResult<String>",
+        "pub fn StateSnapshot::verify(&self) -> CoreResult<()>",
+        "pub fn StateSnapshot::rebase(&self, node: &str, epoch: u64) -> CoreResult<StateSnapshot>",
+        "pub trait StateStore { put/get/list/remove/len }",
+        "pub fn write_snapshot(store, prefix, snap) -> CoreResult<usize>",
+        "pub fn read_snapshot(store, prefix, agent, node, epoch) -> CoreResult<StateSnapshot>"
+      ],
+      "acceptance": [
+        "正序/逆序捕获同一批块得到同一 root，verify() 通过",
+        "三区各有块且 zone_root 互不相等；空区也有稳定 root",
+        "同出处写库读回 root 与逐块内容相等；换节点读回 content_root 相等而 root 不同",
+        "篡改块 value 保留旧 root 被拒；整份快照替换被拒（InvalidSignature）",
+        "浮点/超长 key/重复 (zone,key)/超 4096 块/损坏存储键 全部返回 typed Err",
+        "scenario() 两次独立运行 JSON 完全相同（确定性重放）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 31,
+        "tests_total": 31,
+        "grade": "verified",
+        "notes": "本机 Windows 实测（lib 18 + integration 13）；纯 CPU 逻辑，不读文件、不开网络、不读墙钟。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.1.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.2",
+      "title": "跨节点传输",
+      "goal": "块级增量 diff（三区 set/del）+ 可切块、可续跑的双节点内存传输。",
+      "deliverables": [
+        "src/diff.rs: DeltaOp/DelOp/StateDelta（between/validate/apply_to/apply_moved/chunked/id）+ DeltaChunk",
+        "src/transfer.rs: NodeId/帧编解码/LocalNetwork（本地双节点内存 + 断线注入）/TransferSession/send_chunks/pull_into_session",
+        "tests/v132_transfer.rs: 11 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn StateDelta::between(from, to) -> CoreResult<StateDelta>",
+        "pub fn StateDelta::apply_to(&self, base) -> CoreResult<StateSnapshot>",
+        "pub fn StateDelta::apply_moved(&self, base, node, epoch) -> CoreResult<StateSnapshot>",
+        "pub fn StateDelta::chunked(&self, max_ops) -> CoreResult<Vec<DeltaChunk>>",
+        "pub fn send_chunks(net, from, to, delta, max_ops, start, count) -> CoreResult<TransferReport>",
+        "pub fn pull_into_session(net, node, session) -> CoreResult<(TransferSession, usize, usize)>",
+        "pub fn TransferSession::accept(&mut self, chunk) -> CoreResult<AcceptOutcome>",
+        "pub fn TransferSession::assemble(&self, total, agent) -> CoreResult<StateDelta>",
+        "pub fn TransferSession::resume_from(&self) -> usize"
+      ],
+      "acceptance": [
+        "三区（fs/memory/context）均有 set 与 del",
+        "应用 diff 后 content_root 与目标一致",
+        "base 不对时拒绝（InvalidSignature / StaleEpoch 语义）",
+        "断线注入后只补发缺失块，重新拼装内容根一致",
+        "重复块幂等；同 index 不同内容被拒；跨会话块被拒",
+        "帧截断/超 1 MiB 在分配前被拒"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 59,
+        "tests_total": 59,
+        "grade": "cpu-proto",
+        "notes": "lib 35 + v131 13 + v132 11 全绿 0 warning。跨节点传输是本地双节点内存实现（cpu-proto）：协议与失败注入真实可重放，但没有真实网络/丢包/TLS；diff 与内容寻址为 verified。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.2.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.3",
+      "title": "签名验证",
+      "goal": "快照内容寻址 + Ed25519 签名，篡改或替换必须被拒（签名有效 ≠ 是我要的那份）。",
+      "deliverables": [
+        "src/signed.rs: SignedSnapshot（sign/verify/verify_policy/帧往返）+ SnapshotPolicy + VerifiedSnapshot",
+        "tests/v133_signature.rs: 16 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn SignedSnapshot::sign(snapshot, keys: &AgentKeys) -> CoreResult<SignedSnapshot>",
+        "pub fn SignedSnapshot::verify(&self) -> CoreResult<()>",
+        "pub fn SignedSnapshot::verify_policy(&self, policy: &SnapshotPolicy) -> CoreResult<VerifiedSnapshot>",
+        "pub fn SignedSnapshot::to_frame(&self) -> CoreResult<Vec<u8>>",
+        "pub struct SnapshotPolicy { agent, content_root: Option<String>, min_epoch: Option<u64> }",
+        "pub struct VerifiedSnapshot（私有字段，唯一构造路径 verify_policy）"
+      ],
+      "acceptance": [
+        "自签快照验签通过；帧/JSON 往返签名不变；同种子同状态签名逐字节相同",
+        "改块内容/改签名/空签名/错版本/伪造 signer 全部被拒",
+        "另一份合法签名的快照无法通过 content_root 策略（替换/重放被拒）",
+        "过期快照返回 InvalidVersion 但验签仍通过（竞争与恶意分开）",
+        "替别人签被拒；冒名状态被拒（InvalidDid）",
+        "scenario 中 verified.content_root == 目标重建的 content_root"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 84,
+        "tests_total": 84,
+        "grade": "verified",
+        "notes": "lib 44 + v131 13 + v132 11 + v133 16 全绿 0 warning；真实 Ed25519 签名/验签（算法来自冻结基元 au4a-core）。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.3.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.4",
+      "title": "恢复协议",
+      "goal": "两阶段提交 prepare → commit → confirm，任意阶段失败回滚，目标节点不留部分状态。",
+      "deliverables": [
+        "src/recovery.rs: NodeStore（影子代 + 单点 head 切换 + 孤儿代检测）",
+        "src/recovery.rs: Migration（prepare/commit/confirm/rollback + 阶段守卫）、MigrationPlan（tx 内容寻址）",
+        "src/recovery.rs: FaultInjector/FaultPoint（5 个定点注入）、migrate()、MigrationOutcome",
+        "tests/v134_two_phase.rs: 13 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn NodeStore::open(node, agent, store) -> CoreResult<NodeStore<S>>",
+        "pub fn NodeStore::write_generation(&mut self, gen, snapshot) -> CoreResult<usize>",
+        "pub fn NodeStore::live_content_root(&self) -> CoreResult<String>",
+        "pub fn Migration::prepare(&mut self, node, delta, signed, faults) -> CoreResult<PrepareReceipt>",
+        "pub fn Migration::commit(&mut self, node, faults) -> CoreResult<CommitReceipt>",
+        "pub fn Migration::confirm(&mut self, node, faults) -> CoreResult<ConfirmReceipt>",
+        "pub fn Migration::rollback(&mut self, node) -> CoreResult<usize>",
+        "pub fn migrate(node, plan, delta, signed, faults) -> CoreResult<MigrationOutcome>",
+        "pub enum FaultPoint { BeforeStaging, AfterStaging, BeforeFlip, AfterFlip, BeforeCleanup }"
+      ],
+      "acceptance": [
+        "prepare 之后 live 仍是 base；commit 后才切换；confirm 清理旧代",
+        "5 个注入点逐个注入故障 → 全部回滚：state_restored=true、orphans=0、意图已清",
+        "任意时刻 live 的块集合整体等于 base 或整体等于 target（无混合状态）",
+        "阶段守卫拒绝乱序/重复调用；已 confirm 的迁移拒绝回滚",
+        "写生效代被拒；被拒的迁移不动 head、不留孤儿代",
+        "AfterFlip 故障时 rollback 能把 head 拨回并恢复 base",
+        "同输入迁移可重放（同样 outcome JSON）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 106,
+        "tests_total": 106,
+        "grade": "verified",
+        "notes": "lib 53 + v131 13 + v132 11 + v133 16 + v134 13 全绿 0 warning。2PC 协议与 5 个故障注入点全部本机实跑；存储是本地内存 StateStore 实现，换真实存储只需换实现。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.4.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.5",
+      "title": "一致性检查",
+      "goal": "三区摘要 + 块级差异报告，定位恢复后的缺失/多余/被改块。",
+      "deliverables": [
+        "src/integrity.rs: Finding/FindingCode（8 类）/ZoneReport/ConsistencyReport/StoreReport/NodeAudit",
+        "src/integrity.rs: compare（快照 vs 快照）、compare_store（存储原始字节 vs 期望）、audit_node（2PC 卫生）",
+        "tests/v135_consistency.rs: 11 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn compare(left, right) -> CoreResult<ConsistencyReport>",
+        "pub fn compare_store(store, prefix, expected) -> CoreResult<StoreReport>",
+        "pub fn audit_node(node) -> CoreResult<NodeAudit>",
+        "pub enum FindingCode { Missing, Extra, Modified, BadKey, Unreadable, OrphanGeneration, UnfinishedMigration, IntentMismatch }",
+        "pub struct ZoneReport { zone, left_root, right_root, equal, missing, extra, modified }",
+        "pub fn summarize(&ConsistencyReport) -> String"
+      ],
+      "acceptance": [
+        "内容一致（出处不同）时报告干净且三区 zone_root 两两相等",
+        "改/删/加/坏键各被定位到 1 处，zone 与 key 可读",
+        "compare_store 从存储原始字节发现篡改并给出观测内容根",
+        "只改 memory 一块时 fs/context 区摘要保持不变（诊断粒度是区）",
+        "2PC 提交后源与 live 逐块相等；回滚后与 base 相等、与 target 不等",
+        "未完成迁移在节点审计中可见（unfinished_migration + intent_mismatch）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 123,
+        "tests_total": 123,
+        "grade": "verified",
+        "notes": "lib 59 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 全绿 0 warning。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.5.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.6",
+      "title": "UDOS集成",
+      "goal": "与 E:\\DS\\UDOS 的数据契约（分布式存储语义，不引入依赖、不联网）。",
+      "deliverables": [
+        "src/udos.rs: UdosObject（schema/kind/object_id/collection/grade/provenance/payload）",
+        "src/udos.rs: snapshot_to_object/object_to_snapshot/delta_to_object/object_to_delta",
+        "src/udos.rs: context_to_transfer_bundle/transfer_bundle_to_blocks/bundle_fingerprint/claim",
+        "src/udos.rs: contract_descriptor/contract_check/collection_manifest/delta_shape",
+        "tests/v136_udos.rs: 14 个集成测试"
+      ],
+      "interfaces": [
+        "pub const SCHEMA: &str = \"udos.object/1\"",
+        "pub fn digest_of(value) -> CoreResult<String>  // sha256:<hex>",
+        "pub fn snapshot_to_object(&StateSnapshot) -> CoreResult<Value>",
+        "pub fn object_to_snapshot(&Value) -> CoreResult<StateSnapshot>",
+        "pub fn context_to_transfer_bundle(&StateSnapshot) -> CoreResult<Value>",
+        "pub fn transfer_bundle_to_blocks(&Value) -> CoreResult<Vec<StateBlock>>",
+        "pub fn claim(key, statement, grade, artifact_digest) -> CoreResult<Value>",
+        "pub fn contract_descriptor() -> Value"
+      ],
+      "acceptance": [
+        "对象只靠 payload 即可复算 object_id（独立验证者视角）；还原后内容根一致",
+        "改 payload/object_id → InvalidSignature；换 schema → InvalidVersion；未知 kind/grade → 拒绝",
+        "伪造 provenance.agent → 导入时 InvalidDid",
+        "delta 导出导入 id 相同且可重建目标内容根；分块导出每块自校验",
+        "TransferBundle 六字段齐备；缺失被拒；指纹对键序不敏感；字符串 goal 往返无损",
+        "claim 只接受 sha256: 前缀摘要；证据等级字符串与 UDOS 完全一致"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 148,
+        "tests_total": 148,
+        "grade": "verified",
+        "notes": "lib 70 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 全绿 0 warning。纯数据契约：无 UDOS 依赖、不联网、不调用 Python；UDOS 侧对齐点只读核对（evidence.py/contracts.py/topology/transfer.py）。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.6.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.7",
+      "title": "性能优化",
+      "goal": "块级哈希复用 + 只物化变动块 + 增量续跑，用确定性计数器量化省下的工作量（不读墙钟）。",
+      "deliverables": [
+        "src/perf.rs: WorkCounter（8 个确定性计数器，无时间字段）/DigestCache/DeltaPlan/plan/materialize",
+        "src/perf.rs: resume_savings/measure_transfer/measure_receive/generation_write_estimate/summary",
+        "src/snapshot.rs: StateBlock::new_cached（仅缓存路径可用，crate 内可见）",
+        "tests/v137_perf.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub struct WorkCounter { block_hashes, hashes_reused, canon_encodings, root_hashes, blocks_materialized, store_writes, ops_transferred, ops_skipped }",
+        "pub fn WorkCounter::reuse_ratio_bp(&self) -> i64",
+        "pub fn DigestCache::capture_raw(agent, node, epoch, blocks, counter) -> CoreResult<StateSnapshot>",
+        "pub fn plan(from, to) -> CoreResult<DeltaPlan>",
+        "pub fn materialize(from, to, plan, counter) -> CoreResult<StateDelta>",
+        "pub fn resume_savings(total_ops, resumed_from_chunks, chunk_ops) -> (u64, u64)",
+        "pub fn measure_transfer(...) / measure_receive(...)"
+      ],
+      "acceptance": [
+        "同一状态二次捕获 0 次哈希（复用率 10000bp），root 与逐块内容不变",
+        "改一块只重算 1 次；同键不同值不会误命中缓存",
+        "plan 正确指出改/删/未变块；materialize 只物化变动块",
+        "续跑 ops_skipped > 0 且 ops_transferred < 全量，重装后内容根一致",
+        "计数器可重放；summary 明确 wall_clock_used=false",
+        "影子代写入如实标注完整物化（正确性优先于省写）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 165,
+        "tests_total": 165,
+        "grade": "verified",
+        "notes": "lib 77 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 全绿 0 warning。全部为确定性计数，未使用墙钟/计时器。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.7.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.8",
+      "title": "测试",
+      "goal": "全链路集成（run_chain）+ 篡改矩阵 + 故障矩阵 + 边界与拒绝路径。",
+      "deliverables": [
+        "src/chain.rs: run_chain/ChainOptions/ChainReport/ConsistencyReportView（产品代码，灾难演练复用）",
+        "tests/v138_chain.rs: 16 个集成测试（篡改/故障/边界三个矩阵）"
+      ],
+      "interfaces": [
+        "pub fn run_chain(agent, base, target, to_node, options) -> CoreResult<ChainReport>",
+        "pub struct ChainOptions { chunk_ops, first_batch_chunks, drop_rest, fault, epoch }",
+        "pub struct ChainReport { base/source/live_content_root, identical, signed_and_verified, chunks, dropped_frames, resumed_from, delta_ops, committed, rollback_clean, consistency, work, delta_plan, udos_* }",
+        "pub fn ChainReport::is_ok(&self) -> bool"
+      ],
+      "acceptance": [
+        "6 块状态逐块篡改全部被检出；逐个存储键改/删恰好定位 1 处",
+        "每个差异块被篡改都被拒；改签名/改 object_id 被拒",
+        "5 个注入点全部回滚且 live==base、一致性干净",
+        "空↔单块双向迁移、零差异链路、Unicode/控制字符、超限输入全部按预期",
+        "链路报告逐字节可重放；跨 Agent 与 chunk_ops=0 被拒"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 186,
+        "tests_total": 186,
+        "grade": "verified",
+        "notes": "lib 82 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 + v138 16 全绿 0 warning。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.8.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.9",
+      "title": "文档",
+      "goal": "能力清单在代码里可枚举、可测试，文档每条声明都指向实现与测试。",
+      "deliverables": [
+        "src/capabilities.rs: Capability/CAPABILITIES（19 条）/capabilities()/coverage_check()/manifest()/declared_shape_ok()",
+        "tests/v139_capabilities.rs: 9 个集成测试",
+        "docs/tracks/1.3.md: 能力清单表格（与 CAPABILITIES 一一对应）"
+      ],
+      "interfaces": [
+        "pub const CAPABILITIES: [Capability; 19]",
+        "pub fn capabilities() -> &'static [Capability]",
+        "pub fn coverage_check() -> CoreResult<CoverageReport>",
+        "pub fn manifest() -> Value",
+        "pub struct Capability { id, title, since, grade, api, test, check, note }"
+      ],
+      "acceptance": [
+        "coverage_check 的 unknown/unclaimed/failing/bad_grades 四类问题全空",
+        "capabilities().len() == self_check().len()（无空头声明、无孤儿自检）",
+        "每条 api 落在真实模块且具体到函数；since 形如 v1.3.N",
+        "等级分布如实：unverified=0 且 cpu-proto>=1（跨节点传输为原型并在 note 写明）",
+        "results_json 与 scenario 携带同一份 manifest 与覆盖报告"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 200,
+        "tests_total": 200,
+        "grade": "verified",
+        "notes": "lib 87 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 + v138 16 + v139 9 全绿 0 warning。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.9.log"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.3.10",
+      "title": "灾难恢复",
+      "goal": "备份 → 源丢失 → 2PC 重建 → 增量续跑 的完整演练。",
+      "deliverables": [
+        "src/disaster.rs: Backup（create/verify/restore_into）+ verify_media（任意介质的独立验证）",
+        "src/disaster.rs: DrillOptions/run_drill/DrillReport",
+        "src/capabilities.rs: 新增 disaster.drill 与 disaster.corrupted_backup_refused 两条能力（共 21 条）",
+        "tests/v1310_disaster.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn Backup::create(agent, snapshot) -> CoreResult<Backup>",
+        "pub fn Backup::verify(&self, policy) -> CoreResult<StateSnapshot>",
+        "pub fn Backup::restore_into(&self, node, policy) -> CoreResult<u64>",
+        "pub fn verify_media(store, prefix, signed, policy) -> CoreResult<StateSnapshot>",
+        "pub fn run_drill(agent, source, evolved, to_node, options) -> CoreResult<DrillReport>",
+        "pub struct DrillReport { backup_verified, source_lost, rebuild_first_*, rebuild_committed, ops_skipped, identical_to_source, consistency_clean, ... }"
+      ],
+      "acceptance": [
+        "备份可独立验证：改块/删块/伪造 provenance → 恢复被拒（不是尽力恢复）",
+        "源丢失后仅凭备份与签名重建出与源逐字节一致的 base",
+        "第一次 2PC 注入故障 → 回滚干净 → 同一笔迁移重试成功",
+        "增量续跑：dropped_frames>0、resumed_from>0、ops_skipped>0，最终内容根与源一致",
+        "consistency_clean、node_findings=0、rebuild_orphans=0 同时成立",
+        "5 个故障点逐个验证「注入→回滚→重试成功」；报告逐字节可重放"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-state",
+        "tests_passed": 215,
+        "tests_total": 215,
+        "grade": "verified",
+        "notes": "lib 92 + v1310 10 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 + v138 16 + v139 9 全绿 0 warning。备份/重建/续跑本机实跑；备份介质与跨节点传输为内存实现（transfer.resumable 标注 cpu-proto）。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.10.log"
+      },
+      "status": "done"
+    }
+  ]
+}

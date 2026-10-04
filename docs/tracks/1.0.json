@@ -1,0 +1,47 @@
+{
+  "track": "1.0",
+  "crate": "au4a-kernel",
+  "medium_title": "Autonomy 自治内核",
+  "range": "v1.0.1 → v1.0.10",
+  "owner": "track-kernel",
+  "versions": [
+    {
+      "version": "v1.0.1",
+      "title": "宿主内核重构",
+      "goal": "把宿主内核重构为可审计、可复现的宿主：注册序成为语义、能力有倒排索引、内核自己声称的不变式可被独立断言",
+      "deliverables": [
+        "src/registry.rs: AgentRegistry（注册序 + 能力倒排索引）与 RegistrySnapshot 指纹",
+        "src/audit.rs: HostAudit / AuditFinding / audit_kernel()，7 条宿主不变式",
+        "src/lib.rs: Kernel 内部改用 AgentRegistry；新增只读 accessor、audit()、轨道级 self_check()/results_json()/scenario()",
+        "tests/host_kernel.rs: 9 个只用公开 API 的集成测试"
+      ],
+      "interfaces": [
+        "pub struct AgentRegistry",
+        "pub struct RegistrySnapshot",
+        "pub struct HostAudit",
+        "pub struct AuditFinding",
+        "pub fn audit_kernel(kernel: &Kernel) -> HostAudit",
+        "pub fn bootstrap(config: KernelConfig) -> CoreResult<Kernel>",
+        "pub fn results_json() -> CoreResult<serde_json::Value>",
+        "pub fn scenario(kernel: &mut Kernel) -> CoreResult<serde_json::Value>",
+        "impl Kernel { pub fn is_registered / agents_with_skill / registry_fingerprint / registry_snapshot / registry_defects / queued_envelopes / progress_events / audit }"
+      ],
+      "acceptance": [
+        "bootstrap() 宿主 7 项审计全过；构造空头质押或破坏倒排索引后 audit() 必须报失败",
+        "两次独立 bootstrap() 的 registry_fingerprint() 相等，换注册序则指纹不同",
+        "同一 &Kernel 可同时持有两个只读观察，观察前后注册表指纹不变",
+        "伪造信封单次 unauthorized -> Quarantine；证据闸门拒绝重复 5 次 policy_denied -> Warn 且 assert_ne!(.., Quarantine)",
+        "scenario() 在两个新内核上跑出的 JSON 完全相等，同一内核重复调用不 panic",
+        "冻结接口 Kernel::register/send/drain/settle/observe 等签名未改，语义逐条断言"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 27,
+        "tests_total": 27,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 18 passed / host_kernel.rs 9 passed，0 failed，0 warning，exit 0。投递为内核内存队列语义（真实签名与验签），真实 P2P 传输不在本版声称范围。"
+      },
+      "status": "done"
+    }
+  ]
+}

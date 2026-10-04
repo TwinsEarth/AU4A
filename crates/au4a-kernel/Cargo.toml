@@ -1,0 +1,14 @@
+[package]
+name = "au4a-kernel"
+description = "AU4A v1.0 宿主内核：自主注册、PMB 投递、生命周期、策略与拒绝、只读观察投影。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+au4a-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

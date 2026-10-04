@@ -1,0 +1,359 @@
+{
+  "track": "1.7",
+  "crate": "au4a-council",
+  "medium_title": "Committee Governance 委员会治理",
+  "range": "v1.7.1 → v1.7.10",
+  "owner": "track-council",
+  "versions": [
+    {
+      "version": "v1.7.1",
+      "title": "选举机制",
+      "goal": "五类委员会由高信誉+长期在线 Agent 选举产生，结果确定可复现，刷票无法当选",
+      "deliverables": [
+        "src/committee.rs: 五类委员会封闭枚举 + 席位 + BFT-lite 数学",
+        "src/election.rs: 签名选票 + 加权计票纯函数 + 内容寻址结果",
+        "src/lib.rs: Council（信誉账/在线时长账/选举日志）+ elect/self_check/results_json/scenario",
+        "tests/election.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum CommitteeKind { Resource, Task, Arbitration, Evolution, Security }",
+        "pub struct Committee { kind, epoch, seats, elected_at, election_id, members }",
+        "pub struct ElectionBallot { voter, committee, choices, sig }",
+        "pub fn election::run(kind, epoch, &ElectionConfig, &[Candidate], &[ElectionBallot], at) -> CoreResult<ElectionOutcome>",
+        "pub fn Council::elect(&mut self, &mut Kernel, CommitteeKind, &[ElectionBallot]) -> CoreResult<ElectionOutcome>"
+      ],
+      "acceptance": [
+        "五类委员会名字往返一致，紧急通道仅安全委员会持有",
+        "n=5 时 f=1、quorum=4，n ≥ 3f+1 与 quorum = n - f 成立",
+        "同一输入（选票乱序）选举 id 相同；epoch 递增",
+        "60 个信誉 0 的空壳 DID 投票后当选名单与基线一致，忽略票留痕",
+        "伪造 → InvalidSignature；跨委员会重放 → InvalidKind；未注册 → UnknownAgent；重复投票 → DuplicateAgent",
+        "空委员会 quorum=0 但不具备表决资格"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 19,
+        "tests_total": 19,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：单元 11 + 集成 8，0 warning；Ed25519 验签真实执行；跨节点广播不在本版范围"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.2",
+      "title": "提案流程",
+      "goal": "动议只能由 Agent 提出且内容由 Agent 私钥签名；人类观察者在类型层面无提案/修改能力",
+      "deliverables": [
+        "src/proposal.rs: Action/ProposalState 状态机/Proposal/AgentIdentity 能力凭证/ProposalDraft 签名动议",
+        "src/human.rs: HumanObserver 只读投影 + 2 个 compile_fail 文档测试 + 1 个正例文档测试",
+        "src/lib.rs: Council::propose 唯一提案入口、transition_to 类型化状态机、CouncilEvent 事件日志",
+        "tests/proposal.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum Action { SetPolicy, SetReputation, Transfer, Slash }",
+        "pub enum ProposalState { Open, Passed, Rejected, Blocked, Executed }",
+        "pub struct AgentIdentity  // 字段私有、无 Deserialize，唯一入口 from_keys",
+        "pub fn Council::propose(&mut self, &mut Kernel, &AgentIdentity, ProposalDraft) -> CoreResult<Proposal>",
+        "pub fn Council::transition_to(&mut self, &mut Kernel, &str, ProposalState) -> CoreResult<Proposal>",
+        "pub struct HumanObserver  // 仅 new/label/observe，无 propose/edit"
+      ],
+      "acceptance": [
+        "委员 Agent 可提案，id 可由内容复算",
+        "非委员 → InvalidSignature + unauthorized；未注册 → UnknownAgent；未选出委员会 → StaleEpoch",
+        "同内容重复动议 → DuplicateAgent + conflict",
+        "篡改内容后签名失效（金额 5→500 被拒）",
+        "非法动作与空标题在提案阶段被拒，零状态变更",
+        "状态机拒绝 open→executed、passed→rejected、终态再迁移",
+        "观察两次结果相同且不产生治理事件",
+        "人类 propose/edit_proposal 编译失败（compile_fail 文档测试）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 37,
+        "tests_total": 37,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 16 + election 8 + proposal 10 + doc-tests 3（2 compile_fail + 1 正例），0 warning"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.3",
+      "title": "表决机制",
+      "goal": "BFT-lite 法定人数表决（n≥3f+1、quorum=n-f），重复投票被拒，模棱两可双签作废整轮",
+      "deliverables": [
+        "src/voting.rs: Choice/Vote 签名票/Tally 计票/RoundOutcome/VotingRound/RoundState",
+        "src/lib.rs: Council::open_round / cast_vote / round / current_round / rounds + 私有 apply_state",
+        "tests/voting.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum Choice { Yes, No, Abstain }",
+        "pub struct Vote { voter, proposal, round, choice, sig }",
+        "pub struct Tally { yes, no, abstain, participation, n, f, quorum }",
+        "pub enum RoundOutcome { Pending, Passed, Rejected, VoidAmbiguous }",
+        "pub fn Council::open_round(&mut self, &mut Kernel, &str) -> CoreResult<RoundState>",
+        "pub fn Council::cast_vote(&mut self, &mut Kernel, Vote) -> CoreResult<RoundState>"
+      ],
+      "acceptance": [
+        "n=4 → f=1 quorum=3，第 3 张赞成票出结论",
+        "n=7=3f+1 → f=2 quorum=5=2f+1，缺席 2 人仍出结论",
+        "no≥quorum → rejected；全票弃权不产生结论",
+        "同轮同选择重复投票被拒且本轮票数不变",
+        "双签 → void_ambiguous 整轮作废、动议回 open、作废轮不再收票、重开可通过、留痕",
+        "非委员投票 → unauthorized（单次即恶意）",
+        "篡改签名 → InvalidSignature；未来轮次/已关闭轮次 → InvalidVersion（stale_epoch）",
+        "计票自洽：票数守恒、participation≤n、yes/no 不可能同时达法定人数"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 51,
+        "tests_total": 51,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + doc-tests 3，本 crate 0 warning"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.4",
+      "title": "执行引擎",
+      "goal": "把已通过的决议落成真实状态变更（策略/信誉/账本），只能执行 passed、执行者须为在任委员、幂等且守恒",
+      "deliverables": [
+        "src/execution.rs: ExecutionEffect / ExecutionReceipt / execute() 校验+落地+收据",
+        "src/lib.rs: Council::execute / policy / policies / execution / executions / pub(crate) set_policy",
+        "tests/execution.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum ExecutionEffect { PolicySet, ReputationSet, Transferred, Slashed }",
+        "pub struct ExecutionReceipt { proposal, committee, executor, at, effects, total_before, total_after, slashed_before, slashed_after, conservation_ok }",
+        "pub fn ExecutionReceipt::ledger_effect_consistent() -> bool",
+        "pub fn Council::execute(&mut self, &mut Kernel, &AgentIdentity, &str) -> CoreResult<ExecutionReceipt>"
+      ],
+      "acceptance": [
+        "通过的决议落成策略写入 + executed 状态 + 收据 + 事件",
+        "非委员执行 → InvalidSignature+unauthorized；未注册 → UnknownAgent",
+        "open / rejected 动议不可执行且零状态变更",
+        "幂等：第二次执行被拒，收据不变",
+        "转账执行改变双方余额且总量不变、守恒成立",
+        "余额不足的转账执行失败后不留部分状态",
+        "罚没有界（锁定不足即拒）、罚没量入 slashed、总量恰好减少",
+        "信誉执行写入治理账并影响下一次选举花名册",
+        "自检 council.executions.ledger_effects / state_matches 一一对应"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 61,
+        "tests_total": 61,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + execution 10 + doc-tests 3，本 crate 0 warning"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.5",
+      "title": "否决权",
+      "goal": "人类唯一的写能力是否决：类型层面无 propose/edit/cast_vote/execute，只能阻断，理由必须公开",
+      "deliverables": [
+        "src/veto.rs: Veto（私有字段+只读访问器）/ HumanVeto / VetoReceipt / apply / vetoable / is_blocked + 2 个 compile_fail 文档测试",
+        "src/human.rs: HumanObserver::veto 唯一写能力 + HumanView.vetoes + compile_fail 扩到 4 段",
+        "src/lib.rs: Council::apply_veto / veto_record / vetoes + 否决自检 + scenario 否决分支",
+        "tests/veto.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub struct Veto  // 只有 id/observer/target/reason/at/payload 只读方法",
+        "pub fn HumanObserver::veto(&self, &Council, &str, reason) -> CoreResult<Veto>",
+        "pub fn Council::apply_veto(&mut self, &mut Kernel, &Veto) -> CoreResult<VetoReceipt>",
+        "pub struct VetoReceipt { veto, proposal, previous_state, state, reason, at }",
+        "pub fn veto::{vetoable, is_blocked, vetoed_by, label_has_no_did, observer_is_not_an_agent}"
+      ],
+      "acceptance": [
+        "否决把 passed 动议推入 blocked，决议内容/动议总数/策略表不变",
+        "阻断后不可执行、不可复活、不可重开轮次、不可二次否决",
+        "空理由在铸造阶段被拒；理由进入事件与只读投影",
+        "open 动议也可否决，同样只通向 blocked",
+        "已执行动议不可被事后否决（否决不能回滚）",
+        "否决不存在的动议 → UnknownAgent，无记录",
+        "Veto 载荷不含 action/patch/alternative/payload/value/sig",
+        "6 段 compile_fail 文档测试：HumanObserver 无 propose/edit_proposal/cast_vote/execute，Veto 无 propose/edit_proposal"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 73,
+        "tests_total": 73,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 20 + election 8 + proposal 10 + voting 10 + execution 10 + veto 8 + doc-tests 7（6 compile_fail + 1 正例），本 crate 0 warning；人类无密钥这一限制已在 md 中明说"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.6",
+      "title": "链上治理",
+      "goal": "把治理状态投影成 GovernorToken 语义数据结构（只做语义映射，不假装有链；真实链上执行属 v1.8）",
+      "deliverables": [
+        "src/ongov.rs: GovState / ChainBinding / GovVeto / GovExecution / GovernorToken::project / project_all / no_false_chain_claims / state_summary",
+        "src/lib.rs: 自检 council.ongov.mapping 与 council.ongov.no_false_chain、results_json().ongov、scenario 的 governor_tokens",
+        "tests/ongov.rs: 6 个集成测试（+ ongov.rs 内 3 个单元测试）"
+      ],
+      "interfaces": [
+        "pub enum GovState { Pending, Active, Canceled, Defeated, Succeeded, Queued, Executed }",
+        "pub struct GovernorToken { id, proposal, proposer, committee, snapshot_epoch, for_votes, against_votes, abstain_votes, quorum_numerator, quorum_denominator, state, veto, execution, binding }",
+        "pub fn GovernorToken::project(&Council, &str) -> CoreResult<GovernorToken>",
+        "pub struct ChainBinding { chain, grade, real_chain, note }",
+        "pub fn ongov::{project_all, no_false_chain_claims, state_summary}"
+      ],
+      "acceptance": [
+        "生命周期映射 pending → active → succeeded → executed",
+        "Canceled（带否决理由）与 Defeated 可区分",
+        "双签作废轮不产生链上结论，动议仍 active",
+        "绑定恒为 cpu-proto / real_chain=false，伪造绑定会被 claims_real_chain 抓出",
+        "投影确定性、JSON 往返、整数法定人数分数",
+        "scenario 两条动议投影为 executed 与 canceled，tx_ref 全为 null"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 82,
+        "tests_total": 82,
+        "grade": "cpu-proto",
+        "notes": "EXIT=0；单元 23 + election 8 + execution 10 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning；本版主动降级为 cpu-proto：只有语义映射，没有真实链上执行与真实 tx_ref"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.7",
+      "title": "测试",
+      "goal": "把「治理过程是否始终自洽」变成可执行可复现的证伪器：17 条不变式 + 确定性重放",
+      "deliverables": [
+        "src/invariants.rs: INVARIANT_NAMES(17) / state_digest / check_all / replay(seed,steps) / replay_report",
+        "src/lib.rs: 自检 council.replay.invariants 与 council.replay.coverage、results_json().invariants",
+        "tests/invariants.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub const INVARIANT_NAMES: [&str; 17]",
+        "pub fn state_digest(&Council) -> CoreResult<String>",
+        "pub fn check_all(&Council) -> Vec<SelfCheck>",
+        "pub fn replay(seed: u64, steps: u32) -> CoreResult<ReplayReport>",
+        "pub struct ReplayReport { seed, steps, applied, proposals, rounds, voided_rounds, executed, blocked, rejected, refusals, invariants_per_step, violations, digest }"
+      ],
+      "acceptance": [
+        "同一种子两次重放逐字段相同（含状态摘要）",
+        "4 种子 × 90 步 0 违例，且执行/阻断/双签作废/否决四类结局全部被真实触发",
+        "不同种子给出不同治理历史",
+        "state_digest 随每次状态变更变化，只读观察不改变它",
+        "不变式清单与实现严格相等（双向断言）",
+        "steps=0 是合法空操作且摘要可复现",
+        "自检携带重放证据，results_json 暴露清单长度与三种子报告"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 90,
+        "tests_total": 90,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 23 + election 8 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning；自检真的跑 72 步重放（刻意保留成本）"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.8",
+      "title": "文档",
+      "goal": "能力清单机器可校验：文档里每条能力都必须指向源码里真实存在的测试，否则测试变红",
+      "deliverables": [
+        "src/claims.rs: Claim / CLAIMS(15) / claims_are_well_formed / claims_json / summary",
+        "tests/claims.rs: 6 个测试（含扫描源码核对测试名、读 1.7.json 校验元数据、读 1.7.md 校验小节）",
+        "src/lib.rs: results_json().claims"
+      ],
+      "interfaces": [
+        "pub struct Claim { id, capability, interface, test, grade, note }",
+        "pub const CLAIMS: [Claim; 15]",
+        "pub fn claims_are_well_formed() -> bool",
+        "pub fn claims_json() -> serde_json::Value",
+        "pub fn summary() -> String"
+      ],
+      "acceptance": [
+        "清单自洽（id 唯一、字段非空、verified 有测试名、cpu-proto 有边界说明、无 unverified）",
+        "15 条能力的测试名在 src/tests/examples 源码里真实存在（跨文件扫描）",
+        "verified 条目的测试必须存在；cpu-proto 条目必须点明哪里不是真的",
+        "claims_json 与清单逐条一致",
+        "docs/tracks/1.7.json 版本连续、等级合法、状态 done、测试数自洽",
+        "docs/tracks/1.7.md 覆盖每个已完成版本的小节"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 99,
+        "tests_total": 99,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 26 + claims 6 + election 8 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning；文档成为通过条件（缺小节即红）"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.9",
+      "title": "示例",
+      "goal": "可运行示例 governance_demo + 安全委员会紧急通道（即时生效、事后治理确认、否决/超期回滚）+ scenario 补齐双签作废",
+      "deliverables": [
+        "src/emergency.rs: EmergencyStatus / EmergencyApproval / EmergencyConfirmation / EmergencyDirective / issue / confirm / rollback",
+        "src/lib.rs: CouncilConfig::emergency_confirm_window、issue_emergency / confirm_emergency / emergency(_directives)、自检 council.emergency.security_only 与 council.emergency.resolved",
+        "examples/governance_demo.rs: 可运行示例（scenario/自检/结果/清单/重放）",
+        "tests/emergency.rs: 7 个集成测试",
+        "scenario: 双签作废一轮→重开通过；紧急指令即时生效→事后确认"
+      ],
+      "interfaces": [
+        "pub enum EmergencyStatus { Active, Confirmed, Rejected, Expired }",
+        "pub struct EmergencyDirective { id, committee, issued_by, key, value, reason, issued_at, confirm_deadline, previous_value, status, confirmation }",
+        "pub fn Council::issue_emergency(&mut self, &mut Kernel, &AgentIdentity, &str, i64, &str) -> CoreResult<EmergencyDirective>",
+        "pub fn Council::confirm_emergency(&mut self, &mut Kernel, &str, &[EmergencyApproval]) -> CoreResult<EmergencyDirective>",
+        "examples/governance_demo.rs"
+      ],
+      "acceptance": [
+        "只有安全委员会可下发（其他委员会 → unauthorized，零状态变更）",
+        "指令即时生效（0 票时策略已变）；票数不足保持 active；达 quorum → confirmed",
+        "被治理否决 → rejected 且策略回滚到先前值",
+        "超过确认窗口 → expired 且回滚（此前无该策略则删除）",
+        "确认票篡改/非委员/重复确认分别被拒",
+        "scenario 全流程：刷票无效→双签作废(2 轮)→通过→执行→人类阻断→紧急确认",
+        "示例源码可运行且不读文件/不开网络/不读墙钟"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 106,
+        "tests_total": 106,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 26 + claims 6 + election 8 + emergency 7 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，示例由 cargo test 编译保证可构建，本 crate 0 warning"
+      },
+      "status": "done"
+    },
+    {
+      "version": "v1.7.10",
+      "title": "审计",
+      "goal": "治理事件串成不可悄悄改写的哈希链，并可只读导出提案/否决/紧急指令/执行/策略快照",
+      "deliverables": [
+        "src/audit.rs: AuditLog(rebuild/from_entries/verify/root) / AuditVerdict / AuditExport / 各类快照 / audit_checks",
+        "src/lib.rs: Council::audit_log / audit_export、results_json().audit、scenario 的 audit.export",
+        "src/invariants.rs: 不变式清单扩到 20 条（council.audit.chain_verifies）",
+        "src/claims.rs: 能力清单扩到 19 条（audit.hash_chain / audit.readonly_export）",
+        "tests/audit.rs: 7 个集成测试"
+      ],
+      "interfaces": [
+        "pub struct AuditEntry { seq, at, kind, subject, detail, prev_hash, entry_hash }",
+        "pub struct AuditLog;  // rebuild(&Council) / from_entries(Vec<AuditEntry>) / verify() -> AuditVerdict / root()",
+        "pub struct AuditVerdict { ok, checked, broken_at, reason }",
+        "pub struct AuditExport { track, state_digest, audit_root, audit_entries, chain_ok, proposals, vetoes, emergency, executions, policies, invariants }",
+        "pub fn Council::audit_log() / audit_export()"
+      ],
+      "acceptance": [
+        "链由事件重建、条数与事件数一致、链根 64 位 hex、重建确定性",
+        "改写任意一条 → 断链且 broken_at 指向该条",
+        "删除/交换/改写 subject → 断链并指出第一处位置",
+        "空链可验证（checked=0，链根=创世哈希）",
+        "只读导出不改变治理状态（导出前后 state_digest 相同）且携带全部快照",
+        "审计自检项出现在 self_check() 与 results_json() 中",
+        "GovernorToken 只映射动议，与紧急指令互不混淆"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 113,
+        "tests_total": 113,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 26 + claims 6 + audit 7 + election 8 + emergency 7 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning"
+      },
+      "status": "done"
+    }
+  ]
+}

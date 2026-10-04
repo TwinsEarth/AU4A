@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/au4a-core",
+    "crates/au4a-kernel",
+    "crates/au4a-capgraph",
+    "crates/au4a-negotiate",
+    "crates/au4a-state",
+    "crates/au4a-economy",
+    "crates/au4a-safety",
+    "crates/au4a-learning",
+    "crates/au4a-council",
+    "crates/au4a-chain",
+    "crates/au4a-scale",
+    "crates/au4a-node",
+]
+
+# The series version (v1.0.1 → v1.9.9) lives in ./VERSION and in the git tag.
+# Crate versions stay pinned at the series baseline so that a published tree is
+# byte-identical to the tree its tests ran on; the running node reports the real
+# version from VERSION at runtime instead of from CARGO_PKG_VERSION.
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/TwinsEarth/agent-universeForAngent"
+authors = ["TwinsEarth"]
+rust-version = "1.88"
+
+[workspace.dependencies]
+au4a-core = { path = "crates/au4a-core" }
+au4a-kernel = { path = "crates/au4a-kernel" }
+au4a-capgraph = { path = "crates/au4a-capgraph" }
+au4a-negotiate = { path = "crates/au4a-negotiate" }
+au4a-state = { path = "crates/au4a-state" }
+au4a-economy = { path = "crates/au4a-economy" }
+au4a-safety = { path = "crates/au4a-safety" }
+au4a-learning = { path = "crates/au4a-learning" }
+au4a-council = { path = "crates/au4a-council" }
+au4a-chain = { path = "crates/au4a-chain" }
+au4a-scale = { path = "crates/au4a-scale" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"

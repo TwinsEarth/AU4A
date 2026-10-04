@@ -1,0 +1,15 @@
+[package]
+name = "au4a-economy"
+description = "Economic Autonomy 经济自主（轨道 1.4）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+au4a-core = { workspace = true }
+au4a-kernel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
