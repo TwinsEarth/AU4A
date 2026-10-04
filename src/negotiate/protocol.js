@@ -34,6 +34,7 @@ export class Negotiation {
   /** 发起方出价（首轮及多轮再出价） */
   propose({ price, terms = {} }) {
     this._ensureState([NegotiationState.IDLE, NegotiationState.NEGOTIATING]);
+    this._checkRounds();
     this.state = NegotiationState.NEGOTIATING;
     this.rounds.push({ kind: 'PROPOSE', by: this.initiator, price, terms, at: Date.now() });
     return this.rounds.length;
@@ -42,9 +43,7 @@ export class Negotiation {
   /** 回应方还价（多轮） */
   counter({ price, terms = {} }) {
     this._ensureState([NegotiationState.NEGOTIATING]);
-    if (this.rounds.length >= this.maxRounds * 2) {
-      throw new Error('超过最大协商轮数');
-    }
+    this._checkRounds();
     this.rounds.push({ kind: 'COUNTER', by: this.responder, price, terms, at: Date.now() });
     return this.rounds.length;
   }
@@ -139,6 +138,14 @@ export class Negotiation {
   _ensureState(allowed) {
     if (!allowed.includes(this.state)) {
       throw new Error(`非法状态转换：${this.state} 不允许此操作`);
+    }
+  }
+
+  /** 报价轮次数检查（REJECT 等非报价记录不计入限额） */
+  _checkRounds() {
+    const priceRounds = this.rounds.filter((r) => r.kind === 'PROPOSE' || r.kind === 'COUNTER').length;
+    if (priceRounds >= this.maxRounds * 2) {
+      throw new Error('超过最大协商轮数');
     }
   }
 }
