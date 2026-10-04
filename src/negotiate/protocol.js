@@ -31,9 +31,9 @@ export class Negotiation {
     this.settledAt = null;
   }
 
-  /** 发起方出价（首轮） */
+  /** 发起方出价（首轮及多轮再出价） */
   propose({ price, terms = {} }) {
-    this._ensureState([NegotiationState.IDLE]);
+    this._ensureState([NegotiationState.IDLE, NegotiationState.NEGOTIATING]);
     this.state = NegotiationState.NEGOTIATING;
     this.rounds.push({ kind: 'PROPOSE', by: this.initiator, price, terms, at: Date.now() });
     return this.rounds.length;
