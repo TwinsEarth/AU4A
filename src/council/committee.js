@@ -17,7 +17,8 @@ export class Council {
     this.proposals = new Map();
     this.emergencyDirectives = [];
     this.vetoes = [];
-    this._seq = 0;
+    this._propSeq = 0;
+    this._emgSeq = 0;
     this.quorum = quorum || this._quorumFor(members.length);
   }
 
@@ -34,7 +35,7 @@ export class Council {
 
   propose({ by, title, payload = {} }) {
     if (!this.members.some((m) => m.did === by)) throw new Error('仅委员可提案');
-    const id = `prop-${this.type}-${++this._seq}`;
+    const id = `prop-${this.type}-${++this._propSeq}`;
     const p = { id, by, title, payload, votes: new Map(), status: 'voting', vetoed: false };
     this.proposals.set(id, p);
     return p;
@@ -70,7 +71,7 @@ export class Council {
   /** 安全委员会紧急广播：即时下发策略，事后由治理确认 */
   emergencyDirective({ by, content }) {
     if (this.type !== CouncilType.SECURITY) throw new Error('仅安全委员会可下发紧急指令');
-    const d = { id: `emg-${++this._seq}`, by, content, at: Date.now(), confirmed: false };
+    const d = { id: `emg-${++this._emgSeq}`, by, content, at: Date.now(), confirmed: false };
     this.emergencyDirectives.push(d);
     return d;
   }
@@ -80,5 +81,19 @@ export class Council {
     if (!d) throw new Error('指令不存在');
     d.confirmed = true;
     return d;
+  }
+
+  /** v1.7.9 治理审计：只读导出全部治理事件（观察层展示 + 审计） */
+  auditLog() {
+    return {
+      type: this.type,
+      proposals: [...this.proposals.values()].map((p) => ({
+        id: p.id, by: p.by, title: p.title, status: p.status,
+        vetoed: p.vetoed, yes: [...p.votes.values()].filter(Boolean).length,
+        quorum: this.quorum, executedAt: p.executedAt || null,
+      })),
+      vetoes: this.vetoes.map((v) => ({ ...v })),
+      emergencyDirectives: this.emergencyDirectives.map((d) => ({ id: d.id, by: d.by, content: d.content, at: d.at, confirmed: d.confirmed })),
+    };
   }
 }
