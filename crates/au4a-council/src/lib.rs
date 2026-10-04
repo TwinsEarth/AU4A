@@ -21,6 +21,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod claims;
 pub mod committee;
 pub mod election;
 pub mod execution;
@@ -31,6 +32,7 @@ pub mod proposal;
 pub mod veto;
 pub mod voting;
 
+pub use claims::{claims_are_well_formed, claims_json, Claim, CLAIMS};
 pub use committee::{Committee, CommitteeKind, Member, COMMITTEE_COUNT};
 pub use election::{
     Candidate, ElectionBallot, ElectionConfig, ElectionOutcome, Elected, IgnoredBallot, Ineligible,
@@ -1530,6 +1532,7 @@ pub fn results_json() -> CoreResult<Value> {
             "vetoed_digest": invariants::state_digest(&vetoed.council)?,
             "replay": invariants::replay_report(&[1, 2, 3], 48)?,
         },
+        "claims": claims_json(),
         "events": run.council.events().len(),
         "agents_enrolled": run.agents.len(),
         "kernel_delivered": run.kernel.observe().messages_delivered,

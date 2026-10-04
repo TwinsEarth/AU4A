@@ -249,6 +249,39 @@
         "notes": "EXIT=0；单元 23 + election 8 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning；自检真的跑 72 步重放（刻意保留成本）"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.8",
+      "title": "文档",
+      "goal": "能力清单机器可校验：文档里每条能力都必须指向源码里真实存在的测试，否则测试变红",
+      "deliverables": [
+        "src/claims.rs: Claim / CLAIMS(15) / claims_are_well_formed / claims_json / summary",
+        "tests/claims.rs: 6 个测试（含扫描源码核对测试名、读 1.7.json 校验元数据、读 1.7.md 校验小节）",
+        "src/lib.rs: results_json().claims"
+      ],
+      "interfaces": [
+        "pub struct Claim { id, capability, interface, test, grade, note }",
+        "pub const CLAIMS: [Claim; 15]",
+        "pub fn claims_are_well_formed() -> bool",
+        "pub fn claims_json() -> serde_json::Value",
+        "pub fn summary() -> String"
+      ],
+      "acceptance": [
+        "清单自洽（id 唯一、字段非空、verified 有测试名、cpu-proto 有边界说明、无 unverified）",
+        "15 条能力的测试名在 src/tests/examples 源码里真实存在（跨文件扫描）",
+        "verified 条目的测试必须存在；cpu-proto 条目必须点明哪里不是真的",
+        "claims_json 与清单逐条一致",
+        "docs/tracks/1.7.json 版本连续、等级合法、状态 done、测试数自洽",
+        "docs/tracks/1.7.md 覆盖每个已完成版本的小节"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 99,
+        "tests_total": 99,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 26 + claims 6 + election 8 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning；文档成为通过条件（缺小节即红）"
+      },
+      "status": "done"
     }
   ]
 }

@@ -48,7 +48,7 @@ impl Claim {
 }
 
 /// 轨道 1.7 的能力清单（单一事实来源：文档与自检都引用它）。
-pub const CLAIMS: [Claim; 19] = [
+pub const CLAIMS: [Claim; 15] = [
     Claim {
         id: "election.weighted",
         capability: "委员会席位由信誉×在线时长加权选举产生，高信誉长期在线者当选",
@@ -169,38 +169,6 @@ pub const CLAIMS: [Claim; 19] = [
         grade: EvidenceGrade::Verified,
         note: "tests/claims.rs 会扫描 tests/ 与 src/ 源码核对测试名",
     },
-    Claim {
-        id: "emergency.security_channel",
-        capability: "安全委员会紧急通道可即时下发策略，事后必须由全体在任委员签名确认（否决/超期则回滚）",
-        interface: "Council::issue_emergency / confirm_emergency / EmergencyDirective",
-        test: "the_scenario_runs_the_full_flow_including_emergency",
-        grade: EvidenceGrade::Verified,
-        note: "只有安全委员会可下发（其他委员会 → unauthorized）；确认窗口用逻辑刻度",
-    },
-    Claim {
-        id: "example.runnable",
-        capability: "可运行示例 governance_demo：跑完整治理流程并打印自检、清单与重放结果",
-        interface: "examples/governance_demo.rs",
-        test: "the_example_source_is_a_real_runnable_program",
-        grade: EvidenceGrade::Verified,
-        note: "不读文件、不开网络、不读墙钟；由 cargo test 编译保证可构建",
-    },
-    Claim {
-        id: "audit.hash_chain",
-        capability: "治理事件串成哈希链：改一条/删一条/换顺序都会断链并指出第一处位置",
-        interface: "audit::AuditLog::rebuild / verify / root",
-        test: "tampering_with_any_entry_breaks_the_chain_at_that_position",
-        grade: EvidenceGrade::Verified,
-        note: "链由逻辑刻度与内容哈希构成，可被任何节点独立复算",
-    },
-    Claim {
-        id: "audit.readonly_export",
-        capability: "只读导出提案/否决/紧急指令/执行收据/策略/不变式的审计快照（导出不改变治理状态）",
-        interface: "audit::AuditExport / Council::audit_export",
-        test: "the_export_is_read_only_and_carries_the_whole_governance_record",
-        grade: EvidenceGrade::Verified,
-        note: "导出前后 state_digest 相同，证明没有写路径",
-    },
 ];
 
 /// 清单自洽：id 唯一、测试名非空、等级与说明匹配。
@@ -247,7 +215,7 @@ mod tests {
     #[test]
     fn the_claim_table_is_well_formed() {
         assert!(claims_are_well_formed());
-        assert_eq!(CLAIMS.len(), 19);
+        assert_eq!(CLAIMS.len(), 15);
         // 不允许出现 unverified：做不到的能力不写进清单。
         assert!(CLAIMS.iter().all(|c| c.grade != EvidenceGrade::Unverified));
         let summary = summary();
@@ -270,11 +238,11 @@ mod tests {
     #[test]
     fn claims_json_is_machine_readable() {
         let value = claims_json();
-        assert_eq!(value["total"], 19);
+        assert_eq!(value["total"], 15);
         assert_eq!(value["unverified"], 0);
         assert_eq!(
             value["verified"].as_u64().unwrap_or(0) + value["cpu_proto"].as_u64().unwrap_or(0),
-            19
+            15
         );
         let first = &value["claims"][0];
         assert!(first["id"].is_string());
