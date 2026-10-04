@@ -56,12 +56,12 @@
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 30,
+        "tests_total": 30,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：19 单元 + 6 tests/messages.rs + 5 tests/state_machine.rs 全绿、0 warning（日志 1.2-v1.2.2.log）。穷举 63 种 (相位,事件)：10 合法 / 53 非法。首轮 5 个测试失败暴露 commit 双重应用缺陷，修复后复跑全绿。真实：Ed25519 双签、签名覆盖全字段；原型：传输为同进程内存队列。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.3",

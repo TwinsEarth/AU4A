@@ -16,8 +16,13 @@
 //!   单方签名不成立。
 
 pub mod msg;
+pub mod state;
 
 pub use msg::{kinds, BreachKind, NegotiationMsg, Terms, ALL_KINDS};
+pub use state::{
+    transition, Basis, DualSigned, Event, PartySignature, Phase, StateMachine, TransitionRecord,
+    LEGAL_TRANSITIONS,
+};
 
 use au4a_core::{CoreResult, Credits, Did, EvidenceGrade, SelfCheck};
 use au4a_kernel::Kernel;
@@ -133,6 +138,80 @@ fn msg_rejection_check() -> CoreResult<String> {
     Ok("篡改报文拒绝=invalid_signature，非法载荷拒绝=invalid_kind".to_string())
 }
 
+fn state_legal_table_check() -> CoreResult<String> {
+    let mut legal = 0usize;
+    let mut refused = 0usize;
+    for phase in Phase::ALL {
+        for event in Event::ALL {
+            let expected = LEGAL_TRANSITIONS
+                .iter()
+                .find(|(f, e, _)| *f == phase && *e == event)
+                .map(|(_, _, t)| *t);
+            match (transition(phase, event), expected) {
+                (Ok(got), Some(want)) if got == want => legal += 1,
+                (Err(au4a_core::CoreError::InvalidKind), None) => refused += 1,
+                _ => {
+                    return Err(au4a_core::CoreError::InvalidKind);
+                }
+            }
+        }
+    }
+    if legal != LEGAL_TRANSITIONS.len() {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    Ok(format!(
+        "穷举 {} 种 (相位,事件) 组合：{legal} 合法 / {refused} 非法且全部返回 Err",
+        Phase::ALL.len() * Event::ALL.len()
+    ))
+}
+
+fn state_dual_signature_check() -> CoreResult<String> {
+    let a = au4a_core::AgentKeys::from_seed(&[0xE5; 32]);
+    let b = au4a_core::AgentKeys::from_seed(&[0xF6; 32]);
+    let parties = vec![a.did(), b.did()];
+    let mut machine = StateMachine::open("selfcheck-state")?;
+    let single = machine.stage(Event::Request, &a, 1)?;
+    if machine.commit(single.clone(), &parties, None) != Err(au4a_core::CoreError::NotSealed) {
+        return Err(au4a_core::CoreError::NotSealed);
+    }
+    if !machine.history().is_empty() {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    machine.commit(
+        {
+            let mut dual = single;
+            StateMachine::co_sign(&mut dual, &b)?;
+            dual
+        },
+        &parties,
+        None,
+    )?;
+    if machine.phase() != Phase::Negotiating {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    machine.verify_history(&parties)?;
+    Ok("单签 commit 被拒且相位不变；双方联署后才进入 NEGOTIATING".to_string())
+}
+
+fn state_round_quota_check() -> CoreResult<String> {
+    let a = au4a_core::AgentKeys::from_seed(&[0x17; 32]);
+    let b = au4a_core::AgentKeys::from_seed(&[0x28; 32]);
+    let parties = vec![a.did(), b.did()];
+    let mut machine = StateMachine::open("selfcheck-rounds")?;
+    machine.transact(Event::Request, &a, &b, 1, &parties)?;
+    for i in 0..3 {
+        machine.transact(Event::Reject, &b, &a, 2 + i, &parties)?;
+    }
+    if machine.round() != 0 {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    machine.transact(Event::Counter, &a, &b, 9, &parties)?;
+    if machine.round() != 1 {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    Ok("3 次 REJECT 后轮数仍为 0，1 次 COUNTER 后为 1".to_string())
+}
+
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 pub fn self_check() -> Vec<SelfCheck> {
     vec![
@@ -140,6 +219,9 @@ pub fn self_check() -> Vec<SelfCheck> {
         check("msg.kinds", msg_kinds_check()),
         check("msg.roundtrip", msg_roundtrip_check()),
         check("msg.rejection", msg_rejection_check()),
+        check("state.legal_table", state_legal_table_check()),
+        check("state.dual_signature", state_dual_signature_check()),
+        check("state.round_quota", state_round_quota_check()),
     ]
 }
 
@@ -150,6 +232,9 @@ pub fn results_json() -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "kinds": ALL_KINDS,
+        "phases": Phase::ALL.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+        "events": Event::ALL.iter().map(|e| e.as_str()).collect::<Vec<_>>(),
+        "legal_transitions": LEGAL_TRANSITIONS.len(),
         "checks": self_check().len(),
         "checks_passed": self_check().iter().filter(|c| c.passed).count(),
     }))
@@ -189,9 +274,35 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "ts": env.ts,
         }));
     }
+
+    // 状态机：把这次交换落成两条**双方签名**的转换记录。
+    let parties = vec![proposer.did(), responder.did()];
+    let mut machine = StateMachine::open(&session)?;
+    let request_record = machine.transact(
+        Event::Request,
+        &proposer,
+        &responder,
+        kernel.tick(),
+        &parties,
+    )?;
+    let counter_record = machine.transact(
+        Event::Counter,
+        &responder,
+        &proposer,
+        kernel.tick(),
+        &parties,
+    )?;
+    let tip = machine.verify_history(&parties)?;
+
     kernel.emit(
         format!("{TRACK}.scenario").as_str(),
-        format!("{TITLE}：{} 条协商消息经 PMB 投递并逐条验签", transcript.len()),
+        format!(
+            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；状态机 {} → {}（{} 条双签记录）",
+            transcript.len(),
+            Phase::Idle.as_str(),
+            machine.phase().as_str(),
+            machine.seq()
+        ),
     );
 
     Ok(json!({
@@ -201,7 +312,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "session": session,
         "delivered": transcript.len(),
         "transcript": transcript,
-        "steps": 1,
+        "phase": machine.phase().as_str(),
+        "transitions": machine.seq(),
+        "rounds_used": machine.round(),
+        "history_tip": tip,
+        "signed_by": [request_record.sigs.len(), counter_record.sigs.len()],
+        "steps": 2,
     }))
 }
 
