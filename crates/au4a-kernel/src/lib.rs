@@ -18,12 +18,17 @@ use serde_json::{json, Value};
 
 pub mod audit;
 pub mod autonomy;
+pub mod observer;
 pub mod registry;
 
 pub use audit::{audit_kernel, AuditFinding, HostAudit};
 pub use autonomy::{
     classify_error, AgentContext, AutonomyLayer, AutonomyPolicy, AutonomyState, AutonomyTurn,
     Intent, IntentKind, IntentRecord,
+};
+pub use observer::{
+    observer_api, observer_self_checks, Observer, ObserverCapability, ObserverProjection,
+    ObserverReport, ObserverRoute,
 };
 pub use registry::{AgentRegistry, RegistrySnapshot};
 
@@ -391,14 +396,10 @@ impl Kernel {
     }
 
     /// 内核自检：宿主审计（守恒 / 准入 / 质押覆盖 / 注册表 / 队列 / 拒绝分类 / 时钟）
-    /// 加上「观察层只读」这一结构性结论。
+    /// 加上观察层的**真实**只读性检查（渲染前后状态不变、无副作用路由）。
     pub fn self_check(&self) -> Vec<SelfCheck> {
         let mut checks = self.audit().to_self_checks(TRACK);
-        checks.push(SelfCheck::pass(
-            TRACK,
-            "observer.read_only",
-            "observe() 取 &self 并返回投影值；内核不存在以人类为发起者的写入口",
-        ));
+        checks.extend(observer_self_checks(self));
         checks
     }
 
@@ -642,7 +643,23 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "halted": host_runtime.state().halted,
     });
 
-    // 6. 审计 + 只读观察。
+    // 6. 人类观察层：三个只读投影（进度 / 结果 / 收益），渲染不改变任何状态。
+    let report = Observer::report(kernel);
+    let observer_layer = json!({
+        "routes": ObserverRoute::ALL.len(),
+        "all_read_only": report.all_read_only(),
+        "report_fingerprint": report.fingerprint()?,
+        "progress_events": report
+            .projection(ObserverRoute::Progress)
+            .map(|p| p.payload["event_count"].clone())
+            .unwrap_or(Value::Null),
+        "yield_total": report
+            .projection(ObserverRoute::Yield)
+            .map(|p| p.payload["ledger"]["total"].clone())
+            .unwrap_or(Value::Null),
+    });
+
+    // 7. 审计 + 只读观察。
     let audit = kernel.audit();
     let view = kernel.observe();
 
@@ -651,13 +668,14 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": {"host": host.display, "observer": observer.display, "settler": settler.display},
-        "steps": ["register", "announce", "deliver", "settle", "autonomy", "audit", "observe"],
+        "steps": ["register", "announce", "deliver", "settle", "autonomy", "observe_layer", "audit", "observe"],
         "announced": announced,
         "drained": drained,
         "settled_verified": settled_verified,
         "settled_cpu_proto": settled_cpu_proto,
         "refused_unverified": refused_unverified,
         "autonomy": autonomy,
+        "observer_layer": observer_layer,
         "queue_len": kernel.queue_len(),
         "registry_fingerprint": kernel.registry_fingerprint()?,
         "audit": audit.to_json(),

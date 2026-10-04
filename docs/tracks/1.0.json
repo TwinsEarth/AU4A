@@ -78,6 +78,41 @@
         "notes": "本机 Windows 实测 2026-10-04：unittests 29 + tests/autonomy.rs 4 + tests/host_kernel.rs 9 = 42 passed，0 failed，0 warning，exit 0。协商接受语义属 au4a-negotiate（1.2），跨节点传输仍为内核内存队列。"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.0.3",
+      "title": "人类观察层骨架",
+      "goal": "给人类进度/结果/收益三个只读投影，并让「只读」成为可枚举、可编译期检查的结构事实（不存在 &mut Kernel，写能力没有类型）",
+      "deliverables": [
+        "src/observer.rs: ObserverRoute / ObserverCapability(只有 Read) / ObserverProjection / ObserverReport / Observer / observer_api() / observer_self_checks() / 3 条编译期签名证据",
+        "src/lib.rs: 接线观察层，Kernel::self_check() 改为「宿主审计 + 真实观察层检查」，scenario() 新增 observer_layer 阶段",
+        "tests/observer.rs: 5 个集成测试（入口枚举无写路径、渲染不改状态、三投影内容、自检齐备、报告无指令通道）"
+      ],
+      "interfaces": [
+        "pub enum ObserverRoute { Progress, Results, Yield }",
+        "pub enum ObserverCapability { Read }",
+        "pub struct ObserverProjection",
+        "pub struct ObserverReport",
+        "impl Observer { render(&Kernel, ObserverRoute) / render_all(&Kernel) / report(&Kernel) }",
+        "pub fn observer_api() -> serde_json::Value",
+        "pub fn observer_self_checks(kernel: &Kernel) -> Vec<SelfCheck>"
+      ],
+      "acceptance": [
+        "observer_api(): writable=false、capabilities==[\"read\"]、3 条路由 effects 为空、路由名不含写动词",
+        "渲染前后 registry_fingerprint/observe_json/now 完全相等，两次报告与指纹相等",
+        "进度 event_count>0；结果 self_checks_passed=true 且 audit.clean=true；收益 agents.len()==agent_count()",
+        "Kernel::self_check() 含 4 个 observer.* 项与宿主审计项且全 passed、detail 非空",
+        "报告 JSON 不含 pending_approval/commands/mutations/actions_to_apply，但含三个面板",
+        "编译期证据：const _: fn(&Kernel) -> ObserverView = Kernel::observe 等 3 条签名断言"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-kernel (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-kernel)",
+        "tests_passed": 53,
+        "tests_total": 53,
+        "grade": "verified",
+        "notes": "本机 Windows 实测 2026-10-04：unittests 35 + tests/autonomy.rs 4 + tests/host_kernel.rs 9 + tests/observer.rs 5 = 53 passed，0 failed，0 warning，exit 0。HTTP/Web 面板属 au4a-node，本版只断言内核侧结构只读性。"
+      },
+      "status": "done"
     }
   ]
 }

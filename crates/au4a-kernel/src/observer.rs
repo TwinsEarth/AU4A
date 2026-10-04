@@ -154,7 +154,6 @@ impl Observer {
                 "self_checks": kernel.audit().to_self_checks(crate::TRACK),
                 "self_checks_passed": kernel.audit().is_clean(),
                 "audit": kernel.audit().to_json(),
-                "lifecycle": kernel.lifecycles().to_json(),
                 "observer_api": observer_api(),
             }),
             ObserverRoute::Yield => json!({
