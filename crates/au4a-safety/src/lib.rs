@@ -23,6 +23,7 @@ pub mod notify;
 pub mod office;
 pub mod penalty;
 pub mod permission;
+pub mod pmb;
 pub mod setup;
 
 use au4a_core::{CoreError, CoreResult, Credits, Did, SelfCheck};
@@ -43,6 +44,11 @@ pub use permission::{
     query_permissions, stake_requirement, DenialReason, DeniedPermission, Permission,
     PermissionBoundary, PermissionQuery, StakeGate,
 };
+pub use pmb::{
+    appeal_envelope, classify as classify_safety_message, query_envelope, receipt_envelope,
+    report_envelope, SafetyMessage,
+};
+pub use pmb::kinds as safety_kinds;
 pub use setup::{ensure_agent, keys as role_keys, seed as role_seed};
 
 /// 轨道号。
@@ -52,7 +58,7 @@ pub const TITLE: &str = "Safety API 安全 API";
 /// 版本区间。
 pub const RANGE: &str = "v1.5.1 → v1.5.10";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.5.5";
+pub const CURRENT: &str = "v1.5.6";
 
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_safety";
@@ -128,6 +134,16 @@ pub fn self_check() -> Vec<SelfCheck> {
             format!("订阅者收到 {subscriber} 条通知、旁观者收到 {bystander} 条（未订阅状态不投递）"),
         ),
         Err(err) => SelfCheck::fail(TRACK, "notify.subscription_scoped", err.to_string()),
+    });
+
+    // PMB：查询走真实信封往返并拿回签名回执；证据不符的举报经网络同样被拒。
+    checks.push(match pmb_probe() {
+        Ok((receipts, refused)) => SelfCheck::pass(
+            TRACK,
+            "pmb.round_trip",
+            format!("{receipts} 个回执由服务身份签名并验签通过；经 PMB 的伪造证据被拒 {refused} 次"),
+        ),
+        Err(err) => SelfCheck::fail(TRACK, "pmb.round_trip", err.to_string()),
     });
 
     // 证据闸门：伪造摘要必须被拒，且不留下案件与事件。
@@ -490,6 +506,75 @@ fn notification_isolation_probe() -> CoreResult<(usize, usize)> {
     Ok((subscriber_inbox, bystander_inbox))
 }
 
+/// 独立实验：PMB 往返。查询得到一个验签通过的回执；举报信封里的伪造证据经网络被拒。
+fn pmb_probe() -> CoreResult<(usize, usize)> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config, office_keys)?;
+    let service_did = office.service_did();
+
+    // 1) 查询：信封签名 → 服务受理 → 回执验签。
+    let query = query_envelope(&reporter, &service_did, kernel.now(), &reporter.did())?;
+    kernel.send(&query)?;
+    let queued = kernel.drain();
+    let mut receipts = 0;
+    for env in &queued {
+        if let Some(receipt) = office.handle(&mut kernel, env)? {
+            receipt.verify()?;
+            if receipt.in_reply_to.as_deref() != Some(env.id.as_str()) {
+                return Err(CoreError::InvalidSignature);
+            }
+            receipts += 1;
+        }
+    }
+    if receipts != 1 {
+        return Err(CoreError::InvalidSignature);
+    }
+
+    // 2) 举报：信封合法，但证据本体与摘要不符 → 经网络同样被拒。
+    let honest = json!({"probe": "pmb-honest"});
+    let forged = json!({"probe": "pmb-forged"});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &honest)?;
+    let report = ViolationReport::new(
+        reporter.did(),
+        subject.did(),
+        ViolationKind::FakeEvidence,
+        reference,
+        kernel.now(),
+    )
+    .sign(&reporter)?;
+    let env = report_envelope(&reporter, &service_did, kernel.now(), &report, &forged)?;
+    let mut refused = 0;
+    // 信封签名成立（发送者确实是举报人），但证据复算失败 → 服务拒绝，不留案件。
+    if office.handle(&mut kernel, &env) != Err(CoreError::InvalidSignature) {
+        return Err(CoreError::InvalidSignature);
+    }
+    refused += 1;
+
+    // 3) 证据本体被换掉的信封：信封签名立刻失败。
+    let mut swapped = report_envelope(&reporter, &service_did, kernel.now(), &report, &forged)?;
+    swapped.body["evidence"] = honest.clone();
+    if swapped.verify() != Err(CoreError::InvalidSignature) {
+        return Err(CoreError::InvalidSignature);
+    }
+    refused += 1;
+    if office.case_count() != 0 || office.event_count() != 0 {
+        return Err(CoreError::InvalidSignature);
+    }
+    Ok((receipts, refused))
+}
+
 /// 轨道产物摘要（只读投影的一部分）。
 pub fn results_json() -> CoreResult<Value> {
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
@@ -627,6 +712,43 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         return Err(CoreError::InvalidSignature);
     }
 
+    // 8) PMB：安全 API 走真实信封（真签名、线格式名、服务回执）。
+    let pmb_query = query_envelope(
+        &reporter,
+        &office.service_did(),
+        kernel.now(),
+        &reporter.did(),
+    )?;
+    let pmb_receipt = office
+        .handle(kernel, &pmb_query)?
+        .ok_or(CoreError::InvalidKind)?;
+    pmb_receipt.verify()?;
+    let query_receipt_ok = pmb_receipt.in_reply_to.as_deref() == Some(pmb_query.id.as_str())
+        && pmb_receipt.kind.as_str() == safety_kinds::SAFETY_RECEIPT
+        && pmb_receipt.body["result"]["boundary"]["registered"] == json!(true);
+
+    let report_envelope = report_envelope(
+        &reporter,
+        &office.service_did(),
+        kernel.now(),
+        &report,
+        &evidence_payload,
+    )?;
+    let appeal_envelope = appeal_envelope(
+        &subject,
+        &office.service_did(),
+        kernel.now(),
+        &appeal,
+        &appeal_payloads,
+    )?;
+    let envelopes_verified = report_envelope.verify().is_ok()
+        && appeal_envelope.verify().is_ok()
+        && classify_safety_message(&report_envelope)?.kind() == safety_kinds::SAFETY_REPORT
+        && classify_safety_message(&appeal_envelope)?.kind() == safety_kinds::SAFETY_APPEAL;
+    if !query_receipt_ok || !envelopes_verified {
+        return Err(CoreError::InvalidSignature);
+    }
+
     // 未确认举报阶段（举报前后）账本与名片必须逐字段不变。
     let ledger_untouched_by_report = before == snapshot_after_report
         && fingerprint_before == fingerprint_after_report
@@ -696,6 +818,17 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "delivered": delivered,
             "as_watched": notifications_as_watched,
             "private": notifications_private,
+        },
+        "pmb": {
+            "kinds": [
+                safety_kinds::SAFETY_QUERY,
+                safety_kinds::SAFETY_REPORT,
+                safety_kinds::SAFETY_APPEAL,
+                safety_kinds::SAFETY_RECEIPT,
+            ],
+            "query_receipt_ok": query_receipt_ok,
+            "receipt_id": pmb_receipt.id,
+            "envelopes_verified": envelopes_verified,
         },
         "chain": {
             "len": verdict.len,

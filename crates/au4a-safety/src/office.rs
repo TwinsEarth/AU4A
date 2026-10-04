@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Credits, Did, RefusalCode};
+use au4a_core::{canonical_hash, AgentKeys, CoreError, CoreResult, Credits, Did, Envelope, RefusalCode};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
@@ -20,6 +20,8 @@ use crate::config::SafetyConfig;
 use crate::evidence::EvidenceRef;
 use crate::notify::{Notification, Subscription};
 use crate::penalty::{PenaltyOrder, PenaltyRecord};
+use crate::permission::PermissionBoundary;
+use crate::pmb::{self, SafetyMessage};
 
 /// 安全服务：案件登记处 + 变更日志。
 pub struct SafetyOffice {
@@ -118,7 +120,29 @@ impl SafetyOffice {
         evidence: EvidenceRef,
         payload: &Value,
     ) -> CoreResult<ViolationReport> {
-        let reporter = keys.did();
+        let at = kernel.tick();
+        let report = ViolationReport::new(
+            keys.did(),
+            subject.clone(),
+            violation,
+            evidence,
+            at,
+        )
+        .sign(keys)?;
+        self.accept_report(kernel, &report, payload)?;
+        Ok(report)
+    }
+
+    /// 受理一份**已经签名**的举报。本地 API 与 PMB `safety.report` 路径共用这一套检查，
+    /// 因此「走网络」不会绕开任何一条不变式。
+    pub fn accept_report(
+        &mut self,
+        kernel: &mut Kernel,
+        report: &ViolationReport,
+        payload: &Value,
+    ) -> CoreResult<()> {
+        let reporter = report.reporter.clone();
+        let subject = report.subject.clone();
 
         if kernel.card(&reporter).is_none() {
             kernel.refuse(
@@ -128,7 +152,7 @@ impl SafetyOffice {
             );
             return Err(CoreError::UnknownAgent);
         }
-        if reporter == *subject {
+        if reporter == subject {
             kernel.refuse(
                 &reporter,
                 RefusalCode::PolicyDenied,
@@ -136,7 +160,7 @@ impl SafetyOffice {
             );
             return Err(CoreError::InvalidKind);
         }
-        if kernel.card(subject).is_none() {
+        if kernel.card(&subject).is_none() {
             kernel.refuse(
                 &reporter,
                 RefusalCode::StaleEpoch,
@@ -144,7 +168,7 @@ impl SafetyOffice {
             );
             return Err(CoreError::UnknownAgent);
         }
-        if !evidence.is_well_formed() {
+        if !report.evidence.is_well_formed() {
             kernel.refuse(
                 &reporter,
                 RefusalCode::PolicyDenied,
@@ -160,7 +184,7 @@ impl SafetyOffice {
             );
             return Err(CoreError::Encoding);
         }
-        if evidence.verify(payload).is_err() {
+        if report.evidence.verify(payload).is_err() {
             kernel.refuse(
                 &reporter,
                 RefusalCode::PolicyDenied,
@@ -168,19 +192,10 @@ impl SafetyOffice {
             );
             return Err(CoreError::InvalidSignature);
         }
-
-        let at = kernel.tick();
-        let report = ViolationReport::new(
-            reporter.clone(),
-            subject.clone(),
-            violation,
-            evidence,
-            at,
-        )
-        .sign(keys)?;
         report.verify()?;
 
-        let case = Case::from_report(&report);
+        let at = report.at;
+        let case = Case::from_report(report);
         let case_id = case.id.clone();
         self.cases.insert(case_id.clone(), case);
         self.append(
@@ -196,10 +211,10 @@ impl SafetyOffice {
                 "{} 举报 {}（{}）",
                 au4a_core::short_id(reporter.as_str()),
                 au4a_core::short_id(subject.as_str()),
-                violation.as_str()
+                report.violation.as_str()
             ),
         );
-        Ok(report)
+        Ok(())
     }
 
     /// 案件的处理状态（未确认 == `reported`）。
@@ -241,9 +256,23 @@ impl SafetyOffice {
         evidence: Vec<EvidenceRef>,
         payloads: &[Value],
     ) -> CoreResult<Appeal> {
-        let appellant = keys.did();
+        let at = kernel.tick();
+        let appeal = Appeal::new(case_id.to_string(), keys.did(), evidence, at).sign(keys)?;
+        self.accept_appeal(kernel, &appeal, payloads)?;
+        Ok(appeal)
+    }
 
-        let subject = match self.cases.get(case_id) {
+    /// 受理一份**已经签名**的申诉。本地 API 与 PMB `safety.appeal` 路径共用这一套检查。
+    pub fn accept_appeal(
+        &mut self,
+        kernel: &mut Kernel,
+        appeal: &Appeal,
+        payloads: &[Value],
+    ) -> CoreResult<()> {
+        let appellant = appeal.appellant.clone();
+        let case_id = appeal.case.clone();
+
+        let subject = match self.cases.get(&case_id) {
             Some(case) => case.subject.clone(),
             None => {
                 kernel.refuse(
@@ -262,7 +291,7 @@ impl SafetyOffice {
             );
             return Err(CoreError::InvalidSignature);
         }
-        if evidence.is_empty() || evidence.len() != payloads.len() {
+        if appeal.evidence.is_empty() || appeal.evidence.len() != payloads.len() {
             kernel.refuse(
                 &appellant,
                 RefusalCode::PolicyDenied,
@@ -270,7 +299,7 @@ impl SafetyOffice {
             );
             return Err(CoreError::InvalidSignature);
         }
-        for (reference, payload) in evidence.iter().zip(payloads.iter()) {
+        for (reference, payload) in appeal.evidence.iter().zip(payloads.iter()) {
             if payload.is_null() || reference.verify(payload).is_err() {
                 kernel.refuse(
                     &appellant,
@@ -280,14 +309,11 @@ impl SafetyOffice {
                 return Err(CoreError::InvalidSignature);
             }
         }
-
-        let at = kernel.tick();
-        let appeal =
-            Appeal::new(case_id.to_string(), appellant.clone(), evidence, at).sign(keys)?;
         appeal.verify()?;
 
+        let at = appeal.at;
         let seq = self.events.len() as u64;
-        if let Some(case) = self.cases.get_mut(case_id) {
+        if let Some(case) = self.cases.get_mut(&case_id) {
             case.status = CaseStatus::Appealed;
             case.status_seq = seq;
             case.appeals.push(appeal.id.clone());
@@ -298,16 +324,16 @@ impl SafetyOffice {
             SafetyEventKind::Appealed,
             json!({"case": case_id, "appeal": appeal.to_json()?}),
         )?;
-        self.deliver(case_id, CaseStatus::Appealed, seq, at);
+        self.deliver(&case_id, CaseStatus::Appealed, seq, at);
         kernel.emit(
             &format!("{}.appealed", crate::TRACK),
             format!(
                 "案件 {} 收到申诉（证据 {} 条）",
-                au4a_core::short_id(case_id),
+                au4a_core::short_id(&case_id),
                 appeal.evidence_count()
             ),
         );
-        Ok(appeal)
+        Ok(())
     }
 
     // ---- v1.5.4 处罚 ----
@@ -599,6 +625,71 @@ impl SafetyOffice {
             ),
         );
         Ok(subscription)
+    }
+
+    // ---- v1.5.6 PMB ----
+
+    /// 处理一个进来的 PMB 信封。
+    ///
+    /// * `Ok(None)`：不是发给本服务的（原样忽略，不做任何状态变更）。
+    /// * `Ok(Some(receipt))`：受理成功；回执由**服务身份**签名并带 `in_reply_to`。
+    /// * `Err(_)`：格式、签名、身份或证据不成立。拒绝不产生回执，但服务侧会留下
+    ///   一条类型化拒绝记录（`kernel.refusals()`），因此拒绝本身同样可审计。
+    pub fn handle(
+        &mut self,
+        kernel: &mut Kernel,
+        env: &Envelope,
+    ) -> CoreResult<Option<Envelope>> {
+        if let Some(to) = &env.to {
+            if to != &self.service.did() {
+                return Ok(None);
+            }
+        }
+        let message = pmb::classify(env)?;
+        let in_reply_kind = message.kind();
+        let at = kernel.tick();
+        let result = match message {
+            SafetyMessage::Query(query) => {
+                let boundary = PermissionBoundary::of(kernel, &self.config, &query.about);
+                json!({
+                    "query": "permissions",
+                    "about": query.about.as_str(),
+                    "boundary": boundary.to_json()?,
+                    "cases": self.case_count(),
+                    "chain_head": self.chain_head(),
+                })
+            }
+            SafetyMessage::Report { report, evidence } => {
+                self.accept_report(kernel, &report, &evidence)?;
+                json!({
+                    "accepted": true,
+                    "case": report.id,
+                    "status": self.status_of(&report.id).map(|s| s.as_str()),
+                    "chain_head": self.chain_head(),
+                })
+            }
+            SafetyMessage::Appeal { appeal, evidence } => {
+                self.accept_appeal(kernel, &appeal, &evidence)?;
+                json!({
+                    "accepted": true,
+                    "case": appeal.case,
+                    "appeal": appeal.id,
+                    "status": self.status_of(&appeal.case).map(|s| s.as_str()),
+                    "chain_head": self.chain_head(),
+                })
+            }
+        };
+        let receipt =
+            pmb::receipt_envelope(&self.service, &env.from, at, &env.id, in_reply_kind, result)?;
+        kernel.emit(
+            &format!("{}.handled", crate::TRACK),
+            format!(
+                "{} → 回执 {}",
+                in_reply_kind,
+                au4a_core::short_id(&receipt.id)
+            ),
+        );
+        Ok(Some(receipt))
     }
 }
 
@@ -1566,5 +1657,177 @@ mod tests {
             .unwrap();
         assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
         w.kernel.ledger().check_conservation().unwrap();
+    }
+
+    // ---- v1.5.6 PMB ----
+
+    #[test]
+    fn a_query_over_pmb_gets_a_signed_receipt_with_the_boundary() {
+        let mut w = world();
+        let service_did = w.office.service_did();
+        let request = crate::pmb::query_envelope(
+            &w.reporter,
+            &service_did,
+            w.kernel.now(),
+            &w.reporter.did(),
+        )
+        .unwrap();
+        w.kernel.send(&request).unwrap();
+        let queued = w.kernel.drain();
+        assert_eq!(queued.len(), 1);
+
+        let receipt = w.office.handle(&mut w.kernel, &queued[0]).unwrap().unwrap();
+        receipt.verify().unwrap();
+        assert_eq!(receipt.from, service_did);
+        assert_eq!(receipt.to, Some(w.reporter.did()));
+        assert_eq!(receipt.kind.as_str(), crate::pmb::kinds::SAFETY_RECEIPT);
+        assert_eq!(receipt.in_reply_to.as_deref(), Some(request.id.as_str()));
+        assert_eq!(
+            receipt.body["in_reply_kind"],
+            json!(crate::pmb::kinds::SAFETY_QUERY)
+        );
+        assert_eq!(receipt.body["result"]["boundary"]["registered"], json!(true));
+        assert_eq!(
+            receipt.body["result"]["boundary"]["allowed"]
+                .as_array()
+                .unwrap()
+                .len(),
+            6
+        );
+        // 查询不改变任何案件状态。
+        assert_eq!(w.office.event_count(), 0);
+    }
+
+    #[test]
+    fn a_report_over_pmb_opens_an_unconfirmed_case() {
+        let mut w = world();
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+        let (reference, payload) = evidence("pmb-report");
+        let report = ViolationReport::new(
+            w.reporter.did(),
+            w.subject.did(),
+            ViolationKind::NonDelivery,
+            reference,
+            w.kernel.now(),
+        )
+        .sign(&w.reporter)
+        .unwrap();
+        let env = crate::pmb::report_envelope(
+            &w.reporter,
+            &w.office.service_did(),
+            w.kernel.now(),
+            &report,
+            &payload,
+        )
+        .unwrap();
+        w.kernel.send(&env).unwrap();
+        let queued = w.kernel.drain();
+
+        let receipt = w.office.handle(&mut w.kernel, &queued[0]).unwrap().unwrap();
+        receipt.verify().unwrap();
+        assert_eq!(w.office.status_of(&report.id), Some(CaseStatus::Reported));
+        assert_eq!(w.office.event_count(), 1);
+        assert_eq!(receipt.body["result"]["accepted"], json!(true));
+        assert_eq!(receipt.body["result"]["case"], json!(report.id));
+        // 走网络不会让「未确认」变成「已处罚」。
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        assert_eq!(w.kernel.ledger().slashed(), Credits::ZERO);
+    }
+
+    #[test]
+    fn an_appeal_over_pmb_flips_the_case_status() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "pmb-appeal");
+        let payloads = vec![json!({"receipt": "signed"})];
+        let references = vec![EvidenceRef::commit(EvidenceKind::Witness, &payloads[0]).unwrap()];
+        let appeal = Appeal::new(case_id.clone(), w.subject.did(), references, w.kernel.now())
+            .sign(&w.subject)
+            .unwrap();
+        let env = crate::pmb::appeal_envelope(
+            &w.subject,
+            &w.office.service_did(),
+            w.kernel.now(),
+            &appeal,
+            &payloads,
+        )
+        .unwrap();
+        w.kernel.send(&env).unwrap();
+        let queued = w.kernel.drain();
+
+        let receipt = w.office.handle(&mut w.kernel, &queued[0]).unwrap().unwrap();
+        receipt.verify().unwrap();
+        assert_eq!(w.office.status_of(&case_id), Some(CaseStatus::Appealed));
+        assert_eq!(receipt.body["result"]["appeal"], json!(appeal.id));
+        assert!(w.office.verify_chain().ok);
+    }
+
+    #[test]
+    fn a_forged_report_over_pmb_is_refused_and_recorded() {
+        let mut w = world();
+        let (reference, _) = evidence("pmb-forged");
+        let honest = json!({"pmb": "honest"});
+        let report = ViolationReport::new(
+            w.reporter.did(),
+            w.subject.did(),
+            ViolationKind::FakeEvidence,
+            reference,
+            w.kernel.now(),
+        )
+        .sign(&w.reporter)
+        .unwrap();
+        // 信封里塞进与摘要不符的证据本体：信封签名成立，但证据复算失败。
+        let env = crate::pmb::report_envelope(
+            &w.reporter,
+            &w.office.service_did(),
+            w.kernel.now(),
+            &report,
+            &honest,
+        )
+        .unwrap();
+        let mut tampered = env.clone();
+        tampered.body["evidence"] = json!({"pmb": "forged"});
+        assert_eq!(tampered.verify(), Err(CoreError::InvalidSignature));
+
+        assert_eq!(
+            w.office.handle(&mut w.kernel, &env),
+            Err(CoreError::InvalidSignature)
+        );
+        assert_eq!(w.office.case_count(), 0);
+        assert_eq!(w.office.event_count(), 0);
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::PolicyDenied);
+    }
+
+    #[test]
+    fn envelopes_addressed_elsewhere_are_ignored() {
+        let mut w = world();
+        let someone_else = setup::keys(0x5c).did();
+        let env = crate::pmb::query_envelope(
+            &w.reporter,
+            &someone_else,
+            w.kernel.now(),
+            &w.reporter.did(),
+        )
+        .unwrap();
+        assert_eq!(w.office.handle(&mut w.kernel, &env), Ok(None));
+        assert_eq!(w.office.event_count(), 0);
+        assert!(w.kernel.refusals().is_empty());
+    }
+
+    #[test]
+    fn a_tampered_envelope_is_refused_by_the_kernel_and_leaves_misconduct_evidence() {
+        let mut w = world();
+        let mut env = crate::pmb::query_envelope(
+            &w.reporter,
+            &w.office.service_did(),
+            w.kernel.now(),
+            &w.reporter.did(),
+        )
+        .unwrap();
+        env.body = json!({"about": setup::keys(0x5d).did()});
+        assert_eq!(w.kernel.send(&env), Err(CoreError::InvalidSignature));
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::Unauthorized);
+        assert!(refusal.code.is_misconduct(), "篡改信封是单次即恶意的拒绝码");
     }
 }

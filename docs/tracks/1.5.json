@@ -175,19 +175,21 @@
         "pub fn SafetyOffice::handle(&mut self, kernel, env) -> CoreResult<Option<Envelope>>"
       ],
       "acceptance": [
-        "三种消息经 Envelope::seal/verify 与 encode_frame/decode_frame 往返一致",
-        "篡改 body 后 verify 失败，Kernel::send 记 unauthorized",
-        "回执由服务身份签名，in_reply_to 指向请求 id",
-        "非本人 about 的查询被拒"
+        "三种消息经 Envelope::seal/verify 与 encode_frame/decode_frame 往返一致，MsgKind 合法",
+        "篡改 body 后 verify 失败，Kernel::send 记 unauthorized（单次即恶意码）",
+        "回执由服务身份签名，in_reply_to 指向请求 id，带结构化权限边界",
+        "非本人 about 的查询被拒；封 from 与记录作者不一致被拒",
+        "经 PMB 的举报同样复算证据：摘要不符即拒（policy_denied），不留案件与事件",
+        "经 PMB 的申诉把案件推到 appealed；本地 API 与网络路径共用 accept_report/accept_appeal"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.5 全绿后开工"
+        "tests_passed": 98,
+        "tests_total": 98,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.6.log；累计 98 个测试"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.7",
