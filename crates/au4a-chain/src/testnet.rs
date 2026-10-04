@@ -165,9 +165,6 @@ pub struct Testnet {
     chain: ChainId,
     height: u64,
     finality_depth: u64,
-    /// **已冻结的最终化高度**：单调不减。最终性一旦达成就不因后续重组而撤销
-    /// （真实链的概率性最终性在这里被建模成一条硬边界）。
-    finalized_height: u64,
     pending: Vec<ChainTx>,
     blocks: Vec<Block>,
     /// 所有被接受过的交易（按 id），重组时用来重建 nonce 占用。
@@ -184,7 +181,6 @@ impl Testnet {
             chain,
             height: 0,
             finality_depth,
-            finalized_height: 0,
             pending: Vec::new(),
             blocks: Vec::new(),
             tx_log: BTreeMap::new(),
@@ -309,16 +305,7 @@ impl Testnet {
             height: self.height,
             tx_ids: txs.iter().map(|t| t.id.clone()).collect(),
         });
-        self.refresh_finality();
         self.height
-    }
-
-    /// 推进最终化高度（单调不减）。
-    fn refresh_finality(&mut self) {
-        let candidate = self.height.saturating_sub(self.finality_depth);
-        if candidate > self.finalized_height {
-            self.finalized_height = candidate;
-        }
     }
 
     /// 出块直到某个高度（便捷方法）。
@@ -333,7 +320,6 @@ impl Testnet {
                     height: self.height,
                     tx_ids: Vec::new(),
                 });
-                self.refresh_finality();
             }
         }
         self.height
@@ -348,14 +334,14 @@ impl Testnet {
         }
     }
 
-    /// 最终性：该高度是否已经**冻结**为最终（一旦最终就不再撤销）。
+    /// 最终性：高度 `height` 的块之上是否已经叠够 `finality_depth` 个块。
     pub fn is_final(&self, height: u64) -> bool {
-        height > 0 && height <= self.finalized_height
+        height > 0 && self.height >= height.saturating_add(self.finality_depth)
     }
 
     /// 已最终化的高度上限。
     pub fn finalized_height(&self) -> u64 {
-        self.finalized_height
+        self.height.saturating_sub(self.finality_depth)
     }
 
     /// 重组：回滚最近 `depth` 个块，返回被回滚的交易 id（可被重新打包）。
@@ -365,13 +351,13 @@ impl Testnet {
         if depth == 0 {
             return Ok(Vec::new());
         }
-        let safe = self.finalized_height;
+        let safe = self.height.saturating_sub(self.finality_depth);
         if depth > self.height.saturating_sub(safe) {
             return Err(self.deny(ChainRefusal::new(
                 "testnet.reorg",
                 RefusalCode::Conflict,
                 format!(
-                    "重组深度 {depth} 会越过已冻结的最终化高度（高度 {}，最终化到 {}）",
+                    "重组深度 {depth} 超过最终性保护（高度 {}，最终化到 {}）",
                     self.height, safe
                 ),
             )));
@@ -532,9 +518,7 @@ mod tests {
         let dropped = net.reorg(2).unwrap();
         assert!(dropped.is_empty(), "回滚的是空块");
         assert_eq!(net.height(), 1);
-        // 最终性已冻结：高度 1 仍然是最终的（撤销最终性比撤销区块危险得多）。
-        assert!(net.is_final(1));
-        assert!(!net.is_final(2), "高度 2 从未达到最终性");
+        assert!(!net.is_final(1));
     }
 
     #[test]
