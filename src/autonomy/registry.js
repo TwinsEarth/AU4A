@@ -48,4 +48,33 @@ export class AgentRegistry {
     entry.card.capabilities = capabilities;
     return entry.card;
   }
+
+  /**
+   * v1.0.7 — 质押/解质押自主。
+   * 解质押把锁定账户（__stake__:<did>）资金转回主账户；
+   * balances 总和不变 → 守恒恒真；记录 Unstaked（from/to）→ 独立审计可回放。
+   * 解后剩余质押 < MIN_STAKE → 状态转 suspended。
+   */
+  unstake(did, amount) {
+    const agent = this.agents.get(did);
+    if (!agent) throw new Error('Agent 未注册');
+    if (!Number.isInteger(amount) || amount <= 0) throw new Error('解质押金额必须为正整数');
+    const lockedKey = `__stake__:${did}`;
+    const locked = this.market.balances.get(lockedKey) || 0;
+    if (amount > locked) throw new Error(`解质押超过已质押额（当前 ${locked}）`);
+    // 锁定 → 主账户（balances 总和不变）
+    this.market.balances.set(did, (this.market.balances.get(did) || 0) + amount);
+    const rest = locked - amount;
+    if (rest === 0) this.market.balances.delete(lockedKey);
+    else this.market.balances.set(lockedKey, rest);
+    agent.status = rest < MIN_STAKE ? 'suspended' : agent.status;
+    agent.unstakedAt = Date.now();
+    this.market.records.push({ reason: 'Unstaked', from: lockedKey, to: did, amount, at: Date.now() });
+    return { did, unstaked: amount, remainingStake: rest, status: agent.status };
+  }
+
+  /** 查询 Agent 当前质押（只读） */
+  stakeOf(did) {
+    return this.market.balances.get(`__stake__:${did}`) || 0;
+  }
 }
