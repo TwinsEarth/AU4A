@@ -81,6 +81,7 @@ const arb = new Council({
     { did: 'did:au:judge1', reputation: 0.95 },
     { did: 'did:au:judge2', reputation: 0.9 },
     { did: 'did:au:judge3', reputation: 0.88 },
+    { did: 'did:au:judge4', reputation: 0.85 },
   ],
 });
 const proposal = arb.propose({ by: 'did:au:judge1', title: '裁决 case: safety-1', payload: { verdict: 'innocent' } });
@@ -92,7 +93,7 @@ if (proposal.status !== 'passed') throw new Error('仲裁未达 quorum');
 // 6) 跨链结算（v1.8）：Worker 自主把部分积分兑换为 BTC（RGB 承诺）
 const router = new SettlementRouter({ exchangeRate: 1000 });
 const exch = new ExchangeRouter();
-const track = exch.route({ amount: 60, urgency: 0.9 }).track;
+const track = exch.route({ amount: 200, urgency: 0.9 }).track; // 高时效大额 → BTC
 const swap = router.exchange({ did: W, credits: 60, track });
 router.bridgeReputation({ fromChain: 'btc', did: W, score: 0.91 });
 
