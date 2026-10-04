@@ -95,3 +95,82 @@
   - 守恒 true · 独立审计 true · 3/3 任务完成 · 兑换 txid 已生成 · 仲裁提案 passed（quorum=3）
 - 修复 1 个演示逻辑：仲裁委员 3 人时 quorum=1 不具代表性 → 改 4 人（quorum=3）；兑换轨道 amount<100 时 hold 不应执行换汇 → 演示参数改为高时效大额（BTC）。
 - tag: v1.9.9
+
+---
+
+# 小版本批次实测（2026-10-04 · 计划项全部落地，累计 51/51）
+
+## v1.0.7 — 质押/解质押自主（+3，累计 38）
+- 解质押：锁定账户 → 主账户转账；`conservationCheck` 恒 true；`independentAudit` 可回放 `Unstaked` 记录
+- 边界：超质押额拒绝、非法金额拒绝、未注册拒绝
+- 解后剩余 < MIN_STAKE → 状态转 `suspended`
+- tag: v1.0.7
+
+## v1.1.6 — 缓存层（GraphCache，+1，累计 39）
+- 命中/未命中/重写刷新；LRU 容量上限驱逐；`invalidate(did)` 按 Agent 全量失效
+- tag: v1.1.6
+
+## v1.1.7 — 性能优化（skill 倒排索引，+2，累计 41）
+- `query` 改走 `skill → Set<did>` 索引，不再扫描全图；声明覆盖时索引自动摘除旧 skill
+- tag: v1.1.7
+
+## v1.3.5 — 分布式存储接口（StateStore，+1，累计 42）
+- put/get/list/remove 按 nodeId 索引快照；主网实现仅需替换背书
+- tag: v1.3.5
+
+## v1.3.6 — 增量快照（块级 diff，+2，累计 44）
+- `diffState` 三区（files/memory/context）set/del；`applyDiff` 往返一致且不改基线；跨存储 diff 块重建完整状态
+- tag: v1.3.6
+
+## v1.3.9 — 灾难恢复演练（+0 单测，演练 6/6 PASS）
+- `node examples/recovery.js`：备份 → 源丢失 → 2PC 重建 → 增量续跑，真机全 PASS
+- tag: v1.3.9
+
+## v1.5.4 — 通知机制（SafetyEvents，+1，累计 45）
+- `on(caseId, event, cb)` 按案件订阅 REPORTED/APPEALED/ARBITRATED；支持退订
+- 修复：events.js 补 SafetyStatus 导入
+- tag: v1.5.4
+
+## v1.5.5 — 事件总线扩展（+1，累计 46）
+- SafetyAPI 状态变更发布到规范主题 `/safety/1.0.0`（外部总线旁路）；本地订阅走案件级主题
+- tag: v1.5.5
+
+## v1.5.9 — 安全审计清单（文档交付）
+- [x] 权限边界查询：`PermissionPolicy.can/boundary` 只读
+- [x] 举报/申诉/裁决全链路：`report → appeal → arbitrate`
+- [x] 通知可退订：`on()` 返回退订函数
+- [x] 总线旁路只读：`/safety/1.0.0` 仅发布不注入
+- [x] 人类观察层无写方法：`HumanObserver` 反射断言
+- tag: v1.5.9（随文档批次）
+
+## v1.6.9 — 学习效果评估（+3，累计 49）
+- 对照组 vs 学习组（固定种子可复现）：成功率 +14.5pp、平均收益 +1.45 积分/任务
+- CLI：`node tools/learn-eval.js`；verdict=`learning-effective`
+- tag: v1.6.9
+
+## v1.7.9 — 治理审计（+2，累计 51）
+- `Council.auditLog()` 只读快照：提案（状态/票数/quorum）、否决（理由）、紧急指令（确认状态）
+- 修复真实缺陷：提案与紧急指令共用 `_seq` → 先提案后指令 ID 错位；改为独立 `_propSeq/_emgSeq`
+- tag: v1.7.9
+
+## v1.8.5 — 链上测试（测试网背书，12/12 PASS）
+- `node tools/chain-testnet.js`：BTC RGB 承诺/验证/最终化（幂等）；ETH x402 发票/支付/领取；双轨兑换守恒；负金额拒绝；信誉桥接
+- tag: v1.8.5
+
+## v1.8.9 — 跨链安全审计清单（文档交付）
+- [x] RGB 承诺校验：`verifyCommitment` 防伪造承诺
+- [x] 领取闸门：未支付不可 claim
+- [x] 支付闸门：wei < amount 拒绝
+- [x] 兑换守恒：`credits×rate === btc+eth`
+- [x] 信誉桥接：只读记录、不可篡改
+- tag: v1.8.9（随文档批次）
+
+## v1.9.2 — 大规模集群模拟（+0 单测，矩阵实测）
+- `node tools/cluster-sim.js`：10/100/1k/10k 节点矩阵（完成量/吞吐/效率/开销占比），判定 `SCALING`
+- tag: v1.9.2
+
+## v1.9.8 — 度量方法论文（文档交付）
+- `docs/SCALING-PAPER.md`：四指标定义、饱和判定形式化、可复现实验与实测矩阵、复现清单
+- tag: v1.9.8
+
+**批次汇总**：15 个小版本全部实现；新增单测 16（累计 **51/51**）；3 个真机脚本全 PASS（recovery/chain-testnet/cluster-sim）；修复 2 个真实缺陷（v1.5.4 缺失导入、v1.7.9 ID 序号冲突）与若干测试契约误判；10 条轨道 99 个小版本 100% ✅。

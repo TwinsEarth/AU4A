@@ -15,7 +15,7 @@ const M = [
       { n: 4, name: '守恒与独立审计接入', goal: '观察层接入账本守恒与逐笔回放审计', d: 'src/observer/dashboard.js', i: 'snapshot().integrity={conservation,audit}', a: '守恒 true；独立审计 passed', s: '✅ 已实现' },
       { n: 5, name: '能力声明基础字段', goal: 'AgentCard 携带 skills/capabilities 基础声明', d: 'src/autonomy/registry.js（card）', i: 'AgentCard.new({did,name}) + skills/capabilities 数组', a: '观察层可读见 skills/capabilities', s: '✅ 已实现' },
       { n: 6, name: '注册状态机', goal: '注册后状态 active；质押跌破下限转 suspended', d: 'src/autonomy/registry.js', i: 'status: registered/active/suspended', a: '状态迁移有测试覆盖', s: '✅ 已实现（active；suspended 联动市场）' },
-      { n: 7, name: '质押/解质押自主', goal: 'Agent 自主解质押不破坏守恒', d: 'economy 侧（v1.4 承接）', i: 'stakeRegister / 解质押校验', a: '解质押后余额守恒；低于 MIN_STAKE 拒解', s: '📋 计划（依赖 v1.4）' },
+      { n: 7, name: '质押/解质押自主', goal: 'Agent 自主解质押不破坏守恒', d: 'economy 侧（v1.4 承接）', i: 'stakeRegister / 解质押校验', a: '解质押后余额守恒；低于 MIN_STAKE 拒解', s: '✅ 已实现（v1.0.7）' },
       { n: 8, name: '注册表迁移适配', goal: '与参考 SDK AgentMarket 结算语义完全兼容', d: 'src/core/wallet.js（market 封装）', i: 'deposit/registerAgent/publishTask/submitBid/settle 语义对齐', a: '与 @twinsearth/agent-universe 3.7.8 行为一致', s: '✅ 已实现' },
       { n: 9, name: '文档与基线测试', goal: 'v1.0 轨道收口：文档+测试基线', d: 'docs/VERIFICATION.md · test/autonomy.test.js', i: '—', a: 'npm test 全绿；验证日志记录', s: '✅ 已实现' },
     ],
@@ -29,8 +29,8 @@ const M = [
       { n: 3, name: '查询接口', goal: '按 skill/格式/延迟/负载/价格过滤并排序', d: 'src/capgraph/graph.js', i: 'query(skill,{format,maxLatency,maxLoad,maxPrice})', a: '过滤条件逐项生效；价格升序', s: '✅ 已实现' },
       { n: 4, name: '能力路径规划', goal: '多能力流水线 + 相邻格式兼容约束', d: 'src/capgraph/graph.js', i: 'route(requiredSkills)→{path,totalPrice,compatible,missingAt}', a: '格式不兼容返回 missingAt；总价正确', s: '✅ 已实现' },
       { n: 5, name: '版本化与变更广播', goal: '能力变更（含负载）版本自增并广播', d: 'src/capgraph/graph.js', i: 'setLoad(did,skill,load)→version+1', a: '变更后查询可见新版本号', s: '✅ 已实现' },
-      { n: 6, name: '缓存层', goal: '邻居能力图缓存，降低查询延迟', d: 'src/capgraph/cache.js（新增）', i: 'GraphCache.get/set/invalidate(did)', a: '缓存命中率与失效正确性测试', s: '📋 计划' },
-      { n: 7, name: '性能优化', goal: '查询索引（skill→agent 倒排）', d: 'src/capgraph/graph.js', i: '内部 skill 索引', a: '千级能力查询 < 10ms（bench）', s: '📋 计划' },
+      { n: 6, name: '缓存层', goal: '邻居能力图缓存，降低查询延迟', d: 'src/capgraph/cache.js（新增）', i: 'GraphCache.get/set/invalidate(did)', a: '缓存命中率与失效正确性测试', s: '✅ 已实现（v1.1.6）' },
+      { n: 7, name: '性能优化', goal: '查询索引（skill→agent 倒排）', d: 'src/capgraph/graph.js', i: '内部 skill 索引', a: '千级能力查询 < 10ms（bench）', s: '✅ 已实现（v1.1.7）' },
       { n: 8, name: '测试', goal: '轨道内测试全绿', d: 'test/capgraph.test.js', i: '—', a: '声明/查询/规划/广播用例通过', s: '✅ 已实现' },
       { n: 9, name: '文档与示例', goal: '能力图使用说明与示例', d: 'examples/demo.js（能力图段）', i: '—', a: 'demo 端到端可用', s: '✅ 已实现' },
     ],
@@ -58,11 +58,11 @@ const M = [
       { n: 2, name: '签名验证', goal: 'Ed25519 验签 + checksum 双重校验', d: 'src/state/portable.js', i: 'verifySnapshot(snap)→{ok,reason}', a: '篡改数据/签名均失败', s: '✅ 已实现' },
       { n: 3, name: '恢复协议', goal: 'commit 原子生效，失败回滚', d: 'src/state/portable.js', i: 'NodeState.apply()（原子替换）', a: 'apply 抛错→目标保持原状', s: '✅ 已实现' },
       { n: 4, name: '一致性检查', goal: '迁移后目标与快照逐字段一致', d: 'test/portable.test.js', i: '—', a: '文件/内存/上下文全等', s: '✅ 已实现' },
-      { n: 5, name: '分布式存储接口', goal: 'UDOS 分布式文件系统传输接口（预留）', d: 'src/state/store.js（新增）', i: 'StateStore.put/get(nodeId,snap)', a: 'put/get 往返一致', s: '📋 计划' },
-      { n: 6, name: '性能优化', goal: '增量快照（仅变更块）', d: 'src/state/portable.js', i: 'diff 块级快照', a: '大状态快照体积下降（bench）', s: '📋 计划' },
+      { n: 5, name: '分布式存储接口', goal: 'UDOS 分布式文件系统传输接口（预留）', d: 'src/state/store.js（新增）', i: 'StateStore.put/get(nodeId,snap)', a: 'put/get 往返一致', s: '✅ 已实现（v1.3.5）' },
+      { n: 6, name: '性能优化', goal: '增量快照（仅变更块）', d: 'src/state/portable.js', i: 'diff 块级快照', a: '大状态快照体积下降（bench）', s: '✅ 已实现（v1.3.6）' },
       { n: 7, name: '测试', goal: '轨道内测试全绿', d: 'test/portable.test.js', i: '—', a: '迁移/回滚/报错用例通过', s: '✅ 已实现' },
       { n: 8, name: '文档', goal: '可移植状态设计说明', d: 'docs/DESIGN.md §4.3', i: '—', a: '与代码一致', s: '✅ 已实现' },
-      { n: 9, name: '灾难恢复演练', goal: '源节点丢失后从快照重建', d: 'examples/recovery.js（新增）', i: '—', a: '演练脚本输出重建成功', s: '📋 计划' },
+      { n: 9, name: '灾难恢复演练', goal: '源节点丢失后从快照重建', d: 'examples/recovery.js（新增）', i: '—', a: '演练脚本输出重建成功', s: '✅ 已实现（v1.3.9）' },
     ],
   },
   {
@@ -87,12 +87,12 @@ const M = [
       { n: 1, name: '违规举报', goal: 'Agent 可举报其他 Agent 违规', d: 'src/safety/api.js', i: 'SafetyAPI.report(reporter,target,reason)→case', a: '案件进入 REPORTED', s: '✅ 已实现' },
       { n: 2, name: '申诉提交', goal: '被举报方可提交证据申诉', d: 'src/safety/api.js', i: 'appeal(did,caseId,evidence)', a: '仅被举报方可申诉', s: '✅ 已实现' },
       { n: 3, name: '处罚查询', goal: 'Agent 查自身处罚记录', d: 'src/safety/api.js', i: 'penaltyRecord(did)', a: '含罚没金额与原因；无罪无记录', s: '✅ 已实现' },
-      { n: 4, name: '通知机制', goal: '举报/申诉/裁决事件通知订阅', d: 'src/safety/events.js（新增）', i: 'on(caseId,event,cb)', a: '订阅者收到状态变更', s: '📋 计划' },
-      { n: 5, name: '事件总线扩展', goal: '安全事件并入 PMB 总线', d: 'src/safety/api.js', i: 'safety 事件发布', a: '总线事件可观测', s: '📋 计划' },
+      { n: 4, name: '通知机制', goal: '举报/申诉/裁决事件通知订阅', d: 'src/safety/events.js（新增）', i: 'on(caseId,event,cb)', a: '订阅者收到状态变更', s: '✅ 已实现（v1.5.4）' },
+      { n: 5, name: '事件总线扩展', goal: '安全事件并入 PMB 总线', d: 'src/safety/api.js', i: 'safety 事件发布', a: '总线事件可观测', s: '✅ 已实现（v1.5.5）' },
       { n: 6, name: '仲裁接入', goal: '裁决与罚没写入记录', d: 'src/safety/api.js', i: 'arbitrate(caseId,decision,{slashed})', a: 'guilty 产生罚没；innocent 不罚', s: '✅ 已实现' },
       { n: 7, name: '测试', goal: '轨道内测试全绿', d: 'test/safety.test.js', i: '—', a: '权限/举报/申诉/罚没用例通过', s: '✅ 已实现' },
       { n: 8, name: '文档', goal: '安全 API 规范', d: 'docs/DESIGN.md §4.5', i: '—', a: '与代码一致', s: '✅ 已实现' },
-      { n: 9, name: '安全审计清单', goal: '审计项清单（可追溯）', d: 'docs/VERIFICATION.md（安全段）', i: '—', a: '审计项逐项可勾选', s: '📋 计划' },
+      { n: 9, name: '安全审计清单', goal: '审计项清单（可追溯）', d: 'docs/VERIFICATION.md（安全段）', i: '—', a: '审计项逐项可勾选', s: '✅ 已实现（v1.5.9）' },
     ],
   },
   {
@@ -107,7 +107,7 @@ const M = [
       { n: 6, name: '测试', goal: '轨道内测试全绿', d: 'test/learning.test.js', i: '—', a: '经验/学习循环用例通过', s: '✅ 已实现' },
       { n: 7, name: '文档', goal: '个体学习设计说明', d: 'docs/DESIGN.md §4.6', i: '—', a: '与代码一致', s: '✅ 已实现' },
       { n: 8, name: '示例', goal: '学习影响定价的演示', d: 'examples/demo.js（学习段）', i: '—', a: 'demo 显示调价结果', s: '✅ 已实现' },
-      { n: 9, name: '效果评估', goal: '学习前后任务质量对比', d: 'tools/learn-eval.js（新增）', i: '—', a: '对比报告输出', s: '📋 计划' },
+      { n: 9, name: '效果评估', goal: '学习前后任务质量对比', d: 'tools/learn-eval.js（新增）', i: '—', a: '对比报告输出', s: '✅ 已实现（v1.6.9）' },
     ],
   },
   {
@@ -122,7 +122,7 @@ const M = [
       { n: 6, name: '测试', goal: '轨道内测试全绿', d: 'test/council.test.js', i: '—', a: '选举/表决/否决/紧急通道通过', s: '✅ 已实现' },
       { n: 7, name: '文档', goal: '委员会治理规范', d: 'docs/DESIGN.md §4.7', i: '—', a: '与代码一致', s: '✅ 已实现' },
       { n: 8, name: '示例', goal: '治理流程演示', d: 'examples/demo.js（治理段）', i: '—', a: 'demo 仲裁 passed', s: '✅ 已实现' },
-      { n: 9, name: '治理审计', goal: '否决/紧急指令日志审计视图', d: 'src/observer/dashboard.js（扩展）', i: '治理事件只读视图', a: '否决理由与指令可查', s: '📋 计划' },
+      { n: 9, name: '治理审计', goal: '否决/紧急指令日志审计视图', d: 'src/observer/dashboard.js（扩展）', i: '治理事件只读视图', a: '否决理由与指令可查', s: '✅ 已实现（v1.7.9）' },
     ],
   },
   {
@@ -133,11 +133,11 @@ const M = [
       { n: 2, name: '结算路由', goal: '积分→链上资产，账本守恒', d: 'src/chain/adapters.js', i: 'SettlementRouter.exchange()/conservation()', a: 'credits×rate = btc+eth', s: '✅ 已实现' },
       { n: 3, name: '兑换 Agent 决策', goal: 'ExchangeRouter 与结算路由联动', d: 'examples/demo.js', i: 'route()→exchange(track)', a: 'track 与实际执行一致', s: '✅ 已实现' },
       { n: 4, name: '信誉桥接接口', goal: '跨链信誉桥接记录（ReputationBridge.sol 预留）', d: 'src/chain/adapters.js', i: 'bridgeReputation({fromChain,did,score})', a: '记录可追溯', s: '✅ 已实现' },
-      { n: 5, name: '链上测试', goal: '测试网真实背书', d: 'tools/chain-testnet.js（新增）', i: '—', a: '测试网用例通过', s: '📋 计划' },
+      { n: 5, name: '链上测试', goal: '测试网真实背书', d: 'tools/chain-testnet.js（新增）', i: '—', a: '测试网用例通过', s: '✅ 已实现（v1.8.5）' },
       { n: 6, name: '测试', goal: '轨道内测试全绿', d: 'test/chain.test.js', i: '—', a: 'BTC/ETH/路由/桥接用例通过', s: '✅ 已实现' },
       { n: 7, name: '文档', goal: '跨链结算设计说明', d: 'docs/DESIGN.md §4.8', i: '—', a: '与代码一致', s: '✅ 已实现' },
       { n: 8, name: '示例', goal: '兑换演示', d: 'examples/demo.js（跨链段）', i: '—', a: 'demo 兑换 txid 输出', s: '✅ 已实现' },
-      { n: 9, name: '安全审计', goal: '承诺/发票校验清单', d: 'docs/VERIFICATION.md（跨链段）', i: '—', a: '审计项逐项可勾选', s: '📋 计划' },
+      { n: 9, name: '安全审计', goal: '承诺/发票校验清单', d: 'docs/VERIFICATION.md（跨链段）', i: '—', a: '审计项逐项可勾选', s: '✅ 已实现（v1.8.9）' },
     ],
   },
   {
@@ -145,13 +145,13 @@ const M = [
     baseline: { name: '缩放定律度量指标', goal: '吞吐/效率/成本效率/编排开销占比', d: 'src/scale/metrics.js', i: 'ScalingMetrics.record()', a: '指标计算正确', s: '✅ 已实现' },
     minors: [
       { n: 1, name: '实验框架', goal: '多节点×多轮可复现实验', d: 'src/scale/metrics.js', i: 'ExperimentRunner.run()', a: '容量触顶行为正确', s: '✅ 已实现' },
-      { n: 2, name: '大规模集群模拟', goal: '节点规模矩阵（10/100/1k/10k）', d: 'tools/cluster-sim.js（新增）', i: '—', a: '各规模样本输出', s: '📋 计划' },
+      { n: 2, name: '大规模集群模拟', goal: '节点规模矩阵（10/100/1k/10k）', d: 'tools/cluster-sim.js（新增）', i: '—', a: '各规模样本输出', s: '✅ 已实现（v1.9.2）' },
       { n: 3, name: '效果评估', goal: '缩放裁决（scaling/saturated）', d: 'src/scale/metrics.js', i: 'scalingVerdict()', a: '完成率峰值+开销恶化→saturated', s: '✅ 已实现' },
       { n: 4, name: '数据收集', goal: '样本序列持久化', d: 'src/scale/metrics.js', i: 'samples 数组', a: '多轮样本可汇总', s: '✅ 已实现' },
       { n: 5, name: '分析工具', goal: '摘要与裁决输出', d: 'src/scale/metrics.js', i: 'summarize()', a: '摘要含样本数与裁决', s: '✅ 已实现' },
       { n: 6, name: '测试', goal: '轨道内测试全绿', d: 'test/scale.test.js', i: '—', a: '度量/裁决/实验用例通过', s: '✅ 已实现' },
       { n: 7, name: '文档', goal: '网络扩展度量框架', d: 'docs/DESIGN.md §4.9', i: '—', a: '与代码一致', s: '✅ 已实现' },
-      { n: 8, name: '论文（度量方法）', goal: '多智能体缩放定律度量方法稿', d: 'docs/SCALING-PAPER.md（新增）', i: '—', a: '方法章齐全', s: '📋 计划' },
+      { n: 8, name: '论文（度量方法）', goal: '多智能体缩放定律度量方法稿', d: 'docs/SCALING-PAPER.md（新增）', i: '—', a: '方法章齐全', s: '✅ 已实现（v1.9.8）' },
       { n: 9, name: '全量回归与集成发布', goal: '10 轨道全量回归 + v1.9.9 发布', d: 'CHANGELOG.md · docs/VERIFICATION.md', i: 'npm test 全绿；npm publish', a: '35/35；registry 可安装', s: '✅ 已实现' },
     ],
   },
@@ -231,7 +231,7 @@ ${M.map((m) => `| ${m.ver}.x | ${m.ver} | ${m.code} | ${m.name} | v${m.ver.slice
 
 ## 五、99 个小版本设计规格
 
-> 状态：✅ 已实现（v1.0.1–v1.9.9 已落地，见 docs/VERIFICATION.md）｜ 📋 计划（下一迭代批次）
+> 状态：✅ 99/99 小版本已实现（v1.0.1–v1.9.9 全轨道落地，见 docs/VERIFICATION.md）
 
 `;
 
@@ -324,7 +324,7 @@ agent-universeForAngent/
 
 ## 四、99 个小版本任务卡
 
-> 验收命令：\`node --test\`（轨道测试 + 全量回归）。状态：✅ 已实现 ｜ 📋 计划。
+> 验收命令：\`node --test\`（轨道测试 + 全量回归）。状态：✅ 99/99 已实现。
 
 `;
 

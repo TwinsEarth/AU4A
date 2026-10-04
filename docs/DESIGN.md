@@ -70,7 +70,7 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 
 ## 五、99 个小版本设计规格
 
-> 状态：✅ 已实现（v1.0.1–v1.9.9 已落地，见 docs/VERIFICATION.md）｜ 📋 计划（下一迭代批次）
+> 状态：✅ 99/99 小版本已实现（v1.0.1–v1.9.9 全轨道落地，见 docs/VERIFICATION.md）
 
 ### v1.0.x Autonomy — 自治内核（轨道目录 src/core/ + src/autonomy/ + src/observer/）
 
@@ -83,7 +83,7 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 | v1.0.4 | 守恒与独立审计接入 | 观察层接入账本守恒与逐笔回放审计 | `src/observer/dashboard.js` | `snapshot().integrity={conservation,audit}` | 守恒 true；独立审计 passed | ✅ 已实现 |
 | v1.0.5 | 能力声明基础字段 | AgentCard 携带 skills/capabilities 基础声明 | `src/autonomy/registry.js（card）` | `AgentCard.new({did,name}) + skills/capabilities 数组` | 观察层可读见 skills/capabilities | ✅ 已实现 |
 | v1.0.6 | 注册状态机 | 注册后状态 active；质押跌破下限转 suspended | `src/autonomy/registry.js` | `status: registered/active/suspended` | 状态迁移有测试覆盖 | ✅ 已实现（active；suspended 联动市场） |
-| v1.0.7 | 质押/解质押自主 | Agent 自主解质押不破坏守恒 | `economy 侧（v1.4 承接）` | `stakeRegister / 解质押校验` | 解质押后余额守恒；低于 MIN_STAKE 拒解 | 📋 计划（依赖 v1.4） |
+| v1.0.7 | 质押/解质押自主 | Agent 自主解质押不破坏守恒 | `economy 侧（v1.4 承接）` | `stakeRegister / 解质押校验` | 解质押后余额守恒；低于 MIN_STAKE 拒解 | ✅ 已实现（v1.0.7） |
 | v1.0.8 | 注册表迁移适配 | 与参考 SDK AgentMarket 结算语义完全兼容 | `src/core/wallet.js（market 封装）` | `deposit/registerAgent/publishTask/submitBid/settle 语义对齐` | 与 @twinsearth/agent-universe 3.7.8 行为一致 | ✅ 已实现 |
 | v1.0.9 | 文档与基线测试 | v1.0 轨道收口：文档+测试基线 | `docs/VERIFICATION.md · test/autonomy.test.js` | `—` | npm test 全绿；验证日志记录 | ✅ 已实现 |
 
@@ -97,8 +97,8 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 | v1.1.3 | 查询接口 | 按 skill/格式/延迟/负载/价格过滤并排序 | `src/capgraph/graph.js` | `query(skill,{format,maxLatency,maxLoad,maxPrice})` | 过滤条件逐项生效；价格升序 | ✅ 已实现 |
 | v1.1.4 | 能力路径规划 | 多能力流水线 + 相邻格式兼容约束 | `src/capgraph/graph.js` | `route(requiredSkills)→{path,totalPrice,compatible,missingAt}` | 格式不兼容返回 missingAt；总价正确 | ✅ 已实现 |
 | v1.1.5 | 版本化与变更广播 | 能力变更（含负载）版本自增并广播 | `src/capgraph/graph.js` | `setLoad(did,skill,load)→version+1` | 变更后查询可见新版本号 | ✅ 已实现 |
-| v1.1.6 | 缓存层 | 邻居能力图缓存，降低查询延迟 | `src/capgraph/cache.js（新增）` | `GraphCache.get/set/invalidate(did)` | 缓存命中率与失效正确性测试 | 📋 计划 |
-| v1.1.7 | 性能优化 | 查询索引（skill→agent 倒排） | `src/capgraph/graph.js` | `内部 skill 索引` | 千级能力查询 < 10ms（bench） | 📋 计划 |
+| v1.1.6 | 缓存层 | 邻居能力图缓存，降低查询延迟 | `src/capgraph/cache.js（新增）` | `GraphCache.get/set/invalidate(did)` | 缓存命中率与失效正确性测试 | ✅ 已实现（v1.1.6） |
+| v1.1.7 | 性能优化 | 查询索引（skill→agent 倒排） | `src/capgraph/graph.js` | `内部 skill 索引` | 千级能力查询 < 10ms（bench） | ✅ 已实现（v1.1.7） |
 | v1.1.8 | 测试 | 轨道内测试全绿 | `test/capgraph.test.js` | `—` | 声明/查询/规划/广播用例通过 | ✅ 已实现 |
 | v1.1.9 | 文档与示例 | 能力图使用说明与示例 | `examples/demo.js（能力图段）` | `—` | demo 端到端可用 | ✅ 已实现 |
 
@@ -126,11 +126,11 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 | v1.3.2 | 签名验证 | Ed25519 验签 + checksum 双重校验 | `src/state/portable.js` | `verifySnapshot(snap)→{ok,reason}` | 篡改数据/签名均失败 | ✅ 已实现 |
 | v1.3.3 | 恢复协议 | commit 原子生效，失败回滚 | `src/state/portable.js` | `NodeState.apply()（原子替换）` | apply 抛错→目标保持原状 | ✅ 已实现 |
 | v1.3.4 | 一致性检查 | 迁移后目标与快照逐字段一致 | `test/portable.test.js` | `—` | 文件/内存/上下文全等 | ✅ 已实现 |
-| v1.3.5 | 分布式存储接口 | UDOS 分布式文件系统传输接口（预留） | `src/state/store.js（新增）` | `StateStore.put/get(nodeId,snap)` | put/get 往返一致 | 📋 计划 |
-| v1.3.6 | 性能优化 | 增量快照（仅变更块） | `src/state/portable.js` | `diff 块级快照` | 大状态快照体积下降（bench） | 📋 计划 |
+| v1.3.5 | 分布式存储接口 | UDOS 分布式文件系统传输接口（预留） | `src/state/store.js（新增）` | `StateStore.put/get(nodeId,snap)` | put/get 往返一致 | ✅ 已实现（v1.3.5） |
+| v1.3.6 | 性能优化 | 增量快照（仅变更块） | `src/state/portable.js` | `diff 块级快照` | 大状态快照体积下降（bench） | ✅ 已实现（v1.3.6） |
 | v1.3.7 | 测试 | 轨道内测试全绿 | `test/portable.test.js` | `—` | 迁移/回滚/报错用例通过 | ✅ 已实现 |
 | v1.3.8 | 文档 | 可移植状态设计说明 | `docs/DESIGN.md §4.3` | `—` | 与代码一致 | ✅ 已实现 |
-| v1.3.9 | 灾难恢复演练 | 源节点丢失后从快照重建 | `examples/recovery.js（新增）` | `—` | 演练脚本输出重建成功 | 📋 计划 |
+| v1.3.9 | 灾难恢复演练 | 源节点丢失后从快照重建 | `examples/recovery.js（新增）` | `—` | 演练脚本输出重建成功 | ✅ 已实现（v1.3.9） |
 
 ### v1.4.x EconomicAutonomy — 经济自主（轨道目录 src/economy/）
 
@@ -155,12 +155,12 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 | v1.5.1 | 违规举报 | Agent 可举报其他 Agent 违规 | `src/safety/api.js` | `SafetyAPI.report(reporter,target,reason)→case` | 案件进入 REPORTED | ✅ 已实现 |
 | v1.5.2 | 申诉提交 | 被举报方可提交证据申诉 | `src/safety/api.js` | `appeal(did,caseId,evidence)` | 仅被举报方可申诉 | ✅ 已实现 |
 | v1.5.3 | 处罚查询 | Agent 查自身处罚记录 | `src/safety/api.js` | `penaltyRecord(did)` | 含罚没金额与原因；无罪无记录 | ✅ 已实现 |
-| v1.5.4 | 通知机制 | 举报/申诉/裁决事件通知订阅 | `src/safety/events.js（新增）` | `on(caseId,event,cb)` | 订阅者收到状态变更 | 📋 计划 |
-| v1.5.5 | 事件总线扩展 | 安全事件并入 PMB 总线 | `src/safety/api.js` | `safety 事件发布` | 总线事件可观测 | 📋 计划 |
+| v1.5.4 | 通知机制 | 举报/申诉/裁决事件通知订阅 | `src/safety/events.js（新增）` | `on(caseId,event,cb)` | 订阅者收到状态变更 | ✅ 已实现（v1.5.4） |
+| v1.5.5 | 事件总线扩展 | 安全事件并入 PMB 总线 | `src/safety/api.js` | `safety 事件发布` | 总线事件可观测 | ✅ 已实现（v1.5.5） |
 | v1.5.6 | 仲裁接入 | 裁决与罚没写入记录 | `src/safety/api.js` | `arbitrate(caseId,decision,{slashed})` | guilty 产生罚没；innocent 不罚 | ✅ 已实现 |
 | v1.5.7 | 测试 | 轨道内测试全绿 | `test/safety.test.js` | `—` | 权限/举报/申诉/罚没用例通过 | ✅ 已实现 |
 | v1.5.8 | 文档 | 安全 API 规范 | `docs/DESIGN.md §4.5` | `—` | 与代码一致 | ✅ 已实现 |
-| v1.5.9 | 安全审计清单 | 审计项清单（可追溯） | `docs/VERIFICATION.md（安全段）` | `—` | 审计项逐项可勾选 | 📋 计划 |
+| v1.5.9 | 安全审计清单 | 审计项清单（可追溯） | `docs/VERIFICATION.md（安全段）` | `—` | 审计项逐项可勾选 | ✅ 已实现（v1.5.9） |
 
 ### v1.6.x IndividualLearning — 个体学习（轨道目录 src/learning/）
 
@@ -175,7 +175,7 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 | v1.6.6 | 测试 | 轨道内测试全绿 | `test/learning.test.js` | `—` | 经验/学习循环用例通过 | ✅ 已实现 |
 | v1.6.7 | 文档 | 个体学习设计说明 | `docs/DESIGN.md §4.6` | `—` | 与代码一致 | ✅ 已实现 |
 | v1.6.8 | 示例 | 学习影响定价的演示 | `examples/demo.js（学习段）` | `—` | demo 显示调价结果 | ✅ 已实现 |
-| v1.6.9 | 效果评估 | 学习前后任务质量对比 | `tools/learn-eval.js（新增）` | `—` | 对比报告输出 | 📋 计划 |
+| v1.6.9 | 效果评估 | 学习前后任务质量对比 | `tools/learn-eval.js（新增）` | `—` | 对比报告输出 | ✅ 已实现（v1.6.9） |
 
 ### v1.7.x CommitteeGovernance — 委员会治理（轨道目录 src/council/）
 
@@ -190,7 +190,7 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 | v1.7.6 | 测试 | 轨道内测试全绿 | `test/council.test.js` | `—` | 选举/表决/否决/紧急通道通过 | ✅ 已实现 |
 | v1.7.7 | 文档 | 委员会治理规范 | `docs/DESIGN.md §4.7` | `—` | 与代码一致 | ✅ 已实现 |
 | v1.7.8 | 示例 | 治理流程演示 | `examples/demo.js（治理段）` | `—` | demo 仲裁 passed | ✅ 已实现 |
-| v1.7.9 | 治理审计 | 否决/紧急指令日志审计视图 | `src/observer/dashboard.js（扩展）` | `治理事件只读视图` | 否决理由与指令可查 | 📋 计划 |
+| v1.7.9 | 治理审计 | 否决/紧急指令日志审计视图 | `src/observer/dashboard.js（扩展）` | `治理事件只读视图` | 否决理由与指令可查 | ✅ 已实现（v1.7.9） |
 
 ### v1.8.x CrossChainSettlement — 跨链结算（轨道目录 src/chain/）
 
@@ -201,11 +201,11 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 | v1.8.2 | 结算路由 | 积分→链上资产，账本守恒 | `src/chain/adapters.js` | `SettlementRouter.exchange()/conservation()` | credits×rate = btc+eth | ✅ 已实现 |
 | v1.8.3 | 兑换 Agent 决策 | ExchangeRouter 与结算路由联动 | `examples/demo.js` | `route()→exchange(track)` | track 与实际执行一致 | ✅ 已实现 |
 | v1.8.4 | 信誉桥接接口 | 跨链信誉桥接记录（ReputationBridge.sol 预留） | `src/chain/adapters.js` | `bridgeReputation({fromChain,did,score})` | 记录可追溯 | ✅ 已实现 |
-| v1.8.5 | 链上测试 | 测试网真实背书 | `tools/chain-testnet.js（新增）` | `—` | 测试网用例通过 | 📋 计划 |
+| v1.8.5 | 链上测试 | 测试网真实背书 | `tools/chain-testnet.js（新增）` | `—` | 测试网用例通过 | ✅ 已实现（v1.8.5） |
 | v1.8.6 | 测试 | 轨道内测试全绿 | `test/chain.test.js` | `—` | BTC/ETH/路由/桥接用例通过 | ✅ 已实现 |
 | v1.8.7 | 文档 | 跨链结算设计说明 | `docs/DESIGN.md §4.8` | `—` | 与代码一致 | ✅ 已实现 |
 | v1.8.8 | 示例 | 兑换演示 | `examples/demo.js（跨链段）` | `—` | demo 兑换 txid 输出 | ✅ 已实现 |
-| v1.8.9 | 安全审计 | 承诺/发票校验清单 | `docs/VERIFICATION.md（跨链段）` | `—` | 审计项逐项可勾选 | 📋 计划 |
+| v1.8.9 | 安全审计 | 承诺/发票校验清单 | `docs/VERIFICATION.md（跨链段）` | `—` | 审计项逐项可勾选 | ✅ 已实现（v1.8.9） |
 
 ### v1.9.x NetworkScaling — 网络扩展度量（轨道目录 src/scale/）
 
@@ -213,13 +213,13 @@ Agent 是网络的第一公民——自主生成身份、自主注册、自主�
 |---|---|---|---|---|---|---|
 | v1.9.0 | 缩放定律度量指标（轨道基线） | 吞吐/效率/成本效率/编排开销占比 | `src/scale/metrics.js` | `ScalingMetrics.record()` | 指标计算正确 | ✅ 已实现 |
 | v1.9.1 | 实验框架 | 多节点×多轮可复现实验 | `src/scale/metrics.js` | `ExperimentRunner.run()` | 容量触顶行为正确 | ✅ 已实现 |
-| v1.9.2 | 大规模集群模拟 | 节点规模矩阵（10/100/1k/10k） | `tools/cluster-sim.js（新增）` | `—` | 各规模样本输出 | 📋 计划 |
+| v1.9.2 | 大规模集群模拟 | 节点规模矩阵（10/100/1k/10k） | `tools/cluster-sim.js（新增）` | `—` | 各规模样本输出 | ✅ 已实现（v1.9.2） |
 | v1.9.3 | 效果评估 | 缩放裁决（scaling/saturated） | `src/scale/metrics.js` | `scalingVerdict()` | 完成率峰值+开销恶化→saturated | ✅ 已实现 |
 | v1.9.4 | 数据收集 | 样本序列持久化 | `src/scale/metrics.js` | `samples 数组` | 多轮样本可汇总 | ✅ 已实现 |
 | v1.9.5 | 分析工具 | 摘要与裁决输出 | `src/scale/metrics.js` | `summarize()` | 摘要含样本数与裁决 | ✅ 已实现 |
 | v1.9.6 | 测试 | 轨道内测试全绿 | `test/scale.test.js` | `—` | 度量/裁决/实验用例通过 | ✅ 已实现 |
 | v1.9.7 | 文档 | 网络扩展度量框架 | `docs/DESIGN.md §4.9` | `—` | 与代码一致 | ✅ 已实现 |
-| v1.9.8 | 论文（度量方法） | 多智能体缩放定律度量方法稿 | `docs/SCALING-PAPER.md（新增）` | `—` | 方法章齐全 | 📋 计划 |
+| v1.9.8 | 论文（度量方法） | 多智能体缩放定律度量方法稿 | `docs/SCALING-PAPER.md（新增）` | `—` | 方法章齐全 | ✅ 已实现（v1.9.8） |
 | v1.9.9 | 全量回归与集成发布 | 10 轨道全量回归 + v1.9.9 发布 | `CHANGELOG.md · docs/VERIFICATION.md` | `npm test 全绿；npm publish` | 35/35；registry 可安装 | ✅ 已实现 |
 
 ## 六、人类观察层

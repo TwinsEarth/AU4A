@@ -15,16 +15,20 @@ export const sdk = au;
 export const sdkVersion = au.version;
 
 export { Capability, CapabilityGraph } from './src/capgraph/graph.js';
+export { GraphCache } from './src/capgraph/cache.js';
 
 export { Negotiation, NegotiationState } from './src/negotiate/protocol.js';
 
-export { NodeState, Migrator, takeSnapshot, verifySnapshot } from './src/state/portable.js';
+export { NodeState, Migrator, takeSnapshot, verifySnapshot, diffState, applyDiff } from './src/state/portable.js';
+export { StateStore } from './src/state/store.js';
 
 export { PricingStrategy, AgentEconomy, ExchangeRouter } from './src/economy/pricing.js';
 
 export { PermissionPolicy, SafetyAPI, SafetyStatus } from './src/safety/api.js';
+export { SafetyEvents, attachEvents } from './src/safety/events.js';
 
 export { Experience, ExperienceStore, LearningLoop } from './src/learning/experience.js';
+export { runEvaluation, mulberry32 } from './src/learning/eval.js';
 
 export { Council, CouncilType } from './src/council/committee.js';
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.9.9-batch（2026-10-04）— 计划项批次：99/99 小版本全部落地
+- 15 个计划小版本全部实现：v1.0.7 / v1.1.6 / v1.1.7 / v1.3.5 / v1.3.6 / v1.3.9 / v1.5.4 / v1.5.5 / v1.5.9 / v1.6.9 / v1.7.9 / v1.8.5 / v1.8.9 / v1.9.2 / v1.9.8。
+- 新模块：GraphCache（缓存层）、StateStore（分布式存储接口）、diffState/applyDiff（增量快照）、SafetyEvents（通知+总线）、学习效果评估（eval.js）、Council.auditLog（治理审计）。
+- 新真机工具：`examples/recovery.js`（灾难恢复演练）、`tools/chain-testnet.js`（链上测试 12/12 PASS）、`tools/cluster-sim.js`（10k 节点矩阵）、`tools/learn-eval.js`（效果评估 CLI）。
+- 新文档：`docs/SCALING-PAPER.md`（缩放定律度量方法稿）；VERIFICATION 增补 15 项实测与安全审计清单。
+- 修复 2 个真实缺陷：v1.5.4 缺失 SafetyStatus 导入；v1.7.9 提案/紧急指令 ID 序号冲突（改独立计数器）。
+- 单测累计 **51/51** 全绿；10 条轨道 99 个小版本 100% 已实现。
+
 ## v1.9.9（2026-10-04）— 集成发布版
 - 10 个中版本全部实现并实测：Autonomy / CapabilityGraph / Negotiation / PortableState / EconomicAutonomy / SafetyAPI / IndividualLearning / CommitteeGovernance / CrossChainSettlement / NetworkScaling。
 - 新增端到端演示 `examples/demo.js`：一条命令跑通「Agent 自治经济体」全链路。
