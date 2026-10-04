@@ -25,6 +25,7 @@
 //! | v1.1.10 | 文档与证据 | `docs/tracks/1.1.md` |
 
 pub mod broadcast;
+pub mod cache;
 pub mod capability;
 pub mod declaration;
 pub mod graph;
@@ -33,6 +34,7 @@ pub use broadcast::{
     announce, announce_to, ingest, parse_announcement, parse_query, pump, query_skill,
     Announcement, Ingest, PumpReport, KIND_ANNOUNCE, KIND_REQUEST, PROTOCOL,
 };
+pub use cache::{CacheInsert, CacheStats, CapabilityCache};
 pub use capability::{
     Capability, Constraints, FormatId, SkillId, BP_SCALE, MAX_FORMAT_LEN, MAX_SKILL_LEN,
 };
@@ -281,6 +283,123 @@ fn checks_v113() -> Vec<SelfCheck> {
     checks
 }
 
+/// v1.1.4：容量上限是硬的、淘汰是确定性的、失效是显式的。
+fn checks_v114() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.4.capacity_is_a_hard_bound", || {
+        let mut cache = CapabilityCache::new(3, 0);
+        let mut peak = 0usize;
+        for seed in 0..10u8 {
+            let did = AgentKeys::from_seed(&[seed; 32]).did();
+            cache.insert(
+                NeighborRecord {
+                    did,
+                    epoch: 1,
+                    at: 0,
+                    fingerprint: format!("fp{seed}"),
+                    capabilities: vec![sample_capability()?],
+                },
+                0,
+            );
+            peak = peak.max(cache.len());
+        }
+        if peak > 3 || cache.len() != 3 || cache.stats().evictions != 7 {
+            return Err(format!(
+                "容量上限被突破或淘汰计数不符：peak={peak} len={} evictions={}",
+                cache.len(),
+                cache.stats().evictions
+            ));
+        }
+        Ok("断言：容量 3 的缓存写入 10 条后 len 恒 <=3、末尾 len=3、evictions=7".into())
+    }));
+    checks.push(verdict("1.1.4.lru_eviction_is_deterministic", || {
+        let mut cache = CapabilityCache::new(2, 0);
+        let d1 = AgentKeys::from_seed(&[1; 32]).did();
+        let d2 = AgentKeys::from_seed(&[2; 32]).did();
+        let d3 = AgentKeys::from_seed(&[3; 32]).did();
+        for (did, seed) in [(&d1, 1u8), (&d2, 2)] {
+            cache.insert(
+                NeighborRecord {
+                    did: did.clone(),
+                    epoch: 1,
+                    at: 0,
+                    fingerprint: format!("fp{seed}"),
+                    capabilities: vec![sample_capability()?],
+                },
+                0,
+            );
+        }
+        // 用一下 d1，使 d2 成为最久未用。
+        if cache.get(&d1, 0).is_none() {
+            return Err("命中失败".into());
+        }
+        let evicted = cache.insert(
+            NeighborRecord {
+                did: d3.clone(),
+                epoch: 1,
+                at: 0,
+                fingerprint: "fp3".into(),
+                capabilities: vec![sample_capability()?],
+            },
+            0,
+        );
+        if evicted.evicted != vec![d2.clone()] || cache.peek(&d1).is_none() {
+            return Err(format!("淘汰对象错误：{:?}", evicted.evicted));
+        }
+        Ok("断言：命中 d1 后再写入 → 淘汰最久未用的 d2（(last_used,did) 定序），d1 仍在".into())
+    }));
+    checks.push(verdict("1.1.4.ttl_uses_logical_ticks", || {
+        let mut cache = CapabilityCache::new(4, 10);
+        let did = AgentKeys::from_seed(&[7; 32]).did();
+        cache.insert(
+            NeighborRecord {
+                did: did.clone(),
+                epoch: 1,
+                at: 100,
+                fingerprint: "fp".into(),
+                capabilities: vec![sample_capability()?],
+            },
+            100,
+        );
+        let alive_at_110 = cache.is_live(&did, 110);
+        let alive_at_111 = cache.is_live(&did, 111);
+        let hit = cache.get(&did, 111).is_some();
+        if !alive_at_110 || alive_at_111 || hit || cache.stats().expirations != 1 {
+            return Err("TTL 边界不正确（应为 at+ttl 之内存活、之外失效）".into());
+        }
+        Ok("断言：at=100、ttl=10 时 110 刻存活、111 刻失效并计入 expirations（只用逻辑刻）".into())
+    }));
+    checks.push(verdict("1.1.4.graph_evicts_instead_of_refusing", || {
+        let owner = AgentKeys::from_seed(&[41; 32]);
+        let graph_config = CapGraphConfig {
+            neighbor_capacity: 2,
+            cache_ttl_ticks: 0,
+            ..CapGraphConfig::default()
+        };
+        let mut graph = AgentCapabilityGraph::new(owner.did(), graph_config);
+        let mut applied = 0;
+        for seed in [42u8, 43, 44] {
+            let peer = AgentKeys::from_seed(&[seed; 32]);
+            let signed = Declaration::new(peer.did(), 1, 1, vec![sample_capability()?])
+                .map_err(show)?
+                .sign(&peer)
+                .map_err(show)?;
+            if graph.apply(&signed, 1).is_applied() {
+                applied += 1;
+            }
+        }
+        if applied != 3 || graph.neighbor_count() != 2 || graph.cache_stats().evictions != 1 {
+            return Err(format!(
+                "满容量后的行为不对：applied={applied} neighbors={} evictions={}",
+                graph.neighbor_count(),
+                graph.cache_stats().evictions
+            ));
+        }
+        Ok("断言：容量 2 的图接受 3 个邻居声明全部 applied，最终只留 2 条、淘汰 1 条（不拒绝新信息）".into())
+    }));
+    checks
+}
+
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
     Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
@@ -367,6 +486,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(checks_v111());
     checks.extend(checks_v112());
     checks.extend(checks_v113());
+    checks.extend(checks_v114());
     checks
 }
 
@@ -378,7 +498,7 @@ pub fn results_json() -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "versions": ["v1.1.1", "v1.1.2", "v1.1.3"],
+        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4"],
         "checks": checks.len(),
         "checks_passed": passed,
         "schema": {
@@ -405,17 +525,38 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     // 每个邻居把自己的完整声明作为广播通告送进 PMB。ts 用固定值，保证可重放。
     let mut sent = 0usize;
     let mut send_failures = 0usize;
+    let mut envelopes = Vec::new();
     for agent in &agents[1..] {
         let declaration = Declaration::new(agent.keys.did(), 1, 0, agent.capabilities.clone())?;
         let env = announce(&agent.keys, &declaration, 1)?;
         match kernel.send(&env) {
-            Ok(_) => sent += 1,
+            Ok(_) => {
+                sent += 1;
+                envelopes.push(env);
+            }
             Err(_) => send_failures += 1,
         }
     }
 
     // 收到的通告进图；不属于本轨道的信封被原样转发回队列。
     let pump_report = pump(kernel, &mut graph, 1);
+
+    // 容量与失效的现场演示：另开一个容量 2、TTL 30 的图，喂同样 4 条通告。
+    let observer = AgentKeys::from_seed(&[16; 32]);
+    let mut bounded = AgentCapabilityGraph::new(
+        observer.did(),
+        CapGraphConfig {
+            neighbor_capacity: 2,
+            cache_ttl_ticks: 30,
+            ..CapGraphConfig::default()
+        },
+    );
+    for env in &envelopes {
+        let _ = ingest(&mut bounded, env, 1);
+    }
+    let bounded_retained = bounded.neighbor_count();
+    let bounded_stats = bounded.cache_stats();
+    let bounded_expired = bounded.expire_neighbors(100).len();
 
     // 篡改演示：改动已签通告里的一个数字，验签必然失败（不经过内核，避免污染共享拒绝记录）。
     let tampered_rejected = {
@@ -435,15 +576,15 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "v1.1.3 广播协议：{sent} 条通告入队、{} 条被路由入图、{rejected} 条自有声明被拒、篡改拒绝={tampered_rejected}",
-            pump_report.routed
+            "v1.1.4 缓存层：{sent} 条通告入队、{} 条被路由入图；容量 2 的图淘汰 {} 条、到期 {} 条；篡改拒绝={tampered_rejected}",
+            pump_report.routed, bounded_stats.evictions, bounded_expired
         ),
     );
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "version": "v1.1.3",
+        "version": "v1.1.4",
         "agents_in_kernel": kernel.agent_count(),
         "newly_registered": newly_registered,
         "announcements_sent": sent,
@@ -451,6 +592,14 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         "pump": pump_report.to_value(),
         "tampered_rejected": tampered_rejected,
         "graph": graph.to_value(),
+        "bounded_cache": {
+            "capacity": 2,
+            "ttl_ticks": 30,
+            "retained": bounded_retained,
+            "evictions": bounded_stats.evictions,
+            "expired_at_tick_100": bounded_expired,
+            "retained_after_expiry": bounded.neighbor_count(),
+        },
         "rejected": rejected,
         "events": 1,
     }))

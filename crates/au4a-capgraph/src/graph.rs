@@ -1,7 +1,7 @@
-//! v1.1.2 —— 能力图本体（声明入口）。
+//! v1.1.2 —— 能力图本体（声明入口）；v1.1.4 起邻居侧由缓存层托管。
 //!
 //! `AgentCapabilityGraph` 是**单个 Agent 视角**的图：
-//! 它的「自己」是被签名的自有声明，「别人」是它接受过的邻居声明。
+//! 它的「自己」是被签名的自有声明，「别人」是它缓存下来的邻居声明。
 //! 没有全局注册表——每个 Agent 各持一份视图，视图之间靠广播（v1.1.3）收敛。
 //! 这正是参考项目缺的那一块：能力数据是 Agent 可读写的，而不是运营方数据库里的表。
 //!
@@ -9,11 +9,10 @@
 //! 拒绝是有类型的（[`RefusalCode`]），可以被内核记录、被观察层只读展示、
 //! 也可以被上层拿去升级判定（`Kernel::escalation_for`）。这是 `au4a-core::refusal` 的既有纪律。
 
-use std::collections::BTreeMap;
-
 use au4a_core::{CoreError, Did, RefusalCode};
 use serde_json::{json, Value};
 
+use crate::cache::{CacheStats, CapabilityCache};
 use crate::capability::{Capability, SkillId};
 use crate::declaration::SignedDeclaration;
 
@@ -22,9 +21,9 @@ use crate::declaration::SignedDeclaration;
 pub struct CapGraphConfig {
     /// 每个账户可声明的能力条数上限（防公告轰炸）。
     pub max_skills_per_agent: usize,
-    /// 邻居视图容量上限（v1.1.4 起由缓存层强制执行）。
+    /// 邻居视图容量上限（超出后按 LRU 淘汰，而不是拒绝新信息）。
     pub neighbor_capacity: usize,
-    /// 邻居条目的存活逻辑刻数（v1.1.4 起生效）。
+    /// 邻居条目的存活逻辑刻数；`0` 表示不过期。
     pub cache_ttl_ticks: u64,
 }
 
@@ -38,12 +37,12 @@ impl Default for CapGraphConfig {
     }
 }
 
-/// 邻居能力的已接受记录。
+/// 邻居能力的已接受记录（缓存条目）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NeighborRecord {
     pub did: Did,
     pub epoch: u64,
-    /// 接受时的逻辑时刻。
+    /// 接受时的逻辑时刻（TTL 的基准）。
     pub at: u64,
     /// 声明内容指纹（不含签名）。
     pub fingerprint: String,
@@ -154,18 +153,19 @@ pub struct AgentCapabilityGraph {
     own: Vec<Capability>,
     own_epoch: u64,
     own_fingerprint: Option<String>,
-    neighbors: BTreeMap<Did, NeighborRecord>,
+    neighbors: CapabilityCache,
 }
 
 impl AgentCapabilityGraph {
     pub fn new(owner: Did, config: CapGraphConfig) -> Self {
+        let neighbors = CapabilityCache::new(config.neighbor_capacity, config.cache_ttl_ticks);
         Self {
             owner,
             config,
             own: Vec::new(),
             own_epoch: 0,
             own_fingerprint: None,
-            neighbors: BTreeMap::new(),
+            neighbors,
         }
     }
 
@@ -186,7 +186,7 @@ impl AgentCapabilityGraph {
         &self.own
     }
 
-    /// 应用一份已签名声明：自己的进 `own`，别人的进邻居视图。
+    /// 应用一份已签名声明：自己的进 `own`，别人的进邻居缓存。
     ///
     /// 顺序是刻意的：**先验签，再校验内容，最后才比较版本**。
     /// 如果先看版本，一个伪造的高版本声明就能把状态推到「有更新」，
@@ -260,31 +260,30 @@ impl AgentCapabilityGraph {
     ) -> DeclareOutcome {
         let agent = signed.agent().clone();
         let epoch = signed.epoch();
-        if let Some(known) = self.neighbors.get(&agent) {
-            if known.fingerprint == fingerprint {
-                return DeclareOutcome::unchanged(&agent, known.epoch);
+        // 只有「活着」的记录才算已知：过期记录等价于没听过，否则旧世界会永久驻留。
+        let known = self
+            .neighbors
+            .peek(&agent)
+            .filter(|_| self.neighbors.is_live(&agent, now))
+            .map(|record| (record.epoch, record.fingerprint.clone()));
+        if let Some((known_epoch, known_fingerprint)) = known {
+            if known_fingerprint == fingerprint {
+                return DeclareOutcome::unchanged(&agent, known_epoch);
             }
-            if epoch < known.epoch {
+            if epoch < known_epoch {
                 return DeclareOutcome::rejected(
                     &agent,
                     RefusalCode::StaleEpoch,
-                    format!("epoch {epoch} < known {}", known.epoch),
+                    format!("epoch {epoch} < known {known_epoch}"),
                 );
             }
-            if epoch == known.epoch {
+            if epoch == known_epoch {
                 return DeclareOutcome::rejected(
                     &agent,
                     RefusalCode::Conflict,
                     format!("epoch {epoch} reused with different content"),
                 );
             }
-        } else if self.neighbors.len() >= self.config.neighbor_capacity {
-            // v1.1.2：满了就拒绝。v1.1.4 会把这里换成确定性的 LRU 淘汰。
-            return DeclareOutcome::rejected(
-                &agent,
-                RefusalCode::ResourceExhausted,
-                format!("neighbor view full ({})", self.neighbors.len()),
-            );
         }
         let record = NeighborRecord {
             did: agent.clone(),
@@ -293,9 +292,17 @@ impl AgentCapabilityGraph {
             fingerprint: fingerprint.clone(),
             capabilities: signed.capabilities().to_vec(),
         };
-        let skills = record.capabilities.len();
-        self.neighbors.insert(agent.clone(), record);
-        DeclareOutcome::applied(&agent, epoch, skills, fingerprint)
+        let insert = self.neighbors.insert(record, now);
+        if !insert.accepted {
+            // 唯一会「拒绝新信息」的情形：缓存容量被配成 0（不缓存）。这是配置问题，
+            // 不是竞争问题——因此用容量语义的拒绝码，而不是把它算成对端作恶。
+            return DeclareOutcome::rejected(
+                &agent,
+                RefusalCode::ResourceExhausted,
+                "neighbor cache capacity is 0",
+            );
+        }
+        DeclareOutcome::applied(&agent, epoch, signed.capabilities().len(), fingerprint)
     }
 
     /// 某个 Agent 的能力（自己或邻居）。
@@ -303,19 +310,53 @@ impl AgentCapabilityGraph {
         if did == &self.owner {
             return Some(&self.own);
         }
-        self.neighbors.get(did).map(|r| r.capabilities.as_slice())
+        self.neighbors.peek(did).map(|r| r.capabilities.as_slice())
     }
 
+    /// 邻居记录（不做过期判定、不触碰 LRU）。命中式读取用 [`Self::get_neighbor`]。
     pub fn neighbor(&self, did: &Did) -> Option<&NeighborRecord> {
-        self.neighbors.get(did)
+        self.neighbors.peek(did)
+    }
+
+    /// 命中式读取：清理过期条目、推进 LRU、计入缓存统计。
+    pub fn get_neighbor(&mut self, did: &Did, now: u64) -> Option<&NeighborRecord> {
+        self.neighbors.get(did, now)
     }
 
     pub fn neighbors(&self) -> impl Iterator<Item = &NeighborRecord> {
-        self.neighbors.values()
+        self.neighbors.iter()
     }
 
     pub fn neighbor_count(&self) -> usize {
         self.neighbors.len()
+    }
+
+    /// 未过期的邻居数。
+    pub fn live_neighbor_count(&self, now: u64) -> usize {
+        self.neighbors.live_len(now)
+    }
+
+    /// 清理过期邻居，返回被清理的 DID（字典序）。
+    pub fn expire_neighbors(&mut self, now: u64) -> Vec<Did> {
+        self.neighbors.expire(now)
+    }
+
+    /// 显式失效一个邻居。
+    pub fn invalidate_neighbor(&mut self, did: &Did) -> bool {
+        self.neighbors.invalidate(did)
+    }
+
+    pub fn cache_stats(&self) -> CacheStats {
+        self.neighbors.stats()
+    }
+
+    pub fn cache_capacity(&self) -> usize {
+        self.neighbors.capacity()
+    }
+
+    /// LRU 顺序（最久未用在前）。
+    pub fn lru_order(&self) -> Vec<Did> {
+        self.neighbors.lru_order()
     }
 
     /// 视图里的 Agent 数量（含自己）。
@@ -325,13 +366,13 @@ impl AgentCapabilityGraph {
 
     /// 视图里的能力总条数（含自己）。
     pub fn capability_count(&self) -> usize {
-        self.own.len() + self.neighbors.values().map(|r| r.capabilities.len()).sum::<usize>()
+        self.own.len() + self.neighbors.iter().map(|r| r.capabilities.len()).sum::<usize>()
     }
 
     /// 视图里出现过的全部技能（升序、去重）。
     pub fn skills(&self) -> Vec<&SkillId> {
         let mut skills: Vec<&SkillId> = Vec::new();
-        for cap in self.own.iter().chain(self.neighbors.values().flat_map(|r| r.capabilities.iter())) {
+        for cap in self.own.iter().chain(self.neighbors.iter().flat_map(|r| r.capabilities.iter())) {
             if !skills.contains(&&cap.skill) {
                 skills.push(&cap.skill);
             }
@@ -344,13 +385,13 @@ impl AgentCapabilityGraph {
     pub fn to_value(&self) -> Value {
         let neighbors: Vec<Value> = self
             .neighbors
-            .values()
+            .iter()
             .map(|r| {
                 json!({
                     "did": r.did.as_str(),
                     "epoch": r.epoch,
                     "at": r.at,
-                    "skills": r.skills().iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                    "skills": r.capabilities.iter().map(|c| c.skill.as_str()).collect::<Vec<_>>(),
                 })
             })
             .collect();
@@ -359,7 +400,9 @@ impl AgentCapabilityGraph {
             "own_epoch": self.own_epoch,
             "own_skills": self.own.iter().map(|c| c.skill.as_str()).collect::<Vec<_>>(),
             "neighbors": neighbors,
+            "neighbor_capacity": self.neighbors.capacity(),
             "capability_count": self.capability_count(),
+            "cache": self.neighbors.stats().to_value(),
         })
     }
 }
@@ -443,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn neighbor_view_capacity_is_enforced() {
+    fn a_full_neighbor_view_evicts_instead_of_refusing() {
         let a = keys(1);
         let config = CapGraphConfig {
             neighbor_capacity: 2,
@@ -453,8 +496,26 @@ mod tests {
         assert!(g.apply(&signed(&keys(2), 1, &["x"]), 1).is_applied());
         assert!(g.apply(&signed(&keys(3), 1, &["x"]), 1).is_applied());
         let third = g.apply(&signed(&keys(4), 1, &["x"]), 1);
-        assert_eq!(third.refusal(), Some(RefusalCode::ResourceExhausted));
-        assert_eq!(g.neighbor_count(), 2);
+        assert!(third.is_applied(), "满了要淘汰旧条目，而不是拒绝新信息");
+        assert_eq!(g.neighbor_count(), 2, "容量上限是硬约束");
+        assert_eq!(g.cache_stats().evictions, 1);
+    }
+
+    #[test]
+    fn an_expired_neighbor_is_treated_as_unknown() {
+        let a = keys(1);
+        let b = keys(2);
+        let config = CapGraphConfig {
+            cache_ttl_ticks: 10,
+            ..CapGraphConfig::default()
+        };
+        let mut g = AgentCapabilityGraph::new(a.did(), config);
+        assert!(g.apply(&signed(&b, 5, &["x"]), 100).is_applied());
+        assert_eq!(g.live_neighbor_count(110), 1);
+        // 过期后同 epoch 异内容不再是 conflict（旧世界已经不存在了），而是重新接受。
+        let after = g.apply(&signed(&b, 5, &["y"]), 111);
+        assert!(after.is_applied(), "{:?}", after.to_value());
+        assert_eq!(g.cache_stats().expirations, 1);
     }
 
     #[test]

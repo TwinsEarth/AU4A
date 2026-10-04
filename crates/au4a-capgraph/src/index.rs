@@ -114,17 +114,6 @@ impl CapabilityIndex {
         self.writes
     }
 
-    /// `(技能, 键)` 全量列表：一致性不变式检查用（键必须能解析回同技能的能力）。
-    pub fn skill_entries(&self) -> Vec<(SkillId, CapKey)> {
-        let mut out = Vec::new();
-        for (skill, keys) in &self.by_skill {
-            for key in keys {
-                out.push((skill.clone(), key.clone()));
-            }
-        }
-        out
-    }
-
     pub fn to_value(&self) -> Value {
         json!({
             "agents": self.indexed_agents(),
@@ -291,6 +280,17 @@ pub struct CapabilityMatch {
 }
 
 impl CapabilityMatch {
+    /// 排序键：可靠度降序 → 加权延迟升序 → 价格升序 → DID/槽位（确定性兜底）。
+    fn rank_key(&self) -> (i64, u64, i64, &Did, usize) {
+        (
+            -self.score,
+            self.capability.effective_latency_ms(),
+            self.capability.price_per_unit.get(),
+            &self.did,
+            self.slot,
+        )
+    }
+
     pub fn to_value(&self) -> Value {
         json!({
             "did": self.did.as_str(),
@@ -316,8 +316,6 @@ pub struct QueryStats {
     pub matched: usize,
     /// 整张图里的能力总条数（对照量）。
     pub nodes_total: usize,
-    /// 本查询是否走了「有界 top-k」而不是全排序（v1.1.8 起）。
-    pub bounded_selection: bool,
 }
 
 impl QueryStats {
@@ -327,7 +325,6 @@ impl QueryStats {
             "scanned": self.scanned,
             "matched": self.matched,
             "nodes_total": self.nodes_total,
-            "bounded_selection": self.bounded_selection,
         })
     }
 }
@@ -377,12 +374,9 @@ impl QueryResult {
     }
 }
 
-/// 排序与截断的**参考实现**（v1.1.5 起）：全排序后截断。
-///
-/// v1.1.8 的 [`crate::perf::rank_top_k`] 在 `limit < 候选数` 时用有界选择替代它，
-/// 并且必须与它**逐位一致**——这条不变式由 `perf` 模块的测试断言。
-pub fn rank_and_truncate(mut matches: Vec<CapabilityMatch>, limit: usize) -> Vec<CapabilityMatch> {
-    matches.sort_by(|a, b| crate::perf::rank_key(a).cmp(&crate::perf::rank_key(b)));
+/// 对候选排序并截断。抽成函数是为了让 v1.1.8 的「有界 top-k」能与之逐位对齐。
+pub(crate) fn rank_and_truncate(mut matches: Vec<CapabilityMatch>, limit: usize) -> Vec<CapabilityMatch> {
+    matches.sort_by(|a, b| a.rank_key().cmp(&b.rank_key()));
     if limit > 0 && matches.len() > limit {
         matches.truncate(limit);
     }
@@ -446,26 +440,26 @@ mod tests {
 
     #[test]
     fn query_filters_are_all_hard_conditions() {
-        let base_cap = cap("translate.en-zh", 5)
+        let cap = cap("translate.en-zh", 5)
             .with_latency(100, 300)
             .with_throughput(60)
             .with_load_bp(2_000)
             .with_reliability_bp(9_000);
         let base = CapabilityQuery::new(skill("translate.en-zh"));
-        assert!(base.matches(&base_cap));
-        assert!(!base.clone().with_max_price(Credits(4)).matches(&base_cap));
-        assert!(base.clone().with_max_price(Credits(5)).matches(&base_cap));
-        assert!(!base.clone().with_min_reliability_bp(9_001).matches(&base_cap));
-        assert!(!base.clone().with_max_latency_p99_ms(299).matches(&base_cap));
-        assert!(!base.clone().with_min_throughput(61).matches(&base_cap));
-        assert!(!base.clone().with_min_available_bp(8_001).matches(&base_cap));
-        assert!(base.clone().with_min_available_bp(8_000).matches(&base_cap));
-        assert!(base.clone().with_region("eu-west").matches(&base_cap), "空白名单=不限区域，故任何区域都受理");
-        assert!(!base.clone().with_output_format(FormatId::new("application/json").expect("v")).matches(&base_cap));
+        assert!(base.matches(&cap));
+        assert!(!base.clone().with_max_price(Credits(4)).matches(&cap));
+        assert!(base.clone().with_max_price(Credits(5)).matches(&cap));
+        assert!(!base.clone().with_min_reliability_bp(9_001).matches(&cap));
+        assert!(!base.clone().with_max_latency_p99_ms(299).matches(&cap));
+        assert!(!base.clone().with_min_throughput(61).matches(&cap));
+        assert!(!base.clone().with_min_available_bp(8_001).matches(&cap));
+        assert!(base.clone().with_min_available_bp(8_000).matches(&cap));
+        assert!(!base.clone().with_region("eu-west").matches(&cap), "空白名单=不限区域");
+        assert!(!base.clone().with_output_format(FormatId::new("application/json").expect("v")).matches(&cap));
         assert!(base
             .clone()
             .with_input_format(FormatId::new("text/plain").expect("v"))
-            .matches(&base_cap));
+            .matches(&cap));
         assert!(!base.clone().matches(&cap("other.skill", 1)));
     }
 

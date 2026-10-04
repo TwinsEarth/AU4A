@@ -112,17 +112,37 @@
       "version": "v1.1.4",
       "title": "缓存层",
       "goal": "邻居能力缓存：容量上限 + TTL 失效 + LRU 淘汰，全部确定性",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/cache.rs: CapabilityCache（容量上限/TTL/LRU/命中统计）+ CacheStats + CacheInsert",
+        "src/graph.rs: 邻居侧改由缓存托管；新增 get_neighbor/expire_neighbors/invalidate_neighbor/cache_stats/lru_order/live_neighbor_count",
+        "tests/cache.rs: 9 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn CapabilityCache::new(capacity: usize, ttl_ticks: u64) -> Self",
+        "pub fn CapabilityCache::get(&mut self, did: &Did, now: u64) -> Option<&NeighborRecord>",
+        "pub fn CapabilityCache::insert(&mut self, record: NeighborRecord, now: u64) -> CacheInsert",
+        "pub fn CapabilityCache::is_live(&self, did: &Did, now: u64) -> bool",
+        "pub fn CapabilityCache::expire(&mut self, now: u64) -> Vec<Did>",
+        "pub fn CapabilityCache::evict_lru(&mut self) -> Option<Did>",
+        "pub struct CacheStats { hits, misses, inserts, updates, evictions, expirations, invalidations }"
+      ],
+      "acceptance": [
+        "容量 8 写入 64 条过程中 len 峰值<=8、末尾 len=8、evictions=56；容量 3 时 evictions=7（硬上限）",
+        "触碰 1、2 后 lru_order 恰为 [3,1,2]，下一次写入淘汰 3；重跑同一序列得到同一淘汰结果",
+        "TTL 用逻辑刻：at=1000,ttl=20 时 1020 刻存活、1021 刻失效并计入 expirations；ttl=0 永不过期",
+        "邻居过期后同 epoch 异内容不再判 conflict 而是重新接受（旧世界已不存在）",
+        "invalidate 只移除指定邻居；重复失效为空操作且不再计数",
+        "容量 0 时返回 resource_exhausted，且 is_misconduct()==false（容量是竞争语义）",
+        "真实广播下容量 2 的图：4 条通告全部 applied、保留 2 条、淘汰 2 条；两个独立图 lru_order 相同"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 69,
+        "tests_total": 69,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 35 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 = 69，0 failed，本 crate 0 warning。语义变更：v1.1.2 的“满了就拒”占位策略被 LRU 淘汰取代。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.5",
