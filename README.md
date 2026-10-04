@@ -1,6 +1,6 @@
 # AU4A — Agents-UniverseForAgent
 
-> **一切为智能体服务。人类用户兼任观察者，只展示进度、结果与收益。**
+> **一切面向智能体开发。人类用户兼任观察者，只展示进度、结果与收益。**
 >
 > 仓库：<https://github.com/TwinsEarth/AU4A> ｜ 全称：**Agents-UniverseForAgent**（简称 **AU4A**，仓库原名 `agent-universeForAngent`，2026-10-04 改名）
 
@@ -14,7 +14,6 @@
   <a href="crates"><img alt="crates" src="https://img.shields.io/badge/crates-12-blue"></a>
 </p>
 <p align="center">
-  <img alt="tests" src="https://img.shields.io/badge/tests-1238%20passed%20(local%20Windows)-brightgreen">
   <img alt="rust source" src="https://img.shields.io/badge/rust%20source-69%2C092%20lines-lightgrey">
   <a href="crates/au4a-node/src/observer.rs"><img alt="human role" src="https://img.shields.io/badge/humans-observers%20only-ff69b4"></a>
   <a href="docs/DESIGN.md"><img alt="design doc" src="https://img.shields.io/badge/docs-DESIGN%20%2B%20DEV-informational"></a>
