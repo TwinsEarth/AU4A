@@ -296,18 +296,36 @@
     {
       "version": "v1.1.9",
       "title": "测试",
-      "goal": "端到端场景 + 不变式 + 对抗用例的完整测试面",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "goal": "端到端场景 + 不变式 + 对抗用例的完整测试面，并提供独立校验器",
+      "deliverables": [
+        "src/planner.rs: verify_pipeline() 独立校验器（格式链/度量/约束/代价自洽）",
+        "tests/end_to_end.rs: 9 个端到端测试（全链路、换图独立验通、逐字节可重放、索引==全扫）",
+        "tests/invariants.rs: 5 个不变式测试（确定性 LCG 8 种子×60 步，逐步断言 I1–I7）",
+        "tests/adversarial.rs: 11 个对抗测试（改价/重放/冲突/走私/轰炸/饥饿/容量 0/极端查询）",
+        "src/lib.rs: checks_v119（校验器正反用例 + scenario 逐版字段覆盖）"
+      ],
+      "interfaces": [
+        "pub fn verify_pipeline(graph: &AgentCapabilityGraph, request: &PipelineRequest, cost: &PlanCost, pipeline: &Pipeline) -> Result<(), String>"
+      ],
+      "acceptance": [
+        "规划结果能被 verify_pipeline 逐项验通；换一张图（仅凭同样的广播数据）也能验通",
+        "改价 / 改格式 / 少一步 / 换 DID 四种篡改方案全部被校验器拒绝",
+        "全链路逐字节可重放：规划结论、图状态、版本摘要、操作计数四项两次运行完全相同",
+        "索引结果与朴素全扫（含自有能力）逐条相同",
+        "陈旧广播进不了规划：重放 v1 被判 stale_epoch，规划仍用 v2 的价格",
+        "I1–I7 在 8 个种子 × 60 步随机操作序列的每一步后都成立",
+        "无路径与放宽后有路径一致：预算 1 → policy_denied；期限 1ms → timeout；去约束后可行",
+        "对抗 11 例：拒绝码正确、且被拒之后图状态逐字节不变",
+        "scenario 输出包含 8 个版本的证据字段（指针检查）"
+      ],
       "evidence": {
-        "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "test_command": "cargo test -p au4a-capgraph (CARGO_INCREMENTAL=0)",
+        "tests_passed": 151,
+        "tests_total": 151,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 57 + adversarial 11 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + end_to_end 9 + invariants 5 + perf 9 + planner 9 + query_index 8 + versioning 9 = 151，0 failed，0 warning（含依赖）。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.10",

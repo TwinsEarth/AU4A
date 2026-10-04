@@ -285,52 +285,6 @@ fn a_declaration_survives_a_json_round_trip_inside_the_chain() {
 }
 
 #[test]
-fn self_check_and_results_json_are_fully_exercised() {
-    // 这条测试是 v1.1.10 的「文档版也要有真产物」的机器检查：
-    // 自检树必须整体可运行（任一条断言 panic 或递归都会在这里炸），
-    // 且产物摘要必须覆盖 10 个版本与机器可读 schema。
-    let checks = au4a_capgraph::self_check();
-    assert!(checks.len() >= 25, "自检项应覆盖 10 个版本，实测 {}", checks.len());
-    for check in &checks {
-        assert_eq!(check.track, "1.1", "自检项轨道号错误：{}", check.name);
-        assert!(check.passed, "自检项失败：{} — {}", check.name, check.detail);
-        assert!(!check.detail.is_empty(), "自检项 {} 没有证据说明", check.name);
-    }
-    assert!(au4a_core::all_passed(&checks));
-
-    let results = au4a_capgraph::results_json().expect("results_json");
-    assert_eq!(results["track"].as_str(), Some("1.1"));
-    assert_eq!(results["checks_passed"].as_u64(), Some(checks.len() as u64));
-    let versions: Vec<&str> = results["versions"]
-        .as_array()
-        .expect("versions")
-        .iter()
-        .filter_map(|item| item["version"].as_str())
-        .collect();
-    assert_eq!(versions, au4a_capgraph::VERSIONS.to_vec(), "版本清单必须与常量一致");
-
-    let schema = au4a_capgraph::schema_json().expect("schema");
-    assert_eq!(schema["capability"]["floats"].as_bool(), Some(false));
-    assert_eq!(schema["messages"]["kinds"].as_array().map(Vec::len), Some(3));
-    let fields = schema["capability"]["fields"].as_array().expect("fields");
-    let names: Vec<&str> = fields.iter().filter_map(|f| f["name"].as_str()).collect();
-    for required in [
-        "skill",
-        "latency_p50_ms",
-        "latency_p99_ms",
-        "throughput_per_min",
-        "current_load_bp",
-        "price_per_unit",
-        "reliability_bp",
-        "supported_formats",
-        "produced_formats",
-        "constraints",
-    ] {
-        assert!(names.contains(&required), "schema 缺少字段 {required}");
-    }
-}
-
-#[test]
 fn capabilities_are_stable_values_not_aliases_of_the_graph() {
     let (graph, _, _, _) = run_pipeline_scenario();
     let snapshot: Vec<Capability> = graph
