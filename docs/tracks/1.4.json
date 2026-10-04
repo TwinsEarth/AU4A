@@ -161,6 +161,37 @@
         "notes": "本机 Windows 实测 cargo exit 0、0 warning；冻结错误码映射（state_conflict→InvalidKind、not_a_party→UnknownAgent）已写入文档；日志 _forangent\\logs\\1.4-v1.4.5.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.6",
+      "title": "结算路由",
+      "goal": "结算路由决策表（证据等级/cpu-proto 上限/收款方争议）+ 整数最大余数法分成；收益归属资源提供者，人类操作者只收收益不决策。",
+      "deliverables": [
+        "src/settlement.rs: ProviderRole / BeneficiaryKind / DecisionRights / Beneficiary / RevenueShare / Receipt / SettlementRoute / SettlementPolicy / SettlementRequest / SettlementDecision / SettlementOutcome / RevenueBook / route / split_weights / settle_direct / execute_escrow / release_escrow / refund_escrow / pay_split",
+        "src/lib.rs: scenario 拒付-托管-退回-分成（140 compute + 60 human_operator）；self_check settlement.evidence_gate 与 settlement.split_exact"
+      ],
+      "interfaces": [
+        "pub fn route(request: &SettlementRequest, policy: &SettlementPolicy) -> CoreResult<SettlementDecision>",
+        "pub fn split_weights(total: Credits, weights_bp: &[i64]) -> CoreResult<Vec<Credits>>",
+        "pub fn pay_split(kernel: &mut Kernel, request: &SettlementRequest, shares: &[RevenueShare], policy: &SettlementPolicy) -> CoreResult<SettlementOutcome>",
+        "pub fn execute_escrow / release_escrow / refund_escrow(ledger: &mut Ledger, ...) -> CoreResult<...>",
+        "pub fn Beneficiary::human_operator(did: Did) -> Beneficiary // decision_rights() == IncomeOnly"
+      ],
+      "acceptance": [
+        "零额 → ZeroAmount；Unverified → withheld/evidence_unverified；cpu-proto 超上限 → withheld/cpu_proto_cap；争议 → escrowed/payee_under_dispute；其余 direct",
+        "最大余数法：10→3/3/4、100→33/33/34、1000→333/333/334；1..500 全部总额 Σ 严格等于原额",
+        "权重和≠10000bp / 空表 / 越界 → 拒绝；总额 0 → ZeroAmount",
+        "200 分成 140/60 后付款方 790、提供者 1130/1050，守恒成立；拒付与托管下账本不动",
+        "托管 300 → 锁定 300；退回复原；放款给收款方 +300；人类操作者 decision_rights=income_only 且 may_decide=false"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-economy)",
+        "tests_passed": 65,
+        "tests_total": 65,
+        "grade": "verified",
+        "notes": "本 crate 0 warning；au4a-kernel 有 1 条 unused import 警告（属轨道 1.0，未越界修改）；日志 _forangent\\logs\\1.4-v1.4.6.log"
+      },
+      "status": "done"
     }
   ]
 }

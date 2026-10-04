@@ -18,6 +18,7 @@ pub mod arbitration;
 pub mod balance;
 pub mod fx;
 pub mod pricing;
+pub mod settlement;
 pub mod stake;
 
 use au4a_core::{
@@ -36,6 +37,10 @@ pub use fx::{
     RouteAction, RoutePlan, RouteTable, Urgency, Venue,
 };
 pub use pricing::{unit_price, PriceComponents, PriceInputs, PriceKnobs, PriceQuote};
+pub use settlement::{
+    Beneficiary, BeneficiaryKind, DecisionRights, ProviderRole, Receipt, RevenueBook, RevenueShare,
+    SettlementDecision, SettlementOutcome, SettlementPolicy, SettlementRequest, SettlementRoute,
+};
 pub use stake::{StakeBook, StakePosition, StakeTerms, Unbonding};
 
 /// 轨道号。
@@ -358,6 +363,63 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("settlement.evidence_gate", || {
+        let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+        let a = agent(16);
+        let b = agent(17);
+        ensure_registered(&mut kernel, &a, "gate.a", &["x"], Credits(10)).map_err(|e| e.to_string())?;
+        ensure_registered(&mut kernel, &b, "gate.b", &["y"], Credits(10)).map_err(|e| e.to_string())?;
+        if settlement::settle_direct(&mut kernel, &a.did(), &b.did(), Credits(10), EvidenceGrade::Unverified).is_ok() {
+            return Err("Unverified 证据竟然完成了结算".to_string());
+        }
+        let request = settlement::SettlementRequest {
+            payer: a.did(),
+            payee: b.did(),
+            total: Credits(10),
+            evidence: EvidenceGrade::Unverified,
+            dispute_open: false,
+            at: 1,
+        };
+        let decision = settlement::route(&request, &settlement::SettlementPolicy::DEFAULT)
+            .map_err(|e| e.to_string())?;
+        if decision.route != settlement::SettlementRoute::Withheld {
+            return Err(format!("Unverified 应被拒付，实际 {}", decision.route.as_str()));
+        }
+        // Verified 可以结算。
+        settlement::settle_direct(&mut kernel, &a.did(), &b.did(), Credits(10), EvidenceGrade::Verified)
+            .map_err(|e| format!("Verified 结算被拒绝：{e}"))?;
+        kernel
+            .ledger()
+            .check_conservation()
+            .map_err(|e| format!("守恒断言失败：{e}"))?;
+        Ok(format!(
+            "Unverified → {}（{}），账本未动；Verified → 10 微积分结算成功，守恒成立",
+            decision.route.as_str(),
+            decision.reason
+        ))
+    }));
+
+    checks.push(check("settlement.split_exact", || {
+        let parts = settlement::split_weights(Credits(10), &[3_333, 3_333, 3_334])
+            .map_err(|e| e.to_string())?;
+        let sum: i64 = parts.iter().map(|c| c.get()).sum();
+        if sum != 10 || parts != vec![Credits(3), Credits(3), Credits(4)] {
+            return Err(format!("最大余数法拆分错误：{parts:?}（合计 {sum}）"));
+        }
+        if settlement::split_weights(Credits(100), &[5_000, 4_999]).is_ok() {
+            return Err("权重之和不是 10000bp 却被接受".to_string());
+        }
+        let human = settlement::Beneficiary::human_operator(agent(18).did());
+        if human.may_decide() || human.decision_rights() != settlement::DecisionRights::IncomeOnly {
+            return Err("人类操作者竟然有决策权".to_string());
+        }
+        Ok(format!(
+            "10 按 3333/3333/3334 拆成 {:?}（合计 {sum}）；权重不等 10000bp 被拒；人类操作者决策权 = {:?}",
+            parts.iter().map(|c| c.get()).collect::<Vec<_>>(),
+            human.decision_rights()
+        ))
+    }));
+
     checks
 }
 
@@ -377,7 +439,7 @@ pub fn results_json() -> CoreResult<Value> {
         "checks_total": checks.len(),
         "checks_passed": passed,
         "all_passed": au4a_core::all_passed(&checks),
-        "modules": ["balance", "pricing", "fx", "stake", "arbitration"],
+        "modules": ["balance", "pricing", "fx", "stake", "arbitration", "settlement"],
         "invariants": [
             "Σ可用 + Σ锁定 + 罚没 == 发行",
             "整数微积分与基点运算，规范 JSON 禁浮点",
@@ -436,7 +498,7 @@ fn parse_announcement(env: &Envelope) -> Option<Announcement> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：余额 + 定价 + 兑换 + 质押 + 仲裁（v1.4.5）"),
+        format!("{TITLE} {RANGE}：余额 + 定价 + 兑换 + 质押 + 仲裁 + 结算路由（v1.4.6）"),
     );
 
     let seller_keys = agent(41);
@@ -710,6 +772,107 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         ),
     );
 
+    // 结算路由 + 收益归属：拒付（证据不可结算）→ 托管（收款方有未结争议）→ 分成直接结算。
+    let mut revenue = RevenueBook::new();
+    let share_of = |who: &Did, bp: i64, role: ProviderRole, kind: BeneficiaryKind| RevenueShare {
+        beneficiary: who.clone(),
+        share_bp: bp,
+        role,
+        kind,
+    };
+    // 1) Unverified 证据：路由 withheld，绝不结算（内核证据闸门 + 路由决策双重把关）。
+    let withheld_req = SettlementRequest {
+        payer: buyer.clone(),
+        payee: seller.clone(),
+        total: Credits(50),
+        evidence: EvidenceGrade::Unverified,
+        dispute_open: false,
+        at: kernel.now(),
+    };
+    let withheld = settlement::pay_split(
+        kernel,
+        &withheld_req,
+        &[share_of(&seller, 10_000, ProviderRole::Skill, BeneficiaryKind::Agent)],
+        &SettlementPolicy::DEFAULT,
+    )?;
+    if !matches!(withheld, SettlementOutcome::Withheld(_)) {
+        return Err(CoreError::InvalidKind);
+    }
+    // 2) 收款方有未结争议 → 托管：先锁定，争议未结时退回付款方（所有权不变）。
+    let open_case = court.open(&buyer, &seller, Credits(50), EvidenceGrade::Verified, kernel.now())?;
+    let escrow_req = SettlementRequest {
+        payer: buyer.clone(),
+        payee: seller.clone(),
+        total: Credits(100),
+        evidence: EvidenceGrade::Verified,
+        dispute_open: true,
+        at: kernel.now(),
+    };
+    let escrowed = settlement::pay_split(
+        kernel,
+        &escrow_req,
+        &[share_of(&seller, 10_000, ProviderRole::Skill, BeneficiaryKind::Agent)],
+        &SettlementPolicy::DEFAULT,
+    )?;
+    if !matches!(escrowed, SettlementOutcome::Escrowed(_)) {
+        return Err(CoreError::InvalidKind);
+    }
+    let escrow_at = kernel.now();
+    let escrowed_amount = settlement::execute_escrow(kernel.ledger_mut(), &buyer, Credits(100))?;
+    revenue.record_escrow(settlement::EscrowRecord {
+        payer: buyer.as_str().to_string(),
+        amount: escrowed_amount,
+        at: escrow_at,
+        closed: false,
+    });
+    let refunded = settlement::refund_escrow(kernel.ledger_mut(), &buyer, Credits(100))?;
+    revenue.close_last_escrow();
+    kernel.emit(
+        "economy.escrow",
+        format!("托管 {escrowed_amount} 后因争议未结退回 {refunded}（所有权未变）"),
+    );
+    // 3) 分成直接结算：买方支付 200 → 算力提供者 7000bp（140）、人类操作者的数据资源 3000bp（60）。
+    let owner_keys = agent(45);
+    let owner = owner_keys.did(); // 人类操作者：只收收益，不注册为 Agent、不参与任何决策
+    let split_req = SettlementRequest {
+        payer: buyer.clone(),
+        payee: rival.clone(),
+        total: Credits(200),
+        evidence: EvidenceGrade::Verified,
+        dispute_open: false,
+        at: kernel.now(),
+    };
+    let shares = vec![
+        share_of(&rival, 7_000, ProviderRole::Compute, BeneficiaryKind::Agent),
+        share_of(&owner, 3_000, ProviderRole::Data, BeneficiaryKind::HumanOperator),
+    ];
+    // 分成也是支出：先过买方自己的余额策略。
+    if !book.check(kernel.ledger(), &buyer, Credits(200))?.allowed() {
+        return Err(CoreError::InsufficientFunds);
+    }
+    let outcome = settlement::pay_split(kernel, &split_req, &shares, &SettlementPolicy::DEFAULT)?;
+    let receipts = match &outcome {
+        SettlementOutcome::Paid(receipts) => {
+            for r in receipts {
+                revenue.record_receipt(r.clone());
+            }
+            receipts.clone()
+        }
+        _ => return Err(CoreError::InvalidKind),
+    };
+    let human = Beneficiary::human_operator(owner.clone());
+    if human.may_decide() {
+        return Err(CoreError::InvalidKind);
+    }
+    kernel.emit(
+        "economy.settled",
+        format!(
+            "分成结算 200 → {} 笔凭证；人类操作者决策权 = {:?}（只收收益）",
+            receipts.len(),
+            human.decision_rights()
+        ),
+    );
+
     // 守恒断言 + 余额变动投影。
     balance::assert_conserved(kernel.ledger())?;
     let after = kernel.ledger().view();
@@ -730,8 +893,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.4.5 余额 + 定价 + 兑换 + 质押 + 争议仲裁",
-        "agents": [row(&seller)?, row(&buyer)?, row(&rival)?, row(&arbiter)?],
+        "scenario": "v1.4.6 余额 + 定价 + 兑换 + 质押 + 仲裁 + 结算路由与收益归属",
+        "agents": [row(&seller)?, row(&buyer)?, row(&rival)?, row(&arbiter)?, row(&owner)?],
         "pricing": {
             "knobs": PriceKnobs::DEFAULT,
             "quotes": quotes_json,
@@ -766,6 +929,20 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "appeal": appeal,
             "second_ruling": second_ruling,
             "court": court.to_json(),
+        },
+        "settlement": {
+            "policy": SettlementPolicy::DEFAULT,
+            "withheld": { "route": SettlementRoute::Withheld.as_str(), "reason": "evidence_unverified", "amount": 50 },
+            "escrow": { "amount": escrowed_amount, "refunded": refunded, "closed": true, "case": open_case.id },
+            "shares": shares,
+            "receipts": receipts,
+            "human_operator": {
+                "did": owner.as_str(),
+                "decision_rights": human.decision_rights(),
+                "may_decide": human.may_decide(),
+                "earned": revenue.earned(&owner)?,
+            },
+            "revenue": revenue.to_json(),
         },
         "settled": [{ "from": buyer.as_str(), "to": seller.as_str(), "amount": price, "gate": "ledger-direct" }],
         "refusals": [
@@ -848,6 +1025,23 @@ mod tests {
         assert_eq!(a["dispute"]["case"]["state"], json!("closed"));
         assert_eq!(a["dispute"]["court"]["total_slashed"], json!(100));
         assert_eq!(a["refusals"][2]["verdict"], json!("unverified_evidence"));
+        // 结算路由与收益归属：拒付 50、托管 100 后退回、分成 200 → 140/60（人类操作者只收收益）。
+        assert_eq!(a["settlement"]["withheld"]["route"], json!("withheld"));
+        assert_eq!(a["settlement"]["escrow"]["amount"], json!(100));
+        assert_eq!(a["settlement"]["escrow"]["refunded"], json!(100));
+        assert_eq!(a["settlement"]["escrow"]["closed"], json!(true));
+        assert_eq!(a["settlement"]["receipts"][0]["amount"], json!(140));
+        assert_eq!(a["settlement"]["receipts"][0]["role"], json!("compute"));
+        assert_eq!(a["settlement"]["receipts"][1]["amount"], json!(60));
+        assert_eq!(a["settlement"]["receipts"][1]["kind"], json!("human_operator"));
+        assert_eq!(a["settlement"]["human_operator"]["may_decide"], json!(false));
+        assert_eq!(
+            a["settlement"]["human_operator"]["decision_rights"],
+            json!("income_only")
+        );
+        assert_eq!(a["settlement"]["human_operator"]["earned"], json!(60));
+        assert_eq!(a["settlement"]["revenue"]["receipt_count"], json!(2));
+        assert_eq!(a["conservation"]["ok"], json!(true));
         assert_eq!(a["conservation"]["slashed"], json!(100));
         assert_eq!(a["conservation"]["ok"], json!(true));
         assert!(first.ledger().check_conservation().is_ok());
