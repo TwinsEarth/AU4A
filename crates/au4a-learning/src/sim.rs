@@ -22,6 +22,7 @@ use serde_json::Value;
 
 use crate::experience::{Experience, ExperienceStore, Outcome};
 use crate::feedback::{FeedbackAnalyser, MIN_SAMPLES};
+use crate::model::{LearningModel, UpdateRecord};
 use crate::policy::{adjust, PolicyBounds, PolicyParams, PolicyTargets};
 use crate::rng::{hash_below, hash_bp};
 use crate::signal::{LearningSignal, SignalWeights};
@@ -166,6 +167,12 @@ pub struct RoundStats {
     pub changed: bool,
     /// 本轮四类学习信号的综合值（万分比）。
     pub signal_composite_bp: i64,
+    /// 本轮价格实际位移（模型更新之后，基点）。
+    pub price_drift_bp: i64,
+    /// 本轮信誉变化合计（本地台账）。
+    pub reputation_delta: i64,
+    /// 本轮的模型代际。
+    pub generation: u32,
 }
 
 /// 一次市场跑批的完整结果。
@@ -182,6 +189,10 @@ pub struct MarketRun {
     pub revenue: Credits,
     pub initial_params: PolicyParams,
     pub final_params: PolicyParams,
+    /// 结束时的模型代际（学习组应等于更新次数）。
+    pub final_generation: u32,
+    /// 结束时本地信誉台账的公开投影（无 DID）。
+    pub final_reputation: Value,
     pub rounds: Vec<RoundStats>,
     /// 经验窗口里保留的条数（滚动窗口 = 3 轮）。
     pub window_experiences: usize,
@@ -240,6 +251,8 @@ impl MarketRun {
             "params_changed": self.params_changed(),
             "initial_params": self.initial_params.public_json()?,
             "final_params": self.final_params.public_json()?,
+            "final_generation": self.final_generation,
+            "final_reputation": self.final_reputation,
             "rounds": &self.rounds,
             "window_experiences": self.window_experiences,
             "experiences_recorded": self.experiences_recorded,
@@ -333,8 +346,9 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
     let window = (config.ticks_per_round as usize).saturating_mul(3).max(MIN_SAMPLES);
     let mut store = ExperienceStore::new(window)?;
     let mut violations = ViolationLog::new();
-    let mut params = PolicyParams::baseline();
-    let initial_params = params.clone();
+    // v1.6.5：行为调整的意图由模型更新落地（学习率/动量/阻尼/遗忘/漂移钳制），信誉台账记录观测到的结果。
+    let mut model = LearningModel::new(bounds.clone());
+    let initial_params = model.params().clone();
 
     let mut rounds = Vec::with_capacity(config.rounds as usize);
     let mut totals = Totals::default();
@@ -346,16 +360,18 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
         let mut acc = Totals::default();
         for tick in 0..config.ticks_per_round {
             let global = (round as u64) * (config.ticks_per_round as u64) + (tick as u64);
-            let Some((task_index, peer_index)) = pick_option(config, &profiles, &params, global) else {
+            let Some((task_index, peer_index)) =
+                pick_option(config, &profiles, model.params(), global)
+            else {
                 continue;
             };
             acc.ticks = acc.ticks.saturating_add(1);
             let task = &TASK_PROFILES[task_index];
             let peer = &profiles[peer_index];
             let task_id = format!("r{round}-t{tick}");
-            let price = task.base_price.scaled_bp(params.price_bp)?;
+            let price = task.base_price.scaled_bp(model.params().price_bp)?;
             let accepted = hash_bp(config.seed, &[global, task_index as u64, 6])
-                < accept_rate_curve_bp(params.price_bp);
+                < accept_rate_curve_bp(model.params().price_bp);
             let mut revenue = Credits::ZERO;
             let (outcome, action);
             if !accepted {
@@ -404,6 +420,15 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
             )?;
             store.record(exp)?;
             acc.revenue = acc.revenue.checked_add(revenue)?;
+            // v1.6.5：本地信誉台账只按**观测到的结果**累计（违规单独一条更强的负向更新）。
+            acc.reputation_delta = acc
+                .reputation_delta
+                .saturating_add(model.reputation_mut().apply_outcome(&peer.did, outcome));
+            if action == "deliver-withheld" {
+                acc.reputation_delta = acc
+                    .reputation_delta
+                    .saturating_add(model.reputation_mut().apply_violation(&peer.did));
+            }
         }
 
         // ---- 学习阶段：反馈分析 → 学习信号 → 行为调整 ----
@@ -417,9 +442,13 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
         } else {
             Credits((3 * prev_reward.get() + round_mean.get()) / 4)
         };
-        // v1.6.4：四类学习信号（质量/结算/信誉/违规）从经验窗口与违规台账折算。
-        // 信誉台账在 v1.6.5 落地，这里如实传 0，不假装有信誉信号。
-        let signal = LearningSignal::from_store(&store, &violations, 0, &SignalWeights::default())?;
+        // v1.6.4/v1.6.5：四类学习信号（质量/结算/信誉/违规）从经验窗口、信誉台账与违规台账折算。
+        let signal = LearningSignal::from_store(
+            &store,
+            &violations,
+            acc.reputation_delta,
+            &SignalWeights::default(),
+        )?;
         let signals = signal.to_signals(
             acc.ticks as usize,
             Some(ratio_bp(acc.accepted as i64, acc.ticks as i64)),
@@ -427,15 +456,24 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
             prev_reward,
             prev_dir,
         );
-        let adjustment = adjust(&params, &report, &violations, &signals, &bounds, &targets)?;
-        let changed = config.learn && adjustment.changed;
-        if changed {
-            prev_dir = if adjustment.price_moved_bp == 0 {
+        let adjustment = adjust(
+            model.params(),
+            &report,
+            &violations,
+            &signals,
+            &bounds,
+            &targets,
+        )?;
+        let mut record: Option<UpdateRecord> = None;
+        if config.learn && adjustment.changed {
+            // 意图由模型更新落地：学习率缩放 → 阻尼 → 动量 → 遗忘 → 漂移钳制。
+            let applied = model.apply(&adjustment)?;
+            prev_dir = if applied.price_drift_bp == 0 {
                 prev_dir
             } else {
-                adjustment.price_moved_bp.signum()
+                applied.price_drift_bp.signum()
             };
-            params = adjustment.next.clone();
+            record = Some(applied);
         }
         prev_reward = reward_ema;
 
@@ -449,10 +487,13 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
             violations: acc.violations,
             revenue: acc.revenue,
             mean_reward: round_mean,
-            price_bp: params.price_bp,
-            params_digest: params.digest()?,
-            changed,
+            price_bp: model.params().price_bp,
+            params_digest: model.params().digest()?,
+            changed: record.is_some(),
             signal_composite_bp: signal.composite_bp,
+            price_drift_bp: record.as_ref().map(|r| r.price_drift_bp).unwrap_or(0),
+            reputation_delta: acc.reputation_delta,
+            generation: model.generation(),
         });
         totals.add(&acc);
         experiences_recorded = experiences_recorded.saturating_add(acc.ticks);
@@ -472,7 +513,9 @@ pub fn run(config: &MarketConfig) -> CoreResult<MarketRun> {
         violations: totals.violations,
         revenue: totals.revenue,
         initial_params,
-        final_params: params,
+        final_params: model.params().clone(),
+        final_generation: model.generation(),
+        final_reputation: model.reputation().public_json()?,
         rounds,
         window_experiences: store.len(),
         experiences_recorded,
@@ -525,6 +568,8 @@ struct Totals {
     partials: u32,
     violations: u32,
     revenue: Credits,
+    /// 本轮信誉变化合计（本地台账实际施加量）。
+    reputation_delta: i64,
 }
 
 impl Totals {
@@ -535,6 +580,7 @@ impl Totals {
         self.partials = self.partials.saturating_add(other.partials);
         self.violations = self.violations.saturating_add(other.violations);
         self.revenue = Credits(self.revenue.get().saturating_add(other.revenue.get()));
+        self.reputation_delta = self.reputation_delta.saturating_add(other.reputation_delta);
     }
 }
 
