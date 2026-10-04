@@ -15,6 +15,7 @@
 //! v1.9.8 文档 → v1.9.9 论文。轨道间**零耦合**：只依赖 `au4a-core` 与 `au4a-kernel`。
 
 pub mod cluster;
+pub mod collect;
 pub mod harness;
 pub mod metrics;
 pub mod verdict;
@@ -27,6 +28,7 @@ pub use cluster::{
     bounded_vertex_scan, evaluation_budget, tier_report, TierReport, TierRow, VertexScan,
     MAX_SCAN_SAMPLES, TIERS,
 };
+pub use collect::{collect, sweep, DataBundle, Record, ScenarioSpec};
 pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
 pub use verdict::{adjudicate, CapacityVerdict, VerdictKind, VerdictReason};
 pub use metrics::{
@@ -42,7 +44,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.4";
+pub const CURRENT: &str = "v1.9.5";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -119,6 +121,33 @@ pub fn self_check() -> Vec<SelfCheck> {
                 format!("解析顶点 {analytic}，期望 1000"),
             )
         }
+    });
+
+    // v1.9.5：数据收集必须确定性且内容寻址。
+    checks.push(match collect(&[
+        ScenarioSpec::new(
+            "baseline",
+            TIERS.to_vec(),
+            ScalingParams::default(),
+            20_000,
+        ),
+    ]) {
+        Ok(bundle) => match bundle.recompute_digest() {
+            Ok(recomputed) if recomputed == bundle.digest && bundle.len() == TIERS.len() => {
+                SelfCheck::pass(
+                    TRACK,
+                    "collect.content_addressed",
+                    format!(
+                        "{} 条记录，digest={} 可独立复算",
+                        bundle.len(),
+                        au4a_core::short_id(&bundle.digest)
+                    ),
+                )
+            }
+            Ok(_) => SelfCheck::fail(TRACK, "collect.content_addressed", "digest 复算不一致"),
+            Err(err) => SelfCheck::fail(TRACK, "collect.content_addressed", err.to_string()),
+        },
+        Err(err) => SelfCheck::fail(TRACK, "collect.content_addressed", err.to_string()),
     });
 
     // v1.9.4：容量顶点裁决必须复现，且原因码与数值一致。
@@ -239,15 +268,21 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let report = run_experiment(&config)?;
     let tiers = tier_report(&config.params, config.demand_milli)?;
     let verdict = adjudicate(&config.params, config.demand_milli, 1, 4 * config.params.n0)?;
+    let bundle = collect(&[ScenarioSpec::new(
+        "baseline",
+        config.nodes.clone(),
+        config.params,
+        config.demand_milli,
+    )])?;
 
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "{CURRENT} 档位评估 + 容量裁决：顶点 {}（{:?}），求值 {} 次（预算 {}）",
+            "{CURRENT} 档位评估 + 容量裁决 + 数据包：顶点 {}（{:?}），{} 条记录，digest={}",
             verdict.vertex_nodes,
             verdict.kind,
-            tiers.evaluations,
-            evaluation_budget()
+            bundle.len(),
+            au4a_core::short_id(&bundle.digest)
         ),
     );
 
@@ -263,6 +298,11 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "analytic_vertex": analytic_vertex_floor(config.params.n0, config.params.alpha),
         "tiers": tiers.to_json()?,
         "verdict": verdict.to_json()?,
+        "bundle": {
+            "records": bundle.len(),
+            "digest": bundle.digest,
+            "scenarios": 1,
+        },
         "verdict_kind": match verdict.kind {
             VerdictKind::VertexFound => "vertex_found",
             VerdictKind::MonotonicNoVertex => "monotonic_no_vertex",
