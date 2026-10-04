@@ -252,6 +252,30 @@
         "notes": "文档版不新增代码路径，测试结果沿用 v1.8.7 全绿运行；日志 _forangent\\logs\\1.8-v1.8.7.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.9",
+      "title": "示例",
+      "goal": "可运行的九步示例：测试网/双轨/RGB/Taproot/ERC-8004/x402/路由/信誉/自检，全部打印真实数字并输出场景 JSON。",
+      "deliverables": [
+        "examples/chain_tour.rs: 九步示例，main 返回 CoreResult<()>，主流程无 unwrap/panic",
+        "docs/tracks/1.8.md: 示例原始输出摘录（本机运行日志）"
+      ],
+      "interfaces": ["cargo run -p au4a-chain --example chain_tour"],
+      "acceptance": [
+        "示例 exit code 0，输出 9 行真实数字且与文档摘录一致",
+        "每步调用真实 public API（Testnet/BridgeBook/RgbAdapter/TaprootAdapter/Erc8004Adapter/X402Adapter/routing/ReputationBridge/self_check/scenario）",
+        "不读文件/不开网络/不读墙钟，同输入同输出",
+        "cargo test -p au4a-chain 仍 87 passed / 0 failed、0 warning（示例参与编译检查）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain; cargo run -p au4a-chain --example chain_tour",
+        "tests_passed": 87,
+        "tests_total": 87,
+        "grade": "cpu-proto",
+        "notes": "示例本机实测 exit 0；输出见 _forangent\\logs\\1.8-v1.8.9-example.log；测试日志 _forangent\\logs\\1.8-v1.8.9.log"
+      },
+      "status": "done"
     }
   ]
 }
