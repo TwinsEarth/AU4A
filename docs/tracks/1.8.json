@@ -276,6 +276,38 @@
         "notes": "示例本机实测 exit 0；输出见 _forangent\\logs\\1.8-v1.8.9-example.log；测试日志 _forangent\\logs\\1.8-v1.8.9.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.10",
+      "title": "安全审计",
+      "goal": "风险登记表（9 条，含未防护/部分防护的坦白：验证数据丢失、签名层、最终性概率、女巫刷分）+ 10 个真实攻击用例全部被拦住。",
+      "deliverables": [
+        "src/audit.rs: RiskStatus / Risk / RISKS / risk_register / unresolved_risks / AttackOutcome / attack_suite / audit_report",
+        "src/lib.rs: 自检 audit.attack_suite + 场景 audit 段",
+        "examples/chain_tour.rs: 第 10 步打印风险与未防护清单",
+        "README.md: 安全审计章节（风险表与残余风险摘要）"
+      ],
+      "interfaces": [
+        "pub const RISKS: [Risk; 9]",
+        "pub fn unresolved_risks() -> Vec<Risk>",
+        "pub fn attack_suite() -> Vec<AttackOutcome>",
+        "pub fn audit_report() -> serde_json::Value"
+      ],
+      "acceptance": [
+        "风险清单含重放/双花/最终性/验证数据丢失/女巫/签名；未防护或部分防护 ≥3 条且如实保留",
+        "验证数据丢失与签名层明确标注 unprotected，并写明真实实现需要什么",
+        "10 条攻击（重放/nonce 回退/篡改/双花/最终化回滚/双轨不一致硬走/自评刷分/未最终化事件/信誉转让/重复支付）全部被拦住且 detail 非空",
+        "两次攻击运行结果完全相同；报告 JSON 无浮点且声明 scope 只覆盖确定性测试网",
+        "场景 audit.risks>=8、unresolved_count>=3、all_attacks_blocked=true"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain; cargo run -p au4a-chain --example chain_tour",
+        "tests_passed": 92,
+        "tests_total": 92,
+        "grade": "cpu-proto",
+        "notes": "lib 76 + chain_invariants 9 + e2e_settlement 7；审计对象是确定性测试网原型，真实链上执行未做；日志 _forangent\\logs\\1.8-v1.8.10.log、1.8-v1.8.10-example.log"
+      },
+      "status": "done"
     }
   ]
 }
