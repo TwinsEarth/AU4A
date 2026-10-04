@@ -357,7 +357,16 @@ pub fn results_json() -> CoreResult<Value> {
         "chains": ChainId::ALL.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
         "grade": ONCHAIN_GRADE.as_str(),
         "real_network": false,
-        "modules": ["testnet", "bridge", "rgb"],
+        "modules": [
+            "testnet",
+            "bridge",
+            "rgb",
+            "taproot",
+            "erc8004",
+            "x402",
+            "routing",
+            "reputation"
+        ],
     }))
 }
 
@@ -830,6 +839,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "refusals": [
             { "op": early_refusal.op, "code": early_refusal.code.as_str(), "detail": early_refusal.detail },
             { "op": refusal.op, "code": refusal.code.as_str(), "detail": refusal.detail },
+            { "op": "erc8004.self_feedback", "code": self_code.as_str(), "detail": "自评不计入信誉" },
+            { "op": transfer_refusal.op, "code": transfer_refusal.code.as_str(), "detail": transfer_refusal.detail },
         ],
         "testnet": net.to_json(),
         "grade": ONCHAIN_GRADE.as_str(),

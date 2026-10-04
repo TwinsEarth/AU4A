@@ -196,6 +196,37 @@
         "notes": "映射与有界更新为真实整数逻辑；事件来源仍是确定性测试网；日志 _forangent\\logs\\1.8-v1.8.6.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.7",
+      "title": "测试",
+      "goal": "跨模块不变量与端到端测试：拒绝清单完备、收据恒 cpu-proto、双轨守恒随机序列、双花/重放/最终性回滚、场景逐字节复现。",
+      "deliverables": [
+        "tests/chain_invariants.rs: 9 个跨模块测试（拒绝清单、未知 op、等级、随机双轨序列、双花重放、最终性、fail-closed、信誉边界、内容寻址）",
+        "tests/e2e_settlement.rs: 7 个端到端测试（section 齐全、逐字节复现、递归等级检查、钉住数值、观察层拒绝、自检接线、篡改拦截）",
+        "src/testnet.rs: 最终性改为冻结语义（finalized_height 单调不减）",
+        "src/lib.rs: results_json 模块清单补齐 8 个模块；场景 refusals 数组补齐 4 条"
+      ],
+      "interfaces": [
+        "cargo test -p au4a-chain 同时运行 lib + 2 个集成测试目标",
+        "pub fn Testnet::is_final(&self, height: u64) -> bool // 冻结语义"
+      ],
+      "acceptance": [
+        "4 个适配器 + 信誉桥的拒绝清单：op 唯一、原因非空；未知 op → unsupported 且列出已知清单",
+        "所有成功收据 grade == cpu-proto；场景 JSON 递归检查 grade 与 real_network",
+        "200 步随机桥接：每步守恒、托管==链上表示、本地总量恒为 10000",
+        "测试网重放与 RGB 封印双花均 → Conflict；未最终化可回滚、已最终化不可回滚且最终性不撤销",
+        "5 个金额档在双轨不一致时全部 defer/reconciliation_failed；故障注入下 settle 返回 Err 且账本不动",
+        "信誉单步位移 ≤2000bp、单调、收敛到 1bp 以内；场景两次运行逐字节相同"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-chain)",
+        "tests_passed": 87,
+        "tests_total": 87,
+        "grade": "cpu-proto",
+        "notes": "lib 71 + chain_invariants 9 + e2e_settlement 7；本版修正最终性为冻结语义；日志 _forangent\\logs\\1.8-v1.8.7.log"
+      },
+      "status": "done"
     }
   ]
 }
