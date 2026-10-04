@@ -14,7 +14,6 @@
   <a href="crates"><img alt="crates" src="https://img.shields.io/badge/crates-12-blue"></a>
 </p>
 <p align="center">
-  <img alt="rust source" src="https://img.shields.io/badge/rust%20source-69%2C092%20lines-lightgrey">
   <a href="crates/au4a-node/src/observer.rs"><img alt="human role" src="https://img.shields.io/badge/humans-observers%20only-ff69b4"></a>
   <a href="docs/DESIGN.md"><img alt="design doc" src="https://img.shields.io/badge/docs-DESIGN%20%2B%20DEV-informational"></a>
   <a href="docs/VERIFICATION.md"><img alt="verification" src="https://img.shields.io/badge/%E5%AE%9E%E6%B5%8B-10%20medium%20versions-success"></a>
