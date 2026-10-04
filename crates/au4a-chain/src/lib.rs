@@ -23,6 +23,7 @@
 
 pub mod bridge;
 pub mod erc8004;
+pub mod reputation;
 pub mod rgb;
 pub mod routing;
 pub mod taproot;
@@ -39,6 +40,11 @@ pub use bridge::{
 pub use erc8004::{
     reputation_weight_bp, summary_credits, Erc8004Adapter, Erc8004Outcome, Feedback, Identity,
     ReputationSummary, Validation, ERC8004_REFUSALS, ERC8004_SUPPORTED,
+};
+pub use reputation::{
+    credibility_credits, refusal_code_for, ChainReputationEvent, LocalReputation,
+    ReputationBridge, ReputationDim, ReputationEventKind, MAX_STEP_BP, NEUTRAL_BP,
+    REPUTATION_REFUSALS, REPUTATION_SUPPORTED,
 };
 pub use rgb::{RgbAdapter, RgbContract, RgbOutcome, Seal, TransferBundle, RGB_REFUSALS, RGB_SUPPORTED};
 pub use routing::{
@@ -250,6 +256,45 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("reputation.non_transferable_and_bounded", || {
+        let who = did_of(41);
+        let mut net = Testnet::new(ChainId::EthLocal, 1);
+        net.mine_to(10);
+        let mut bridge = ReputationBridge::new();
+        // 反馈 9000bp（权重 6000）→ 质量维度 +2000（单步上限），可靠性不动。
+        let feedback =
+            ChainReputationEvent::new(&who, ReputationEventKind::Feedback, 9_000, 2)
+                .map_err(|e| e.to_string())?;
+        let after = bridge
+            .apply_event(&net, &feedback)
+            .map_err(|r| r.detail.clone())?;
+        if after.quality_bp != 7_000 || after.reliability_bp != NEUTRAL_BP {
+            return Err(format!("有界更新不符：{after:?}"));
+        }
+        // 不可转让：按名字拒绝。
+        let refusal = bridge.execute("reputation.transfer").unwrap_err();
+        if refusal.code != RefusalCode::PolicyDenied || refusal.op != "reputation.transfer" {
+            return Err(format!("转让信誉竟然没被拒绝：{refusal:?}"));
+        }
+        // 未最终化的事件不改变信誉。
+        let mut fresh_net = Testnet::new(ChainId::EthLocal, 5);
+        fresh_net.mine_to(1);
+        let early = ChainReputationEvent::new(&who, ReputationEventKind::Feedback, 1, 2)
+            .map_err(|e| e.to_string())?;
+        let early_err = bridge.apply_event(&fresh_net, &early).unwrap_err();
+        if early_err.code != RefusalCode::Timeout {
+            return Err(format!("未最终化事件未被拒绝：{early_err:?}"));
+        }
+        Ok(format!(
+            "反馈 9000bp → 质量 {} / 可靠性 {}（单步上限 {}）；转让信誉 → {}；未最终化事件 → {}",
+            after.quality_bp,
+            after.reliability_bp,
+            MAX_STEP_BP,
+            refusal.code.as_str(),
+            early_err.code.as_str()
+        ))
+    }));
+
     checks.push(check("chain.dual_track_conservation", || {
         let who = did_of(2);
         let mut ledger = Ledger::new();
@@ -365,7 +410,7 @@ fn adapter_ok<T>(
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：RGB + Taproot + ERC-8004 + x402 + 结算路由（v1.8.5，确定性测试网）"),
+        format!("{TITLE} {RANGE}： RGB + Taproot + ERC-8004 + x402 + 路由 + 信誉桥接（v1.8.6）"),
     );
 
     let alice_keys = agent(81);
@@ -652,6 +697,50 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         ),
     );
 
+    // 信誉桥接（v1.8.6）：把链上事件映射进本地 4 维信誉；不可转让、只认最终化事件。
+    let mut reputation_bridge = ReputationBridge::new();
+    let rgb_event = ChainReputationEvent::new(
+        &alice,
+        ReputationEventKind::SettlementFinal,
+        9_000,
+        anchor.height,
+    )?;
+    let trust_a = adapter_ok(
+        &mut *kernel,
+        &alice,
+        reputation_bridge.apply_event(&tapnet, &rgb_event),
+    )?;
+    let feedback_event = ChainReputationEvent::new(
+        &alice,
+        ReputationEventKind::Feedback,
+        reputation.average_bp,
+        1, // ERC-8004 反馈在 ethnet 的第 1 个块里，已随最终性敲定
+    )?;
+    let trust_b = adapter_ok(
+        &mut *kernel,
+        &alice,
+        reputation_bridge.apply_event(&ethnet, &feedback_event),
+    )?;
+    let transfer_refusal = reputation_bridge.execute("reputation.transfer").unwrap_err();
+    kernel.refuse(
+        &alice,
+        transfer_refusal.code,
+        format!("{}: {}", transfer_refusal.op, transfer_refusal.detail),
+    );
+    kernel.emit(
+        "chain.reputation_bridged",
+        format!(
+            "信誉桥接：{} 个事件 → 可靠性 {} / 质量 {} / 诚实 {} / 可用性 {}（综合 {}bp）；转让信誉被 {} 拒绝",
+            reputation_bridge.applied_events(),
+            trust_b.reliability_bp,
+            trust_b.quality_bp,
+            trust_b.honesty_bp,
+            trust_b.availability_bp,
+            trust_b.overall_bp(),
+            transfer_refusal.code.as_str()
+        ),
+    );
+
     // 双轨对账（fail-closed）：本地托管 == 链上表示 == RGB 流通量 == Taproot 锚定总量。
     let report = book.require_consistent(kernel.ledger())?;
     rgb.contract()?.check_supply_conservation()?;
@@ -669,7 +758,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.8.5 RGB + Taproot + ERC-8004 + x402 + 结算路由（确定性测试网）",
+        "scenario": "v1.8.6 四条轨 + 结算路由 + 跨链信誉桥接（确定性测试网）",
         "agents": [alice.as_str(), bob.as_str()],
         "bridge": {
             "out": bridged,
@@ -730,6 +819,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "decision": route_decision.to_json(),
             "blocked_decision": blocked_decision.to_json(),
             "reconciliation": live_reconciliation,
+        },
+        "reputation": {
+            "applied_events": reputation_bridge.applied_events(),
+            "alice": trust_b.to_json(),
+            "after_settlement_event": trust_a.to_json(),
+            "transfer_refusal_code": transfer_refusal.code.as_str(),
+            "bridge": reputation_bridge.to_json(),
         },
         "refusals": [
             { "op": early_refusal.op, "code": early_refusal.code.as_str(), "detail": early_refusal.detail },
@@ -801,6 +897,16 @@ mod tests {
             a["routing"]["blocked_decision"]["reason"],
             json!("reconciliation_failed")
         );
+        // 信誉桥接：结算事件 9000（权重 4000）→ 可靠性/可用性 6600；反馈 8500（权重 6000，
+        // 位移 2100 被单步上限 2000 截断）→ 质量 7000；诚实保持 5000；综合 6300；不可转让。
+        assert_eq!(a["reputation"]["applied_events"], json!(2));
+        assert_eq!(a["reputation"]["alice"]["reliability_bp"], json!(6_600));
+        assert_eq!(a["reputation"]["alice"]["quality_bp"], json!(7_000));
+        assert_eq!(a["reputation"]["alice"]["honesty_bp"], json!(5_000));
+        assert_eq!(a["reputation"]["alice"]["availability_bp"], json!(6_600));
+        assert_eq!(a["reputation"]["alice"]["overall_bp"], json!(6_300));
+        assert_eq!(a["reputation"]["transfer_refusal_code"], json!("policy_denied"));
+        assert_eq!(a["reputation"]["bridge"]["transferable"], json!(false));
         // 锁定 = 注册质押 100 + 桥出托管 400 = 500。
         assert_eq!(a["conservation"]["locked"], json!(500));
         first.ledger().check_conservation().unwrap();

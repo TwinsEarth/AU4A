@@ -165,6 +165,37 @@
         "notes": "路由与账务为真实整数逻辑；链上仍是确定性测试网；日志 _forangent\\logs\\1.8-v1.8.5.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.6",
+      "title": "信誉桥接",
+      "goal": "链上声誉事件 → 本地 4 维信誉（可靠性/质量/诚实/可用性）；不可转让、只认最终化事件、有界更新且不过冲。",
+      "deliverables": [
+        "src/reputation.rs: ReputationDim / ReputationEventKind / ChainReputationEvent / LocalReputation / ReputationBridge / credibility_credits / refusal_code_for / MAX_STEP_BP / NEUTRAL_BP / REPUTATION_REFUSALS",
+        "src/lib.rs: 自检 reputation.non_transferable_and_bounded + 场景 reputation 段（2 个事件 + 转让被拒）"
+      ],
+      "interfaces": [
+        "pub fn ChainReputationEvent::new(agent: &Did, kind: ReputationEventKind, score_bp: i64, height: u64) -> CoreResult<ChainReputationEvent>",
+        "pub fn ReputationBridge::apply_event(&mut self, net: &Testnet, event: &ChainReputationEvent) -> Result<LocalReputation, ChainRefusal>",
+        "pub fn ReputationBridge::execute(&mut self, op: &str) -> Result<(), ChainRefusal>",
+        "pub fn LocalReputation::overall_bp(&self) -> i64"
+      ],
+      "acceptance": [
+        "反馈 9000（权重 6000）→ 质量 7000、可靠性不动；结算事件 8000（权重 4000）→ 可靠性与可用性各 6200",
+        "未最终化事件 → Timeout 且信誉保持中性、事件计数 0；重放 → Conflict；篡改 id → Malformed",
+        "30 次满分事件单调上升且 ≤10000，收敛到 1bp 以内；反向 30 次收敛到 0..=1",
+        "罚没事件 → 可靠性与诚实各降 2000（单步上限），质量不动",
+        "reputation.transfer/buy/bulk_import/reset/未知 逐个按名字拒绝并留痕",
+        "两个桥跑同样事件的投影逐字段相等、JSON 无浮点、transferable=false、grade=cpu-proto"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-chain)",
+        "tests_passed": 71,
+        "tests_total": 71,
+        "grade": "cpu-proto",
+        "notes": "映射与有界更新为真实整数逻辑；事件来源仍是确定性测试网；日志 _forangent\\logs\\1.8-v1.8.6.log"
+      },
+      "status": "done"
     }
   ]
 }
