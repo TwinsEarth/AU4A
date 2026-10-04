@@ -367,8 +367,8 @@ mod tests {
         assert_eq!(token.state, GovState::Active);
 
         // 通过 → succeeded。
-        for i in 0..3 {
-            let v = crate::Vote::cast(&agents[i], &proposal.id, round.round, crate::Choice::Yes)
+        for agent in agents.iter().take(3) {
+            let v = crate::Vote::cast(agent, &proposal.id, round.round, crate::Choice::Yes)
                 .expect("cast");
             council.cast_vote(&mut kernel, v).expect("vote");
         }
@@ -411,8 +411,8 @@ mod tests {
             .propose(&mut kernel, &identity, draft)
             .expect("propose");
         let round = council.open_round(&mut kernel, &rejected.id).expect("open");
-        for i in 0..3 {
-            let v = crate::Vote::cast(&agents[i], &rejected.id, round.round, crate::Choice::No)
+        for agent in agents.iter().take(3) {
+            let v = crate::Vote::cast(agent, &rejected.id, round.round, crate::Choice::No)
                 .expect("cast");
             council.cast_vote(&mut kernel, v).expect("vote");
         }

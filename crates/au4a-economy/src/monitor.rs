@@ -377,7 +377,8 @@ mod tests {
         let second = revenue_panel(&kernel, &revenue, &Value::Null).unwrap();
         assert_eq!(first, second, "只读投影必须逐字段稳定");
         assert_eq!(kernel.ledger().view(), before, "只读投影不得改动账本");
-        assert!(READ_ONLY);
+        // 只读是编译期常量，运行期断言没有信息量：改成编译期检查。
+        const _: () = assert!(READ_ONLY, "monitor 面板必须是只读的");
         let panel = super::panel(&kernel, &revenue, &Value::Null).unwrap();
         assert!(panel.conservation_ok());
         assert_eq!(panel.rows_earned_total().unwrap(), panel.total_earned);

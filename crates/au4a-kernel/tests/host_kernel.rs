@@ -179,9 +179,11 @@ fn audit_reports_a_clean_host_as_a_stable_json_value() {
 
 #[test]
 fn kernel_config_is_honoured() {
-    let mut config = KernelConfig::default();
-    config.min_stake = Credits(50);
-    config.genesis_mint = Credits(500);
+    let config = KernelConfig {
+        min_stake: Credits(50),
+        genesis_mint: Credits(500),
+        ..KernelConfig::default()
+    };
     let mut k = Kernel::new(config);
     let a = agent(21);
     assert!(k.register(&a, "poor", &[], Credits(49)).is_err());

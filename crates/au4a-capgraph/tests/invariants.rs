@@ -216,7 +216,8 @@ fn a_planned_pipeline_is_always_independently_verifiable() {
     // 构造一个多提供者的图：每条技能 3 个提供者，格式各异。
     let owner = AgentKeys::from_seed(&[170; 32]);
     let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
-    let shapes: [(u8, &str, i64, [&str; 1], [&str; 1]); 6] = [
+    type Shape = (u8, &'static str, i64, [&'static str; 1], [&'static str; 1]);
+    let shapes: [Shape; 6] = [
         (
             1,
             "translate.en-zh",

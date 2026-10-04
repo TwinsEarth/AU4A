@@ -174,7 +174,7 @@ fn identical_runs_produce_identical_decisions_and_stats() {
     let run = || {
         let k = seeded(4);
         let mut router = PmbRouter::new();
-        let mut decisions = Vec::new();
+        let mut decisions = Vec::with_capacity(4);
         decisions.push(router.admit(
             &k,
             &progress(&keys(150), None, 0, "a", serde_json::json!({})).unwrap(),

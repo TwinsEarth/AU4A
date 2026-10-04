@@ -282,8 +282,10 @@ fn soft_refusals_are_not_errors_but_are_explicit() {
     assert!(view.aggregates.iter().all(|a| a.success_bp.is_none()));
 
     // 3) 证据闸门 → 结算被拒（内核按类型化拒绝记录，不是 panic）
-    let mut config = KernelConfig::default();
-    config.cpu_proto_settle_cap = Credits::ZERO;
+    let config = KernelConfig {
+        cpu_proto_settle_cap: Credits::ZERO,
+        ..KernelConfig::default()
+    };
     let mut kernel = Kernel::new(config);
     let summary = au4a_learning::scenario(&mut kernel).unwrap();
     assert!(summary["settlement_refused"].as_i64().unwrap() > 0);
