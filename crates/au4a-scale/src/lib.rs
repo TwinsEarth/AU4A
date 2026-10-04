@@ -14,6 +14,7 @@
 //! v1.9.4 效果评估 → v1.9.5 数据收集 → v1.9.6 分析工具 → v1.9.7 测试 →
 //! v1.9.8 文档 → v1.9.9 论文。轨道间**零耦合**：只依赖 `au4a-core` 与 `au4a-kernel`。
 
+pub mod cluster;
 pub mod harness;
 pub mod metrics;
 
@@ -21,6 +22,10 @@ use au4a_core::{CoreResult, SelfCheck};
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+pub use cluster::{
+    bounded_vertex_scan, evaluation_budget, tier_report, TierReport, TierRow, VertexScan,
+    MAX_SCAN_SAMPLES, TIERS,
+};
 pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
 pub use metrics::{
     aggregate_throughput_milli, analytic_vertex_floor, completion_bp, coordination_base,
@@ -35,7 +40,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.2";
+pub const CURRENT: &str = "v1.9.3";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -114,6 +119,30 @@ pub fn self_check() -> Vec<SelfCheck> {
         }
     });
 
+    // v1.9.3：大规模评估必须在固定预算内完成（与 N 无关）。
+    checks.push(match tier_report(&ScalingParams::default(), 20_000) {
+        Ok(report) => {
+            if report.evaluations <= evaluation_budget() && report.tiers.len() == TIERS.len() {
+                SelfCheck::pass(
+                    TRACK,
+                    "cluster.bounded_evaluation",
+                    format!(
+                        "10/100/1k/10k 档位 + 顶点扫描共用 {} 次求值（预算 {}），digest={}",
+                        report.evaluations,
+                        evaluation_budget(),
+                        au4a_core::short_id(&report.digest)
+                    ),
+                )
+            } else {
+                SelfCheck::fail(
+                    TRACK,
+                    "cluster.bounded_evaluation",
+                    format!("求值 {} 次，超出预算 {}", report.evaluations, evaluation_budget()),
+                )
+            }
+        }
+        Err(err) => SelfCheck::fail(TRACK, "cluster.bounded_evaluation", err.to_string()),
+    });
     // v1.9.2：实验框架必须确定性且内容寻址。
     checks.push(match (
         harness::run(&ExperimentConfig::default_tiers()),
@@ -166,13 +195,16 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let config = ExperimentConfig::default_tiers();
     config.validate()?;
     let report = run_experiment(&config)?;
+    let tiers = tier_report(&config.params, config.demand_milli)?;
 
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "{CURRENT} 实验框架：{} 个档位，digest={}",
+            "{CURRENT} 实验框架 + 档位评估：{} 个档位，顶点 {}，求值 {} 次（预算 {}）",
             report.rows.len(),
-            au4a_core::short_id(&report.digest)
+            tiers.vertex.vertex_nodes,
+            tiers.evaluations,
+            evaluation_budget()
         ),
     );
 
@@ -186,6 +218,8 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "peak_nodes": report.peak().map(|row| row.nodes),
         "first_negative_net_nodes": report.first_negative_net().map(|row| row.nodes),
         "analytic_vertex": analytic_vertex_floor(config.params.n0, config.params.alpha),
+        "tiers": tiers.to_json()?,
+        "evaluation_budget": evaluation_budget(),
         "note": "确定性聚合模型（解析式实现），非真实分布式压测",
     }))
 }

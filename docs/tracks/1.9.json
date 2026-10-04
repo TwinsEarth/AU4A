@@ -81,19 +81,20 @@
         "pub fn bounded_vertex_scan(params, lo, hi, samples) -> CoreResult<VertexScan>"
       ],
       "acceptance": [
-        "10k 档位评估在 1 秒内完成（本机实测，测试断言）",
-        "扫描样本数上界固定（不随 N 线性增长），返回结构大小与 N 无关",
-        "扫描结果与全量逐点扫描的顶点相差 ≤ 1 个步长",
-        "档位行与 metrics 函数一致"
+        "10k 档位评估在 1 秒内完成（本机实测 + 测试墙钟断言，实际毫秒级）",
+        "求值次数 ≤ samples + span/step + 2·step + 3，与节点数无关（有两组范围的逐项上界断言）",
+        "有界扫描顶点与全量逐点扫描顶点相差 ≤ 1 个粗扫步长（三组参数对照）",
+        "档位行与 metrics 函数逐字段一致；报告确定性与 digest 一致",
+        "lo=0 / hi<lo / samples∉[2,4096] / demand=0 全部被拒"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-scale",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.9.2 全绿后开工"
+        "tests_passed": 20,
+        "tests_total": 20,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.3.log；模型为解析式聚合（10k 为模型评估，非真实分布式压测）"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.9.4",
