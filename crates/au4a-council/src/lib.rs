@@ -3,8 +3,9 @@
 //! 治理在 AU4A 里不是「人类审批」，而是 **Agent 之间的制度**：
 //!
 //! * 五类委员会（资源 / 任务 / 仲裁 / 进化 / 安全）由**选举**产生，席位来自信誉与在线时长；
-//! * 动议只能由 **Agent** 提出——[`proposal::AgentIdentity`] 是唯一入口，而人类观察者
-//!   [`veto::HumanObserver`] 在类型层面**没有**任何提案/修改能力；
+//! * 动议只能由 **Agent** 提出——[`proposal::AgentIdentity`] 是唯一入口，
+//!   动议内容必须由 Agent 私钥签名，人类观察者 [`human::HumanObserver`] 在类型层面
+//!   **没有**任何提案/修改能力（`compile_fail` 文档测试把守）；
 //! * 决议按 BFT-lite 法定人数表决（`n ≥ 3f+1`），重复投票被拒，模棱两可（双签）作废该轮；
 //! * 通过的决议由执行引擎落成真实状态变更（策略、信誉、账本）；
 //! * 人类只在极端情况行使**否决权**：只能阻断、必须公开理由、不能改动决议内容。
@@ -12,19 +13,28 @@
 //! 轨道内**串行**开发：每个小版本落地一个职责，并留下自检与证据。
 //! 轨道间**零耦合**：只依赖 `au4a-core`（冻结基元）与 `au4a-kernel`（宿主内核）。
 //! 本层不读墙钟、不碰文件、不开网络：时间一律来自 [`au4a_core::LogicalClock`]。
+//!
+//! 错误映射约定：基元层 `CoreError` 没有 `Unauthorized`/`Conflict` 变体，因此
+//! 「授权不成立」映射为 [`CoreError::InvalidSignature`]、「重复表达意志」映射为
+//! [`CoreError::DuplicateAgent`]；而类型化分类（`unauthorized`/`conflict`）照常写进
+//! 内核的拒绝账，人类只读投影里能看到完整分类。
 
 #![forbid(unsafe_code)]
 
 pub mod committee;
 pub mod election;
+pub mod human;
+pub mod proposal;
 
 pub use committee::{Committee, CommitteeKind, Member, COMMITTEE_COUNT};
 pub use election::{
     Candidate, ElectionBallot, ElectionConfig, ElectionOutcome, Elected, IgnoredBallot, Ineligible,
     ScoreRow,
 };
+pub use human::{HumanCommittee, HumanObserver, HumanProposal, HumanView};
+pub use proposal::{Action, AgentIdentity, Proposal, ProposalDraft, ProposalState};
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use au4a_core::{
     AgentKeys, CoreError, CoreResult, Credits, Did, LogicalClock, RefusalCode, SelfCheck,
@@ -49,6 +59,8 @@ pub struct CouncilConfig {
     pub election: ElectionConfig,
     /// 候选人质押下限（与内核准入一致）。
     pub min_stake: Credits,
+    /// 动议标题长度上限。
+    pub max_title_len: usize,
 }
 
 impl Default for CouncilConfig {
@@ -56,11 +68,27 @@ impl Default for CouncilConfig {
         Self {
             election: ElectionConfig::default(),
             min_stake: Credits(10),
+            max_title_len: 128,
         }
     }
 }
 
-/// 委员会治理本体：席位、信誉账、选举日志。
+/// 一条治理事件（追加式、带逻辑时刻）。
+///
+/// v1.7.10 会把这些事件串成哈希链：本条记录的哈希覆盖前一条，篡改任何一条都会断链。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CouncilEvent {
+    /// 逻辑时刻。
+    pub at: u64,
+    /// 事件类型（稳定字符串）。
+    pub kind: String,
+    /// 主题（动议 id / 选举 id / DID）。
+    pub subject: String,
+    /// 细节（人类可读）。
+    pub detail: String,
+}
+
+/// 委员会治理本体：席位、信誉账、动议、事件日志。
 ///
 /// 所有内部容器都是 `BTreeMap`/`Vec`，因此遍历顺序与插入顺序无关——这是「可复算」的一半。
 #[derive(Clone, Debug)]
@@ -72,6 +100,9 @@ pub struct Council {
     committees: BTreeMap<CommitteeKind, Committee>,
     epochs: BTreeMap<CommitteeKind, u64>,
     elections: Vec<ElectionOutcome>,
+    proposals: BTreeMap<String, Proposal>,
+    proposal_order: Vec<String>,
+    events: Vec<CouncilEvent>,
 }
 
 impl Council {
@@ -85,6 +116,9 @@ impl Council {
             committees: BTreeMap::new(),
             epochs: BTreeMap::new(),
             elections: Vec::new(),
+            proposals: BTreeMap::new(),
+            proposal_order: Vec::new(),
+            events: Vec::new(),
         }
     }
 
@@ -139,6 +173,23 @@ impl Council {
         &self.elections
     }
 
+    /// 治理事件日志（追加式）。
+    pub fn events(&self) -> &[CouncilEvent] {
+        &self.events
+    }
+
+    /// 追加一条治理事件，返回其在日志中的序号。
+    pub fn record_event(&mut self, kind: &str, subject: &str, detail: impl Into<String>) -> u64 {
+        let at = self.clock.now();
+        self.events.push(CouncilEvent {
+            at,
+            kind: kind.to_string(),
+            subject: subject.to_string(),
+            detail: detail.into(),
+        });
+        self.events.len().saturating_sub(1) as u64
+    }
+
     /// 由内核花名册 + 治理账构造候选人花名册（按 DID 升序，确定性）。
     pub fn roster(&self, kernel: &Kernel) -> Vec<Candidate> {
         let mut roster: Vec<Candidate> = kernel
@@ -166,7 +217,7 @@ impl Council {
     ) -> CoreResult<ElectionOutcome> {
         let roster = self.roster(kernel);
 
-        let mut seen: BTreeSet<Did> = BTreeSet::new();
+        let mut seen: std::collections::BTreeSet<Did> = std::collections::BTreeSet::new();
         for ballot in ballots {
             if ballot.committee != kind {
                 kernel.refuse(&ballot.voter, RefusalCode::Malformed, "ballot bound to another committee");
@@ -225,10 +276,167 @@ impl Council {
         self.committees.insert(kind, committee);
         self.epochs.insert(kind, epoch);
         self.elections.push(outcome.clone());
+        self.record_event(
+            "election.seated",
+            &outcome.id,
+            format!(
+                "{} epoch={} 在任={} 计入票={} 忽略票={}",
+                kind.as_str(),
+                epoch,
+                outcome.elected.len(),
+                outcome.ballots_counted,
+                outcome.ballots_ignored.len()
+            ),
+        );
         Ok(outcome)
     }
 
-    /// 治理层自检（v1.7.1 覆盖选举与席位；后续版本追加表决、否决、审计）。
+    /// 提交动议。**唯一的提案入口**，需要三样东西同时成立：
+    /// 能力凭证（[`AgentIdentity`]，只有私钥持有者能构造）、作者签名（绑定内容）、
+    /// 以及作者须为该委员会的在任委员。
+    pub fn propose(
+        &mut self,
+        kernel: &mut Kernel,
+        author: &AgentIdentity,
+        draft: ProposalDraft,
+    ) -> CoreResult<Proposal> {
+        if let Err(err) = draft.verify() {
+            kernel.refuse(
+                author.did(),
+                RefusalCode::Unauthorized,
+                format!("proposal signature: {err}"),
+            );
+            return Err(err);
+        }
+        if &draft.author != author.did() {
+            kernel.refuse(
+                author.did(),
+                RefusalCode::Unauthorized,
+                "identity token does not match the draft signer",
+            );
+            return Err(CoreError::InvalidSignature);
+        }
+        if kernel.card(&draft.author).is_none() {
+            kernel.refuse(&draft.author, RefusalCode::Unauthorized, "proposer is not a registered agent");
+            return Err(CoreError::UnknownAgent);
+        }
+        let seated = self
+            .committees
+            .get(&draft.committee)
+            .map(|c| c.has_member(&draft.author));
+        match seated {
+            None => {
+                kernel.refuse(&draft.author, RefusalCode::StaleEpoch, "no committee of that kind is seated");
+                return Err(CoreError::UnknownAgent);
+            }
+            Some(false) => {
+                kernel.refuse(&draft.author, RefusalCode::Unauthorized, "proposer is not a seated member");
+                return Err(CoreError::InvalidSignature);
+            }
+            Some(true) => {}
+        }
+        if let Err(err) = draft.action.validate() {
+            kernel.refuse(&draft.author, RefusalCode::Malformed, format!("illegal action: {err}"));
+            return Err(err);
+        }
+        if draft.title.trim().is_empty() || draft.title.len() > self.cfg.max_title_len {
+            kernel.refuse(&draft.author, RefusalCode::Malformed, "title empty or too long");
+            return Err(CoreError::InvalidKind);
+        }
+        let id = draft.id()?;
+        if self.proposals.contains_key(&id) {
+            kernel.refuse(&draft.author, RefusalCode::Conflict, "identical proposal already exists");
+            return Err(CoreError::DuplicateAgent);
+        }
+        self.clock.tick();
+        let proposal = Proposal {
+            id: id.clone(),
+            author: draft.author.clone(),
+            committee: draft.committee,
+            title: draft.title.clone(),
+            action: draft.action.clone(),
+            created_at: self.clock.now(),
+            state: ProposalState::Open,
+            round: 0,
+        };
+        kernel.emit(
+            "council.proposal",
+            format!(
+                "{} {} {}",
+                au4a_core::short_id(&id),
+                draft.committee.as_str(),
+                draft.title
+            ),
+        );
+        self.proposals.insert(id.clone(), proposal.clone());
+        self.proposal_order.push(id.clone());
+        self.record_event(
+            "proposal.open",
+            &id,
+            format!(
+                "{} by {} :: {}",
+                draft.committee.as_str(),
+                au4a_core::short_id(draft.author.as_str()),
+                draft.title
+            ),
+        );
+        Ok(proposal)
+    }
+
+    /// 读一条动议。
+    pub fn proposal(&self, id: &str) -> Option<&Proposal> {
+        self.proposals.get(id)
+    }
+
+    /// 全部动议，按提交顺序。
+    pub fn proposals(&self) -> Vec<&Proposal> {
+        self.proposal_order.iter().filter_map(|id| self.proposals.get(id)).collect()
+    }
+
+    /// 某个委员会的动议，按提交顺序。
+    pub fn proposals_of(&self, kind: CommitteeKind) -> Vec<&Proposal> {
+        self.proposals()
+            .into_iter()
+            .filter(|p| p.committee == kind)
+            .collect()
+    }
+
+    /// 动议状态迁移（类型化状态机）。非法迁移一律 [`CoreError::InvalidKind`]。
+    pub fn transition_to(
+        &mut self,
+        kernel: &mut Kernel,
+        id: &str,
+        next: ProposalState,
+    ) -> CoreResult<Proposal> {
+        let (state, author) = match self.proposals.get(id) {
+            Some(p) => (p.state, p.author.clone()),
+            None => return Err(CoreError::UnknownAgent),
+        };
+        if !state.can_transition_to(next) {
+            kernel.refuse(
+                &author,
+                RefusalCode::Conflict,
+                format!("illegal transition {} -> {}", state.as_str(), next.as_str()),
+            );
+            return Err(CoreError::InvalidKind);
+        }
+        self.clock.tick();
+        let updated = match self.proposals.get_mut(id) {
+            Some(p) => {
+                p.state = next;
+                p.clone()
+            }
+            None => return Err(CoreError::UnknownAgent),
+        };
+        kernel.emit(
+            "council.proposal.state",
+            format!("{} {} -> {}", au4a_core::short_id(id), state.as_str(), next.as_str()),
+        );
+        self.record_event("proposal.state", id, format!("{} -> {}", state.as_str(), next.as_str()));
+        Ok(updated)
+    }
+
+    /// 治理层自检（v1.7.2 覆盖选举、席位与动议；后续版本追加表决、否决、审计）。
     pub fn checks(&self) -> Vec<SelfCheck> {
         let mut checks = Vec::new();
         let installed = self.committees.len();
@@ -271,6 +479,30 @@ impl Council {
                 "council.committees.nonempty",
                 format!("存在 0 席委员会：{}", empty.join(",")),
             )
+        });
+        let ids_ok = self.proposals.values().all(|p| {
+            Proposal::id_for(&p.author, p.committee, &p.title, &p.action)
+                .map(|recomputed| recomputed == p.id)
+                .unwrap_or(false)
+        });
+        checks.push(if ids_ok {
+            SelfCheck::pass(
+                TRACK,
+                "council.proposals.content_addressed",
+                format!("{} 条动议的 id 均可由内容复算（作者/委员会/标题/动作）", self.proposals.len()),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.proposals.content_addressed", "存在 id 与内容不一致的动议")
+        });
+        let monotonic = self.events.windows(2).all(|w| w[0].at <= w[1].at);
+        checks.push(if monotonic {
+            SelfCheck::pass(
+                TRACK,
+                "council.events.monotonic",
+                format!("{} 条治理事件的逻辑时刻非递减", self.events.len()),
+            )
+        } else {
+            SelfCheck::fail(TRACK, "council.events.monotonic", "治理事件日志的时刻倒退")
         });
         checks
     }
@@ -324,49 +556,83 @@ fn enroll(kernel: &mut Kernel, council: &mut Council) -> CoreResult<(Vec<AgentKe
     Ok((agents, socks))
 }
 
-/// 一次完整选举（用于自检与结果摘要）。
-fn one_election() -> CoreResult<(Council, ElectionOutcome, Vec<Did>)> {
+/// 选出五类委员会（资源委员会那一场带一次空壳刷票）。
+fn seat_all_committees(
+    kernel: &mut Kernel,
+    council: &mut Council,
+    agents: &[AgentKeys],
+    socks: &[AgentKeys],
+) -> CoreResult<()> {
+    let eligible: Vec<Did> = agents.iter().map(|k| k.did()).collect();
+    for (j, kind) in CommitteeKind::ALL.iter().enumerate() {
+        let picks: Vec<Did> = (0..3).map(|n| eligible[(j + n) % eligible.len()].clone()).collect();
+        let mut ballots: Vec<ElectionBallot> = Vec::new();
+        for keys in agents {
+            ballots.push(ElectionBallot::cast(keys, *kind, &picks)?);
+        }
+        if *kind == CommitteeKind::Resource {
+            for keys in socks {
+                ballots.push(ElectionBallot::cast(keys, *kind, &picks)?);
+            }
+        }
+        council.elect(kernel, *kind, &ballots)?;
+    }
+    Ok(())
+}
+
+/// 一次完整建场：登记 → 选出五类委员会 → 由资源委员会委员提交一条动议。
+///
+/// 自检、结果摘要与 scenario 共用它，保证「文档里跑的」和「自检里跑的」是同一条路径。
+struct Build {
+    kernel: Kernel,
+    council: Council,
+    agents: Vec<AgentKeys>,
+    sock_dids: Vec<Did>,
+    proposal: Proposal,
+}
+
+fn build_full() -> CoreResult<Build> {
     let mut kernel = Kernel::new(KernelConfig::default());
     let mut council = Council::new(CouncilConfig::default());
     let (agents, socks) = enroll(&mut kernel, &mut council)?;
-    let picks: Vec<Did> = agents.iter().take(3).map(|k| k.did()).collect();
-    let mut ballots: Vec<ElectionBallot> = Vec::new();
-    for keys in agents.iter().chain(socks.iter()) {
-        ballots.push(ElectionBallot::cast(keys, CommitteeKind::Resource, &picks)?);
-    }
-    let outcome = council.elect(&mut kernel, CommitteeKind::Resource, &ballots)?;
-    Ok((council, outcome, socks.iter().map(|k| k.did()).collect()))
-}
+    seat_all_committees(&mut kernel, &mut council, &agents, &socks)?;
 
-struct MiniElection {
-    first: ElectionOutcome,
-    second: ElectionOutcome,
-    sock_dids: Vec<Did>,
-    checks: Vec<SelfCheck>,
-}
+    let member = council
+        .committee(CommitteeKind::Resource)
+        .and_then(|c| c.members.first())
+        .map(|m| m.did.clone());
+    let proposer = match agents.iter().find(|k| Some(&k.did()) == member.as_ref()) {
+        Some(k) => k,
+        None => return Err(CoreError::UnknownAgent),
+    };
+    let identity = AgentIdentity::from_keys(proposer);
+    let draft = ProposalDraft::by(
+        proposer,
+        CommitteeKind::Resource,
+        "把 cpu-proto 结算上限设为 250 微积分",
+        Action::SetPolicy { key: String::from("cpu_proto_settle_cap"), value: 250 },
+    )?;
+    let proposal = council.propose(&mut kernel, &identity, draft)?;
 
-/// 同一输入跑两遍：用来断言选举可复现。
-fn mini_election() -> CoreResult<MiniElection> {
-    let (council, first, sock_dids) = one_election()?;
-    let (_, second, _) = one_election()?;
-    Ok(MiniElection {
-        first,
-        second,
-        sock_dids,
-        checks: council.checks(),
+    Ok(Build {
+        kernel,
+        council,
+        agents,
+        sock_dids: socks.iter().map(|k| k.did()).collect(),
+        proposal,
     })
 }
 
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 ///
-/// 每一项都是**真实断言**（会真的跑一遍选举），不是占位。
+/// 每一项都是**真实断言**（会真的跑选举与提案），不是占位。
 pub fn self_check() -> Vec<SelfCheck> {
     let mut checks = Vec::new();
 
     let kinds_ok = CommitteeKind::ALL.len() == COMMITTEE_COUNT
-        && CommitteeKind::ALL
-            .iter()
-            .all(|k| CommitteeKind::parse(k.as_str()) == Some(*k) && k.has_emergency_channel() == (k.as_str() == "security"));
+        && CommitteeKind::ALL.iter().all(|k| {
+            CommitteeKind::parse(k.as_str()) == Some(*k) && k.has_emergency_channel() == (k.as_str() == "security")
+        });
     checks.push(if kinds_ok {
         SelfCheck::pass(
             TRACK,
@@ -386,32 +652,36 @@ pub fn self_check() -> Vec<SelfCheck> {
         SelfCheck::fail(TRACK, "council.quorum.math", "BFT-lite 法定人数数学不成立")
     });
 
-    match mini_election() {
-        Ok(m) => {
-            checks.extend(m.checks.iter().cloned());
-            checks.push(if m.first.id == m.second.id {
+    let first = build_full();
+    let second = build_full();
+    match (first, second) {
+        (Ok(a), Ok(b)) => {
+            let id_a = a.council.committee(CommitteeKind::Resource).map(|c| c.election_id.clone()).unwrap_or_default();
+            let id_b = b.council.committee(CommitteeKind::Resource).map(|c| c.election_id.clone()).unwrap_or_default();
+            checks.push(if !id_a.is_empty() && id_a == id_b {
                 SelfCheck::pass(
                     TRACK,
                     "council.election.reproducible",
-                    format!("同一花名册与选票跑两遍，选举 id 相同：{}", au4a_core::short_id(&m.first.id)),
+                    format!("同一花名册与选票跑两遍，资源委员会选举 id 相同：{}", au4a_core::short_id(&id_a)),
                 )
             } else {
                 SelfCheck::fail(TRACK, "council.election.reproducible", "两次选举结果不一致")
             });
-            let sock_elected = m
-                .first
-                .elected_dids()
-                .iter()
-                .filter(|d| m.sock_dids.contains(d))
+            let sock_elected = a
+                .council
+                .committees()
+                .flat_map(|c| c.member_dids())
+                .filter(|d| a.sock_dids.contains(d))
                 .count();
-            checks.push(if sock_elected == 0 && m.first.ballots_ignored.len() == m.sock_dids.len() {
+            let ignored: usize = a.council.elections().iter().map(|e| e.ballots_ignored.len()).sum();
+            checks.push(if sock_elected == 0 && ignored == a.sock_dids.len() {
                 SelfCheck::pass(
                     TRACK,
                     "council.election.sybil",
                     format!(
                         "{} 个信誉为零的空壳 DID 全部当选失败，其 {} 张选票被忽略（权重 0 < 门槛 {}）",
-                        m.sock_dids.len(),
-                        m.first.ballots_ignored.len(),
+                        a.sock_dids.len(),
+                        ignored,
                         CouncilConfig::default().election.min_voter_weight
                     ),
                 )
@@ -419,11 +689,27 @@ pub fn self_check() -> Vec<SelfCheck> {
                 SelfCheck::fail(
                     TRACK,
                     "council.election.sybil",
-                    format!("刷票未完全被拦：当选空壳 {sock_elected}，忽略票 {}", m.first.ballots_ignored.len()),
+                    format!("刷票未完全被拦：当选空壳 {sock_elected}，忽略票 {ignored}"),
                 )
             });
+            checks.push(if a.council.proposal(&a.proposal.id).is_some() && a.proposal.state == ProposalState::Open {
+                SelfCheck::pass(
+                    TRACK,
+                    "council.proposal.agent_only",
+                    format!(
+                        "动议 {} 由委员 {} 签名提交并处于 open 状态（人类观察者无 propose 方法，见 compile_fail 文档测试）",
+                        au4a_core::short_id(&a.proposal.id),
+                        au4a_core::short_id(a.proposal.author.as_str())
+                    ),
+                )
+            } else {
+                SelfCheck::fail(TRACK, "council.proposal.agent_only", "委员动议未能提交")
+            });
+            checks.extend(a.council.checks());
         }
-        Err(err) => checks.push(SelfCheck::fail(TRACK, "council.election.reproducible", err.to_string())),
+        (Err(err), _) | (_, Err(err)) => {
+            checks.push(SelfCheck::fail(TRACK, "council.election.reproducible", err.to_string()));
+        }
     }
 
     checks
@@ -431,21 +717,34 @@ pub fn self_check() -> Vec<SelfCheck> {
 
 /// 轨道产物摘要（只读投影的一部分）。
 pub fn results_json() -> CoreResult<Value> {
-    let mini = mini_election()?;
+    let run = build_full()?;
+    let repeat = build_full()?;
     let checks = self_check();
+    let resource = run.council.committee(CommitteeKind::Resource);
+    let repeat_resource = repeat.council.committee(CommitteeKind::Resource);
+    let reproducible = match (resource, repeat_resource) {
+        (Some(a), Some(b)) => a.election_id == b.election_id,
+        _ => false,
+    };
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "committees": COMMITTEE_COUNT,
+        "committees": run.council.committees().count(),
+        "seats_filled": run.council.committees().map(|c| c.size()).sum::<usize>(),
         "election": {
-            "id": mini.first.id,
-            "reproducible": mini.first.id == mini.second.id,
-            "elected": mini.first.elected.len(),
-            "ballots_counted": mini.first.ballots_counted,
-            "ballots_ignored": mini.first.ballots_ignored.len(),
-            "weight_counted": mini.first.weight_counted,
+            "id": resource.map(|c| c.election_id.clone()).unwrap_or_default(),
+            "ballots_ignored": run.council.elections().iter().map(|e| e.ballots_ignored.len()).sum::<usize>(),
+            "reproducible": reproducible,
         },
+        "proposal": {
+            "id": run.proposal.id,
+            "author": run.proposal.author.as_str(),
+            "state": run.proposal.state.as_str(),
+        },
+        "events": run.council.events().len(),
+        "agents_enrolled": run.agents.len(),
+        "kernel_delivered": run.kernel.observe().messages_delivered,
         "checks": checks.len(),
         "checks_passed": checks.iter().filter(|c| c.passed).count(),
     }))
@@ -457,33 +756,45 @@ pub fn results_json() -> CoreResult<Value> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let mut council = Council::new(CouncilConfig::default());
     let (agents, socks) = enroll(kernel, &mut council)?;
-    let eligible: Vec<Did> = agents.iter().map(|k| k.did()).collect();
     let sock_dids: Vec<Did> = socks.iter().map(|k| k.did()).collect();
+    seat_all_committees(kernel, &mut council, &agents, &socks)?;
 
-    let mut rowsholder: Vec<Value> = Vec::new();
-    for (j, kind) in CommitteeKind::ALL.iter().enumerate() {
-        let picks: Vec<Did> = (0..3).map(|n| eligible[(j + n) % eligible.len()].clone()).collect();
-        let mut ballots: Vec<ElectionBallot> = Vec::new();
-        for keys in &agents {
-            ballots.push(ElectionBallot::cast(keys, *kind, &picks)?);
-        }
-        if *kind == CommitteeKind::Resource {
-            for keys in &socks {
-                ballots.push(ElectionBallot::cast(keys, *kind, &picks)?);
-            }
-        }
-        let outcome = council.elect(kernel, *kind, &ballots)?;
-        rowsholder.push(json!({
-            "committee": kind.as_str(),
-            "title": kind.title(),
-            "mandate": kind.mandate(),
-            "epoch": outcome.epoch,
-            "election_id": outcome.id,
-            "members": outcome.elected.iter().map(|e| e.did.as_str().to_string()).collect::<Vec<_>>(),
-            "ballots_counted": outcome.ballots_counted,
-            "ballots_ignored": outcome.ballots_ignored.len(),
-        }));
-    }
+    // 动议只能由 Agent 提出：由资源委员会的在任委员签名提交。
+    let member = council
+        .committee(CommitteeKind::Resource)
+        .and_then(|c| c.members.first())
+        .map(|m| m.did.clone());
+    let proposer = agents
+        .iter()
+        .find(|k| Some(&k.did()) == member.as_ref())
+        .ok_or(CoreError::UnknownAgent)?;
+    let identity = AgentIdentity::from_keys(proposer);
+    let draft = ProposalDraft::by(
+        proposer,
+        CommitteeKind::Resource,
+        "把 cpu-proto 结算上限设为 250 微积分",
+        Action::SetPolicy { key: String::from("cpu_proto_settle_cap"), value: 250 },
+    )?;
+    let proposal = council.propose(kernel, &identity, draft)?;
+
+    // 人类只观察：拿到的只是一个值，没有任何写入口。
+    let human = HumanObserver::new("operator");
+    let view = human.observe(&council);
+
+    let committees: Vec<Value> = council
+        .committees()
+        .map(|c| {
+            json!({
+                "committee": c.kind.as_str(),
+                "title": c.kind.title(),
+                "mandate": c.kind.mandate(),
+                "epoch": c.epoch,
+                "election_id": c.election_id.clone(),
+                "members": c.member_dids().iter().map(|d| d.as_str().to_string()).collect::<Vec<_>>(),
+                "quorum": c.quorum(),
+            })
+        })
+        .collect();
 
     let sock_elected = council
         .committees()
@@ -495,7 +806,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
 
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("五类委员会选举完成：{} 个在任席位，忽略空壳选票 {}", seats, ignored),
+        format!(
+            "五类委员会 {} 席；动议 {} 由 Agent 提交；观察者只读看到 {} 条动议",
+            seats,
+            au4a_core::short_id(&proposal.id),
+            view.proposals.len()
+        ),
     );
 
     Ok(json!({
@@ -503,10 +819,25 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "title": TITLE,
         "range": RANGE,
         "agents": kernel.agent_count(),
-        "committees": rowsholder,
+        "committees": committees,
         "elections": council.elections().len(),
         "seats_filled": seats,
         "sock_ballots_ignored": ignored,
         "sock_elected": sock_elected,
+        "proposals": [{
+            "id": proposal.id,
+            "title": proposal.title,
+            "committee": proposal.committee.as_str(),
+            "author": proposal.author.as_str(),
+            "state": proposal.state.as_str(),
+            "action": proposal.action.describe(),
+        }],
+        "human_view": {
+            "label": view.label,
+            "seats_filled": view.seats_filled,
+            "proposals": view.proposals.len(),
+            "events": view.events,
+        },
+        "events": council.events().len(),
     }))
 }

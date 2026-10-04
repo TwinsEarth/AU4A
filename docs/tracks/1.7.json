@@ -38,6 +38,43 @@
         "notes": "本机 Windows 实测：单元 11 + 集成 8，0 warning；Ed25519 验签真实执行；跨节点广播不在本版范围"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.2",
+      "title": "提案流程",
+      "goal": "动议只能由 Agent 提出且内容由 Agent 私钥签名；人类观察者在类型层面无提案/修改能力",
+      "deliverables": [
+        "src/proposal.rs: Action/ProposalState 状态机/Proposal/AgentIdentity 能力凭证/ProposalDraft 签名动议",
+        "src/human.rs: HumanObserver 只读投影 + 2 个 compile_fail 文档测试 + 1 个正例文档测试",
+        "src/lib.rs: Council::propose 唯一提案入口、transition_to 类型化状态机、CouncilEvent 事件日志",
+        "tests/proposal.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub enum Action { SetPolicy, SetReputation, Transfer, Slash }",
+        "pub enum ProposalState { Open, Passed, Rejected, Blocked, Executed }",
+        "pub struct AgentIdentity  // 字段私有、无 Deserialize，唯一入口 from_keys",
+        "pub fn Council::propose(&mut self, &mut Kernel, &AgentIdentity, ProposalDraft) -> CoreResult<Proposal>",
+        "pub fn Council::transition_to(&mut self, &mut Kernel, &str, ProposalState) -> CoreResult<Proposal>",
+        "pub struct HumanObserver  // 仅 new/label/observe，无 propose/edit"
+      ],
+      "acceptance": [
+        "委员 Agent 可提案，id 可由内容复算",
+        "非委员 → InvalidSignature + unauthorized；未注册 → UnknownAgent；未选出委员会 → StaleEpoch",
+        "同内容重复动议 → DuplicateAgent + conflict",
+        "篡改内容后签名失效（金额 5→500 被拒）",
+        "非法动作与空标题在提案阶段被拒，零状态变更",
+        "状态机拒绝 open→executed、passed→rejected、终态再迁移",
+        "观察两次结果相同且不产生治理事件",
+        "人类 propose/edit_proposal 编译失败（compile_fail 文档测试）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 37,
+        "tests_total": 37,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 16 + election 8 + proposal 10 + doc-tests 3（2 compile_fail + 1 正例），0 warning"
+      },
+      "status": "done"
     }
   ]
 }
