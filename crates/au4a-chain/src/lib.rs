@@ -23,6 +23,7 @@
 
 pub mod bridge;
 pub mod rgb;
+pub mod taproot;
 pub mod testnet;
 
 use au4a_core::{AgentKeys, CoreError, CoreResult, Credits, Did, Ledger, RefusalCode, SelfCheck};
@@ -33,6 +34,10 @@ pub use bridge::{
     reconcile, BridgeBook, BridgeDirection, BridgeEvent, Reconciliation, BRIDGE_INCONSISTENCY_CODE,
 };
 pub use rgb::{RgbAdapter, RgbContract, RgbOutcome, Seal, TransferBundle, RGB_REFUSALS, RGB_SUPPORTED};
+pub use taproot::{
+    leaf_hash, merkle_proof, merkle_root, verify_merkle, ProofStep, TaprootAdapter, TaprootAnchor,
+    TaprootOutcome, TAPROOT_REFUSALS, TAPROOT_SUPPORTED,
+};
 pub use testnet::{
     ChainId, ChainRefusal, ChainTx, Receipt, RefusalSpec, Testnet, ONCHAIN_GRADE,
 };
@@ -114,6 +119,33 @@ pub fn self_check() -> Vec<SelfCheck> {
             refusal.code.as_str(),
             net.refusals().len(),
             RGB_REFUSALS.len()
+        ))
+    }));
+
+    checks.push(check("taproot.merkle", || {
+        let mut leaves: Vec<String> = Vec::new();
+        for i in 1..=5i64 {
+            leaves.push(
+                leaf_hash("tap:USDT", Credits(i * 10), &Seal::new(format!("s{i}"), 0))
+                    .map_err(|e| e.to_string())?,
+            );
+        }
+        let root = merkle_root(&leaves).map_err(|e| e.to_string())?;
+        for index in 0..leaves.len() {
+            let proof = merkle_proof(&leaves, index).map_err(|e| e.to_string())?;
+            if !verify_merkle(&leaves[index], &proof, &root).map_err(|e| e.to_string())? {
+                return Err(format!("第 {index} 个叶子的认证路径验证失败"));
+            }
+        }
+        let fake = leaf_hash("tap:USDT", Credits(9_999), &Seal::new("s1", 0))
+            .map_err(|e| e.to_string())?;
+        let proof = merkle_proof(&leaves, 0).map_err(|e| e.to_string())?;
+        if verify_merkle(&fake, &proof, &root).map_err(|e| e.to_string())? {
+            return Err("伪造叶子竟然通过了 Merkle 验证".to_string());
+        }
+        Ok(format!(
+            "5 个叶子的 Merkle 根 {}：全部 5 条认证路径成立，伪造叶子不被接受",
+            au4a_core::short_id(&root)
         ))
     }));
 
@@ -339,7 +371,57 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         format!("{}: {}", refusal.op, refusal.detail),
     );
 
-    // 双轨对账（fail-closed）：本地托管 == 链上表示 == RGB 流通量。
+    // Taproot 侧：把 250/150 锚定进一个 BTC 输出承诺，并用 Merkle 证明验证（v1.8.2）。
+    let mut tapnet = Testnet::new(ChainId::BtcRegtest, 1);
+    let mut taproot = TaprootAdapter::new();
+    let anchor_tx = ChainTx::new(
+        ChainId::BtcRegtest,
+        "taproot.anchor",
+        &bob,
+        1,
+        json!({
+            "asset_id": "tap:USDT-RGB",
+            "internal_key": au4a_core::content_hash(b"au4a-internal-key"),
+            "amounts": [250, 150],
+        }),
+    )?;
+    let anchored = adapter_ok(&mut *kernel, &bob, taproot.execute(&mut tapnet, &anchor_tx))?;
+    // 最终性：锚定块之上还要再叠 `finality_depth` 个块。
+    let anchor_height = anchored
+        .receipt
+        .as_ref()
+        .map(|r| r.height)
+        .ok_or(CoreError::InvalidKind)?;
+    let tap_final_height = anchor_height + tapnet.finality_depth();
+    tapnet.mine_to(tap_final_height);
+    let anchor = taproot
+        .anchor_of("tap:USDT-RGB")
+        .ok_or(CoreError::UnknownAgent)?
+        .clone();
+    let tap_leaf = anchor.leaves[1].clone();
+    let tap_proof = anchor.proof_for(1)?;
+    let tap_verify_tx = ChainTx::new(
+        ChainId::BtcRegtest,
+        "taproot.verify",
+        &bob,
+        2,
+        json!({ "asset_id": "tap:USDT-RGB", "leaf": tap_leaf, "proof": tap_proof }),
+    )?;
+    let tap_verified = adapter_ok(&mut *kernel, &bob, taproot.execute(&mut tapnet, &tap_verify_tx))?;
+    if taproot.anchored_total()? != bridged {
+        return Err(CoreError::InvalidKind);
+    }
+    kernel.emit(
+        "chain.taproot_anchor",
+        format!(
+            "锚定 {} 总量 {}（输出键 {}）并完成 Merkle 验证",
+            anchored.detail,
+            taproot.anchored_total()?,
+            au4a_core::short_id(&anchor.output_key)
+        ),
+    );
+
+    // 双轨对账（fail-closed）：本地托管 == 链上表示 == RGB 流通量 == Taproot 锚定总量。
     let report = book.require_consistent(kernel.ledger())?;
     rgb.contract()?.check_supply_conservation()?;
     kernel.emit(
@@ -356,7 +438,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.8.1 RGB 集成（确定性测试网）",
+        "scenario": "v1.8.2 RGB 集成 + Taproot Assets 锚定（确定性测试网）",
         "agents": [alice.as_str(), bob.as_str()],
         "bridge": {
             "out": bridged,
@@ -376,6 +458,20 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "transfer": transferred.detail,
             "verify": verified.detail,
             "finalize": finalized.detail,
+        },
+        "taproot": {
+            "asset_id": anchor.asset_id,
+            "internal_key": anchor.internal_key,
+            "merkle_root": anchor.merkle_root,
+            "output_key": anchor.output_key,
+            "amount_total": anchor.amount_total,
+            "leaves": anchor.leaves.len(),
+            "annotated_height": anchor.height,
+            "proof_steps": tap_proof.len(),
+            "anchor": anchored.detail,
+            "verify": tap_verified.detail,
+            "verified_count": taproot.verified_count(),
+            "anchored_total": taproot.anchored_total()?,
         },
         "refusals": [
             { "op": early_refusal.op, "code": early_refusal.code.as_str(), "detail": early_refusal.detail },
@@ -402,7 +498,10 @@ mod tests {
     #[test]
     fn the_scenario_is_reproducible_and_never_claims_a_real_chain() {
         let mut first = Kernel::new(KernelConfig::default());
-        let a = scenario(&mut first).unwrap();
+        let a = match scenario(&mut first) {
+            Ok(value) => value,
+            Err(err) => panic!("场景失败：{err}；内核拒绝记录：{:?}", first.refusals()),
+        };
         let mut second = Kernel::new(KernelConfig::default());
         let b = scenario(&mut second).unwrap();
         assert_eq!(
@@ -416,6 +515,11 @@ mod tests {
         assert_eq!(a["rgb"]["circulating"], json!(400));
         assert_eq!(a["rgb"]["supply"], json!(400));
         assert_eq!(a["rgb"]["finalized"], json!(1));
+        // Taproot：锚定 400（250+150），Merkle 验证通过。
+        assert_eq!(a["taproot"]["amount_total"], json!(400));
+        assert_eq!(a["taproot"]["leaves"], json!(2));
+        assert_eq!(a["taproot"]["verified_count"], json!(1));
+        assert_eq!(a["taproot"]["anchored_total"], json!(400));
         // 锁定 = 注册质押 100 + 桥出托管 400 = 500。
         assert_eq!(a["conservation"]["locked"], json!(500));
         first.ledger().check_conservation().unwrap();

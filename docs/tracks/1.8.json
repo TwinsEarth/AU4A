@@ -39,6 +39,38 @@
         "notes": "确定性测试网语义原型：无真实 BTC/ETH 节点、无真实承诺方案、无共识层、不联网；链上证据等级恒为 cpu-proto；日志 _forangent\\logs\\1.8-v1.8.1.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.8.2",
+      "title": "Taproot Assets",
+      "goal": "资产锚定语义：Merkle 承诺 + 输出键派生 + 认证路径验证 + 最终性门槛；具名拒绝脚本路径花费/Schnorr 多签/增发/链下互换。",
+      "deliverables": [
+        "src/taproot.rs: ProofStep / leaf_hash / merkle_root / merkle_proof / verify_merkle / TaprootAnchor / TaprootAdapter / TAPROOT_SUPPORTED / TAPROOT_REFUSALS",
+        "src/lib.rs: 自检 taproot.merkle + 场景 taproot 段（锚定 250/150、证明、验证、双轨对账）"
+      ],
+      "interfaces": [
+        "pub fn merkle_root(leaves: &[String]) -> CoreResult<String>",
+        "pub fn merkle_proof(leaves: &[String], index: usize) -> CoreResult<Vec<ProofStep>>",
+        "pub fn verify_merkle(leaf: &str, proof: &[ProofStep], root: &str) -> CoreResult<bool>",
+        "pub fn TaprootAnchor::output_key_for(internal_key: &str, merkle_root: &str) -> CoreResult<String>",
+        "pub fn TaprootAdapter::execute(&mut self, net: &mut Testnet, tx: &ChainTx) -> Result<TaprootOutcome, ChainRefusal>"
+      ],
+      "acceptance": [
+        "锚定 250+150 → 总额 400、2 叶子、输出键可由内部键与根重新派生、Merkle 根可重算",
+        "5 个叶子的认证路径全部成立；换叶子/篡改路径 → 不成立；越界下标 → InvalidKind",
+        "锚定未达最终性就验证 → Timeout；叠够 finality_depth 后验证通过",
+        "伪造叶子 → Malformed；重复锚定同一资产 → Conflict；空金额/坏内部键 → Malformed",
+        "5 个具名拒绝（script_path_spend/schnorr_multisig/asset_inflation/offchain_swap/未知）逐个断言 op 与 code",
+        "Taproot 锚定总量 400 == 本地托管 400，require_consistent 通过"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-chain (CARGO_TARGET_DIR=E:\\DS\\_forangent\\target\\au4a-chain)",
+        "tests_passed": 33,
+        "tests_total": 33,
+        "grade": "cpu-proto",
+        "notes": "无 BIP341 真实 tweak、无真实签名、无 BTC 节点；Merkle 与哈希为真实运算，其余是测试网语义；日志 _forangent\\logs\\1.8-v1.8.2.log"
+      },
+      "status": "done"
     }
   ]
 }
