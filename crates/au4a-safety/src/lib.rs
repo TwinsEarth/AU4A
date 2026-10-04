@@ -19,6 +19,7 @@ pub mod case;
 pub mod chain;
 pub mod config;
 pub mod evidence;
+pub mod notify;
 pub mod office;
 pub mod penalty;
 pub mod permission;
@@ -35,6 +36,7 @@ pub use chain::{
 };
 pub use config::SafetyConfig;
 pub use evidence::{is_lower_hex64, require_well_formed, EvidenceKind, EvidenceRef};
+pub use notify::{Notification, Subscription};
 pub use office::{ledger_fingerprint, ledger_snapshot, SafetyOffice};
 pub use penalty::{PenaltyOrder, PenaltyRecord, SanctionKind};
 pub use permission::{
@@ -50,7 +52,7 @@ pub const TITLE: &str = "Safety API 安全 API";
 /// 版本区间。
 pub const RANGE: &str = "v1.5.1 → v1.5.10";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.5.4";
+pub const CURRENT: &str = "v1.5.5";
 
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_safety";
@@ -116,6 +118,16 @@ pub fn self_check() -> Vec<SelfCheck> {
             ),
         ),
         Err(err) => SelfCheck::fail(TRACK, "penalty.arbiter_gated", err.to_string()),
+    });
+
+    // 通知隔离：只投递给订阅了该状态的人，且第三方不能退订别人的订阅。
+    checks.push(match notification_isolation_probe() {
+        Ok((subscriber, bystander)) => SelfCheck::pass(
+            TRACK,
+            "notify.subscription_scoped",
+            format!("订阅者收到 {subscriber} 条通知、旁观者收到 {bystander} 条（未订阅状态不投递）"),
+        ),
+        Err(err) => SelfCheck::fail(TRACK, "notify.subscription_scoped", err.to_string()),
     });
 
     // 证据闸门：伪造摘要必须被拒，且不留下案件与事件。
@@ -420,6 +432,64 @@ fn penalty_gate_probe() -> CoreResult<(Credits, Credits)> {
     Ok((record.applied, kernel.ledger().slashed()))
 }
 
+/// 独立实验：通知按订阅投递，旁观者收不到，第三方不能替别人退订。
+fn notification_isolation_probe() -> CoreResult<(usize, usize)> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let office_keys = role_keys(setup::ROLE_SERVICE);
+    let reporter = role_keys(setup::ROLE_REPORTER);
+    let subject = role_keys(setup::ROLE_SUBJECT);
+    let arbiter = role_keys(setup::ROLE_ARBITER);
+    let bystander = role_keys(0x77);
+    for (keys, display, skill) in [
+        (&office_keys, "safety-service", "safety.api"),
+        (&reporter, "reporter-agent", "audit.report"),
+        (&subject, "subject-agent", "deliver.task"),
+        (&bystander, "bystander-agent", "observe"),
+    ] {
+        ensure_agent(&mut kernel, keys, display, &[skill], Credits(20))?;
+    }
+    let config = SafetyConfig::single_arbiter(office_keys.did(), arbiter.did());
+    let mut office = SafetyOffice::new(config, office_keys)?;
+
+    let payload = json!({"probe": "notify"});
+    let reference = EvidenceRef::commit(EvidenceKind::Transcript, &payload)?;
+    let report = office.report(
+        &mut kernel,
+        &reporter,
+        &subject.did(),
+        ViolationKind::Spam,
+        reference,
+        &payload,
+    )?;
+    // 举报人订阅 reported/appealed，旁观者只订阅 arbitrated。
+    let watched = office.subscribe(
+        &mut kernel,
+        &reporter,
+        &report.id,
+        vec![CaseStatus::Reported, CaseStatus::Appealed],
+    )?;
+    office.subscribe(
+        &mut kernel,
+        &bystander,
+        &report.id,
+        vec![CaseStatus::Arbitrated],
+    )?;
+    let appeal_payloads = vec![json!({"probe": "notify-appeal", "ok": true})];
+    let appeal_refs = vec![EvidenceRef::commit(EvidenceKind::Witness, &appeal_payloads[0])?];
+    office.appeal(&mut kernel, &subject, &report.id, appeal_refs, &appeal_payloads)?;
+
+    // 第三方不能替订阅者退订。
+    if office.unsubscribe(&mut kernel, &bystander, &watched.id) != Err(CoreError::InvalidSignature) {
+        return Err(CoreError::InvalidSignature);
+    }
+    let subscriber_inbox = office.inbox(&reporter.did()).len();
+    let bystander_inbox = office.inbox(&bystander.did()).len();
+    if subscriber_inbox != 2 || bystander_inbox != 0 {
+        return Err(CoreError::InvalidSignature);
+    }
+    Ok((subscriber_inbox, bystander_inbox))
+}
+
 /// 轨道产物摘要（只读投影的一部分）。
 pub fn results_json() -> CoreResult<Value> {
     let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
@@ -479,6 +549,19 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     let snapshot_after_report = ledger_snapshot(kernel, &participants);
     let fingerprint_after_report = ledger_fingerprint(kernel, &participants)?;
 
+    // 2.5) 通知：举报人按案件订阅状态变更（订阅即回放当前状态快照，此后只投递增量）。
+    let subscription = office.subscribe(
+        kernel,
+        &reporter,
+        &report.id,
+        vec![
+            CaseStatus::Reported,
+            CaseStatus::Appealed,
+            CaseStatus::Penalized,
+            CaseStatus::Arbitrated,
+        ],
+    )?;
+
     // 4) 伪造证据：必须被拒，且不留案件、不留事件。
     let forged_payload = json!({"task": "deliver-1", "delivered": true, "deadline": 40});
     let forged_reference = EvidenceRef::commit(EvidenceKind::Transcript, &forged_payload)?;
@@ -530,6 +613,18 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         && office.status_of(&report.id) == Some(CaseStatus::Appealed);
     if !penalty_moved_ledger || !appeal_untouched {
         return Err(CoreError::Overflow);
+    }
+
+    // 7) 通知结果：订阅者按状态集合收到快照 + 增量。
+    let delivered: Vec<&str> = office
+        .inbox(&reporter.did())
+        .iter()
+        .map(|n| n.status.as_str())
+        .collect();
+    let notifications_as_watched = delivered == vec!["reported", "penalized", "appealed"];
+    let notifications_private = office.inbox(&subject.did()).is_empty();
+    if !notifications_as_watched || !notifications_private {
+        return Err(CoreError::InvalidSignature);
     }
 
     // 未确认举报阶段（举报前后）账本与名片必须逐字段不变。
@@ -594,6 +689,13 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "appellant": appeal.appellant.as_str(),
             "evidence": appeal.evidence_count(),
             "moved_ledger": !appeal_untouched,
+        },
+        "notifications": {
+            "subscription": subscription.id,
+            "watched": subscription.statuses.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+            "delivered": delivered,
+            "as_watched": notifications_as_watched,
+            "private": notifications_private,
         },
         "chain": {
             "len": verdict.len,

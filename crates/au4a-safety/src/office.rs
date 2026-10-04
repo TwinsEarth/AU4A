@@ -18,6 +18,7 @@ use crate::case::{Case, CaseStatus, ViolationKind, ViolationReport};
 use crate::chain::{chain_head, verify_chain, ChainVerdict, SafetyEvent, SafetyEventKind};
 use crate::config::SafetyConfig;
 use crate::evidence::EvidenceRef;
+use crate::notify::{Notification, Subscription};
 use crate::penalty::{PenaltyOrder, PenaltyRecord};
 
 /// 安全服务：案件登记处 + 变更日志。
@@ -28,6 +29,8 @@ pub struct SafetyOffice {
     cases: BTreeMap<String, Case>,
     appeals: BTreeMap<String, Appeal>,
     penalties: Vec<PenaltyRecord>,
+    subscriptions: BTreeMap<String, Subscription>,
+    notifications: Vec<Notification>,
 }
 
 impl SafetyOffice {
@@ -44,6 +47,8 @@ impl SafetyOffice {
             cases: BTreeMap::new(),
             appeals: BTreeMap::new(),
             penalties: Vec::new(),
+            subscriptions: BTreeMap::new(),
+            notifications: Vec::new(),
         })
     }
 
@@ -183,6 +188,8 @@ impl SafetyOffice {
             SafetyEventKind::Reported,
             json!({"case": case_id, "report": report.to_json()?}),
         )?;
+        // 未确认状态的变更同样要通知订阅者（状态已变，只是账本没动）。
+        self.deliver(&case_id, CaseStatus::Reported, 0, at);
         kernel.emit(
             &format!("{}.reported", crate::TRACK),
             format!(
@@ -279,8 +286,10 @@ impl SafetyOffice {
             Appeal::new(case_id.to_string(), appellant.clone(), evidence, at).sign(keys)?;
         appeal.verify()?;
 
+        let seq = self.events.len() as u64;
         if let Some(case) = self.cases.get_mut(case_id) {
             case.status = CaseStatus::Appealed;
+            case.status_seq = seq;
             case.appeals.push(appeal.id.clone());
         }
         self.appeals.insert(appeal.id.clone(), appeal.clone());
@@ -289,6 +298,7 @@ impl SafetyOffice {
             SafetyEventKind::Appealed,
             json!({"case": case_id, "appeal": appeal.to_json()?}),
         )?;
+        self.deliver(case_id, CaseStatus::Appealed, seq, at);
         kernel.emit(
             &format!("{}.appealed", crate::TRACK),
             format!(
@@ -398,8 +408,10 @@ impl SafetyOffice {
             reversed: false,
         };
 
+        let seq = self.events.len() as u64;
         if let Some(target) = self.cases.get_mut(&order.case) {
             target.status = CaseStatus::Penalized;
+            target.status_seq = seq;
             target.penalties.push(record.id.clone());
         }
         self.penalties.push(record.clone());
@@ -408,6 +420,7 @@ impl SafetyOffice {
             SafetyEventKind::Penalized,
             json!({"case": order.case, "penalty": record.to_json()?}),
         )?;
+        self.deliver(&record.case, CaseStatus::Penalized, seq, at);
         kernel.emit(
             &format!("{}.penalized", crate::TRACK),
             format!(
@@ -419,6 +432,173 @@ impl SafetyOffice {
             ),
         );
         Ok(record)
+    }
+
+    // ---- v1.5.5 通知 ----
+
+    pub fn subscription(&self, id: &str) -> Option<&Subscription> {
+        self.subscriptions.get(id)
+    }
+
+    pub fn subscription_count(&self) -> usize {
+        self.subscriptions.len()
+    }
+
+    /// 某案件的订阅（按订阅 id 升序，确定性）。
+    pub fn subscriptions_of(&self, case_id: &str) -> Vec<&Subscription> {
+        self.subscriptions
+            .values()
+            .filter(|sub| sub.case == case_id)
+            .collect()
+    }
+
+    pub fn notification_count(&self) -> usize {
+        self.notifications.len()
+    }
+
+    /// 某 Agent 的通知收件箱（按投递顺序）。
+    pub fn inbox(&self, did: &Did) -> Vec<&Notification> {
+        self.notifications
+            .iter()
+            .filter(|n| &n.to == did)
+            .collect()
+    }
+
+    pub fn notifications_of_case(&self, case_id: &str) -> Vec<&Notification> {
+        self.notifications
+            .iter()
+            .filter(|n| n.case == case_id)
+            .collect()
+    }
+
+    fn notify_one(
+        &mut self,
+        subscription: &str,
+        to: &Did,
+        case_id: &str,
+        status: CaseStatus,
+        seq: u64,
+        at: u64,
+    ) {
+        self.notifications.push(Notification {
+            subscription: subscription.to_string(),
+            to: to.clone(),
+            case: case_id.to_string(),
+            status,
+            seq,
+            at,
+        });
+    }
+
+    /// 把一次状态变更投递给所有匹配的订阅（派生投影，不写链）。
+    fn deliver(&mut self, case_id: &str, status: CaseStatus, seq: u64, at: u64) {
+        let targets: Vec<(String, Did)> = self
+            .subscriptions
+            .values()
+            .filter(|sub| sub.case == case_id && sub.watches(status))
+            .map(|sub| (sub.id.clone(), sub.subscriber.clone()))
+            .collect();
+        for (subscription, to) in targets {
+            self.notify_one(&subscription, &to, case_id, status, seq, at);
+        }
+    }
+
+    /// 建立一个订阅。**订阅即回放当前状态快照**，但不投递订阅前的历史。
+    pub fn subscribe(
+        &mut self,
+        kernel: &mut Kernel,
+        keys: &AgentKeys,
+        case_id: &str,
+        statuses: Vec<CaseStatus>,
+    ) -> CoreResult<Subscription> {
+        let subscriber = keys.did();
+        let (status, status_seq) = match self.cases.get(case_id) {
+            Some(case) => (case.status, case.status_seq),
+            None => {
+                kernel.refuse(
+                    &subscriber,
+                    RefusalCode::StaleEpoch,
+                    "subscription references an unknown case",
+                );
+                return Err(CoreError::UnknownAgent);
+            }
+        };
+        if statuses.is_empty() {
+            kernel.refuse(
+                &subscriber,
+                RefusalCode::PolicyDenied,
+                "a subscription without statuses does not say what to watch",
+            );
+            return Err(CoreError::InvalidKind);
+        }
+        let at = kernel.tick();
+        let subscription =
+            Subscription::new(case_id.to_string(), subscriber.clone(), statuses, at).sign(keys)?;
+        subscription.verify()?;
+        self.subscriptions
+            .insert(subscription.id.clone(), subscription.clone());
+        self.append(
+            kernel,
+            SafetyEventKind::Subscribed,
+            json!({"case": case_id, "subscription": subscription.to_json()?}),
+        )?;
+        if subscription.watches(status) {
+            self.notify_one(&subscription.id, &subscriber, case_id, status, status_seq, at);
+        }
+        kernel.emit(
+            &format!("{}.subscribed", crate::TRACK),
+            format!(
+                "{} 订阅案件 {} 的 {} 个状态",
+                au4a_core::short_id(subscriber.as_str()),
+                au4a_core::short_id(case_id),
+                subscription.statuses.len()
+            ),
+        );
+        Ok(subscription)
+    }
+
+    /// 退订。只有订阅者本人可以撤销自己的订阅。
+    pub fn unsubscribe(
+        &mut self,
+        kernel: &mut Kernel,
+        keys: &AgentKeys,
+        subscription_id: &str,
+    ) -> CoreResult<Subscription> {
+        let requester = keys.did();
+        let subscription = match self.subscriptions.get(subscription_id) {
+            Some(subscription) => subscription.clone(),
+            None => {
+                kernel.refuse(
+                    &requester,
+                    RefusalCode::StaleEpoch,
+                    "unsubscribe references an unknown subscription",
+                );
+                return Err(CoreError::UnknownAgent);
+            }
+        };
+        if subscription.subscriber != requester {
+            kernel.refuse(
+                &requester,
+                RefusalCode::Unauthorized,
+                "only the subscriber may cancel their own subscription",
+            );
+            return Err(CoreError::InvalidSignature);
+        }
+        self.subscriptions.remove(subscription_id);
+        self.append(
+            kernel,
+            SafetyEventKind::Unsubscribed,
+            json!({"case": subscription.case, "subscription": subscription_id}),
+        )?;
+        kernel.emit(
+            &format!("{}.unsubscribed", crate::TRACK),
+            format!(
+                "{} 退订 {}",
+                au4a_core::short_id(requester.as_str()),
+                au4a_core::short_id(subscription_id)
+            ),
+        );
+        Ok(subscription)
     }
 }
 
@@ -1157,5 +1337,234 @@ mod tests {
         assert_eq!(w.kernel.ledger().slashed(), Credits(10));
         w.kernel.ledger().check_conservation().unwrap();
         assert!(w.office.verify_chain().ok);
+    }
+
+    // ---- v1.5.5 通知 ----
+
+    #[test]
+    fn subscribing_replays_the_current_status_then_delivers_increments() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "notify-1");
+        let statuses = vec![CaseStatus::Reported, CaseStatus::Appealed];
+        let subscription = w
+            .office
+            .subscribe(&mut w.kernel, &w.reporter, &case_id, statuses)
+            .unwrap();
+
+        // 订阅即回放当前状态快照：seq 指向造成该状态的事件序号。
+        let inbox = w.office.inbox(&w.reporter.did());
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].status, CaseStatus::Reported);
+        assert_eq!(inbox[0].seq, 0);
+        assert_eq!(inbox[0].subscription, subscription.id);
+
+        // 后续增量：主体申诉 → appealed。
+        let (references, payloads) = appeal_evidence("notify-1");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        let inbox = w.office.inbox(&w.reporter.did());
+        assert_eq!(inbox.len(), 2);
+        assert_eq!(inbox[1].status, CaseStatus::Appealed);
+        assert_eq!(inbox[1].seq, 2, "seq 指向 appealed 事件（0=reported,1=subscribed,2=appealed）");
+        assert_eq!(w.office.subscription_count(), 1);
+        assert!(w.office.verify_chain().ok);
+    }
+
+    #[test]
+    fn only_watched_statuses_are_delivered() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "notify-2");
+        // 只关心 arbitrated：当前是 reported（不投递快照），后续 appealing/penalized 也不投递。
+        w.office
+            .subscribe(&mut w.kernel, &w.reporter, &case_id, vec![CaseStatus::Arbitrated])
+            .unwrap();
+        assert_eq!(w.office.inbox(&w.reporter.did()).len(), 0);
+
+        let (references, payloads) = appeal_evidence("notify-2");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        w.office
+            .apply_penalty_order(
+                &mut w.kernel,
+                slash_order(&case_id, &w.subject.did(), 3, &w.arbiter)
+                    .sign(&w.arbiter)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            w.office.inbox(&w.reporter.did()).len(),
+            0,
+            "未订阅的状态不得投递"
+        );
+    }
+
+    #[test]
+    fn unsubscribing_stops_further_delivery_and_is_recorded() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "notify-3");
+        let subscription = w
+            .office
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Reported, CaseStatus::Appealed],
+            )
+            .unwrap();
+        assert_eq!(w.office.inbox(&w.reporter.did()).len(), 1);
+
+        w.office
+            .unsubscribe(&mut w.kernel, &w.reporter, &subscription.id)
+            .unwrap();
+        assert_eq!(w.office.subscription_count(), 0);
+        assert_eq!(
+            w.office.events().last().unwrap().kind,
+            SafetyEventKind::Unsubscribed
+        );
+
+        let (references, payloads) = appeal_evidence("notify-3");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        assert_eq!(
+            w.office.inbox(&w.reporter.did()).len(),
+            1,
+            "退订后不再投递"
+        );
+    }
+
+    #[test]
+    fn a_third_party_cannot_cancel_someone_elses_subscription() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "notify-4");
+        let subscription = w
+            .office
+            .subscribe(&mut w.kernel, &w.reporter, &case_id, vec![CaseStatus::Appealed])
+            .unwrap();
+        assert_eq!(
+            w.office
+                .unsubscribe(&mut w.kernel, &w.subject, &subscription.id),
+            Err(CoreError::InvalidSignature)
+        );
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::Unauthorized);
+        assert_eq!(w.office.subscription_count(), 1);
+
+        // 订阅仍然有效：主体申诉后订阅者照样收到通知。
+        let (references, payloads) = appeal_evidence("notify-4");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        assert_eq!(w.office.inbox(&w.reporter.did()).len(), 1);
+    }
+
+    #[test]
+    fn unknown_cases_and_unknown_subscriptions_are_refused() {
+        let mut w = world();
+        assert_eq!(
+            w.office
+                .subscribe(&mut w.kernel, &w.reporter, "no-such-case", vec![CaseStatus::Reported]),
+            Err(CoreError::UnknownAgent)
+        );
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::StaleEpoch);
+
+        assert_eq!(
+            w.office
+                .unsubscribe(&mut w.kernel, &w.reporter, "no-such-subscription"),
+            Err(CoreError::UnknownAgent)
+        );
+        assert_eq!(w.office.event_count(), 0);
+    }
+
+    #[test]
+    fn an_empty_status_set_is_not_a_subscription() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "notify-5");
+        assert_eq!(
+            w.office.subscribe(&mut w.kernel, &w.reporter, &case_id, Vec::new()),
+            Err(CoreError::InvalidKind)
+        );
+        let (_, refusal) = w.kernel.refusals().last().unwrap();
+        assert_eq!(refusal.code, RefusalCode::PolicyDenied);
+        assert_eq!(w.office.subscription_count(), 0);
+    }
+
+    #[test]
+    fn notifications_are_private_to_their_subscriber() {
+        let mut w = world();
+        let third = setup::keys(0x51);
+        setup::ensure_agent(&mut w.kernel, &third, "watcher", &["x"], Credits(20)).unwrap();
+        let case_id = open_case(&mut w, "notify-6");
+        let first = w
+            .office
+            .subscribe(&mut w.kernel, &w.reporter, &case_id, vec![CaseStatus::Appealed])
+            .unwrap();
+        let second = w
+            .office
+            .subscribe(&mut w.kernel, &third, &case_id, vec![CaseStatus::Appealed])
+            .unwrap();
+        assert_ne!(first.id, second.id);
+
+        let (references, payloads) = appeal_evidence("notify-6");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+
+        let reporter_inbox = w.office.inbox(&w.reporter.did());
+        let watcher_inbox = w.office.inbox(&third.did());
+        assert_eq!(reporter_inbox.len(), 1);
+        assert_eq!(watcher_inbox.len(), 1);
+        assert_eq!(reporter_inbox[0].subscription, first.id);
+        assert_eq!(watcher_inbox[0].subscription, second.id);
+        assert_eq!(w.office.inbox(&w.subject.did()).len(), 0);
+        assert_eq!(w.office.notifications_of_case(&case_id).len(), 2);
+        assert_eq!(w.office.subscriptions_of(&case_id).len(), 2);
+    }
+
+    #[test]
+    fn a_late_subscription_gets_only_the_current_status_not_the_history() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "notify-7");
+        let (references, payloads) = appeal_evidence("notify-7");
+        w.office
+            .appeal(&mut w.kernel, &w.subject, &case_id, references, &payloads)
+            .unwrap();
+        // 订阅发生在 reported 之后：只回放当前状态 appealed，不泄露订阅前的历史。
+        w.office
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Reported, CaseStatus::Appealed],
+            )
+            .unwrap();
+        let inbox = w.office.inbox(&w.reporter.did());
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].status, CaseStatus::Appealed);
+        assert_eq!(inbox[0].seq, 1);
+    }
+
+    #[test]
+    fn subscribing_and_unsubscribing_do_not_move_the_ledger() {
+        let mut w = world();
+        let case_id = open_case(&mut w, "notify-8");
+        let before = ledger_snapshot(&w.kernel, &w.participants);
+        let subscription = w
+            .office
+            .subscribe(
+                &mut w.kernel,
+                &w.reporter,
+                &case_id,
+                vec![CaseStatus::Reported],
+            )
+            .unwrap();
+        w.office
+            .unsubscribe(&mut w.kernel, &w.reporter, &subscription.id)
+            .unwrap();
+        assert_eq!(ledger_snapshot(&w.kernel, &w.participants), before);
+        w.kernel.ledger().check_conservation().unwrap();
     }
 }

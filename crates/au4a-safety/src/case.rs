@@ -196,6 +196,8 @@ pub struct Case {
     pub evidence: EvidenceRef,
     pub opened_at: u64,
     pub status: CaseStatus,
+    /// 造成当前状态的链上事件序号（订阅快照与审计用它定位证据）。
+    pub status_seq: u64,
     /// 已受理的申诉 id（按提交顺序）。
     pub appeals: Vec<String>,
     /// 已执行的处罚记录 id（按执行顺序）。
@@ -212,6 +214,7 @@ impl Case {
             evidence: report.evidence.clone(),
             opened_at: report.at,
             status: CaseStatus::Reported,
+            status_seq: 0,
             appeals: Vec::new(),
             penalties: Vec::new(),
         }

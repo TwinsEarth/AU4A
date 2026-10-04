@@ -145,19 +145,20 @@
         "pub fn SafetyOffice::inbox(&self, did: &Did) -> Vec<Notification>"
       ],
       "acceptance": [
-        "订阅即刻回放当前状态快照，此后只投递增量（不泄露订阅前历史）",
-        "未订阅者收不到任何通知；退订后不再投递",
-        "非本人退订被拒",
-        "订阅/退订写入哈希链事件"
+        "订阅即刻回放当前状态快照（seq 指向造成该状态的事件），此后只投递增量",
+        "未订阅的状态不投递；旁观者收件箱 0 条；通知彼此不可见",
+        "退订后不再投递且链上出现 unsubscribed；非本人退订被拒（unauthorized）",
+        "空状态集合被拒（InvalidKind + policy_denied），订阅 id 对状态集合规范化",
+        "订阅/退订前后账本逐字段不变；迟到的订阅不重放历史"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-safety",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.5.4 全绿后开工"
+        "tests_passed": 83,
+        "tests_total": 83,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，0 warning；日志 _forangent\\logs\\1.5-v1.5.5.log；累计 83 个测试"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.5.6",
