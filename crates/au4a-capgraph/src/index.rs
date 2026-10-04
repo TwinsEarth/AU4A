@@ -114,6 +114,17 @@ impl CapabilityIndex {
         self.writes
     }
 
+    /// `(技能, 键)` 全量列表：一致性不变式检查用（键必须能解析回同技能的能力）。
+    pub fn skill_entries(&self) -> Vec<(SkillId, CapKey)> {
+        let mut out = Vec::new();
+        for (skill, keys) in &self.by_skill {
+            for key in keys {
+                out.push((skill.clone(), key.clone()));
+            }
+        }
+        out
+    }
+
     pub fn to_value(&self) -> Value {
         json!({
             "agents": self.indexed_agents(),
@@ -440,26 +451,26 @@ mod tests {
 
     #[test]
     fn query_filters_are_all_hard_conditions() {
-        let cap = cap("translate.en-zh", 5)
+        let base_cap = cap("translate.en-zh", 5)
             .with_latency(100, 300)
             .with_throughput(60)
             .with_load_bp(2_000)
             .with_reliability_bp(9_000);
         let base = CapabilityQuery::new(skill("translate.en-zh"));
-        assert!(base.matches(&cap));
-        assert!(!base.clone().with_max_price(Credits(4)).matches(&cap));
-        assert!(base.clone().with_max_price(Credits(5)).matches(&cap));
-        assert!(!base.clone().with_min_reliability_bp(9_001).matches(&cap));
-        assert!(!base.clone().with_max_latency_p99_ms(299).matches(&cap));
-        assert!(!base.clone().with_min_throughput(61).matches(&cap));
-        assert!(!base.clone().with_min_available_bp(8_001).matches(&cap));
-        assert!(base.clone().with_min_available_bp(8_000).matches(&cap));
-        assert!(!base.clone().with_region("eu-west").matches(&cap), "空白名单=不限区域");
-        assert!(!base.clone().with_output_format(FormatId::new("application/json").expect("v")).matches(&cap));
+        assert!(base.matches(&base_cap));
+        assert!(!base.clone().with_max_price(Credits(4)).matches(&base_cap));
+        assert!(base.clone().with_max_price(Credits(5)).matches(&base_cap));
+        assert!(!base.clone().with_min_reliability_bp(9_001).matches(&base_cap));
+        assert!(!base.clone().with_max_latency_p99_ms(299).matches(&base_cap));
+        assert!(!base.clone().with_min_throughput(61).matches(&base_cap));
+        assert!(!base.clone().with_min_available_bp(8_001).matches(&base_cap));
+        assert!(base.clone().with_min_available_bp(8_000).matches(&base_cap));
+        assert!(base.clone().with_region("eu-west").matches(&base_cap), "空白名单=不限区域，故任何区域都受理");
+        assert!(!base.clone().with_output_format(FormatId::new("application/json").expect("v")).matches(&base_cap));
         assert!(base
             .clone()
             .with_input_format(FormatId::new("text/plain").expect("v"))
-            .matches(&cap));
+            .matches(&base_cap));
         assert!(!base.clone().matches(&cap("other.skill", 1)));
     }
 

@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 use crate::cache::{CacheStats, CapabilityCache};
 use crate::capability::{Capability, SkillId};
 use crate::declaration::SignedDeclaration;
+use crate::index::{rank_and_truncate, CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats};
 
 /// 能力图配置。人类可以设定容量与上限，但不能设定「谁有什么能力」。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,6 +155,7 @@ pub struct AgentCapabilityGraph {
     own_epoch: u64,
     own_fingerprint: Option<String>,
     neighbors: CapabilityCache,
+    index: CapabilityIndex,
 }
 
 impl AgentCapabilityGraph {
@@ -166,6 +168,7 @@ impl AgentCapabilityGraph {
             own_epoch: 0,
             own_fingerprint: None,
             neighbors,
+            index: CapabilityIndex::new(),
         }
     }
 
@@ -249,6 +252,8 @@ impl AgentCapabilityGraph {
         self.own = signed.capabilities().to_vec();
         self.own_epoch = epoch;
         self.own_fingerprint = Some(fingerprint.clone());
+        // 索引与数据同步：索引只记「哪里有」，因此每个写入口都必须更新它。
+        self.index.insert_agent(&agent, &self.own);
         DeclareOutcome::applied(&agent, epoch, self.own.len(), fingerprint)
     }
 
@@ -302,6 +307,11 @@ impl AgentCapabilityGraph {
                 "neighbor cache capacity is 0",
             );
         }
+        // 缓存淘汰/过期的邻居必须同时从索引里摘掉，否则查询会撞上「索引有键、图里没数据」。
+        for gone in insert.evicted.iter().chain(insert.expired.iter()) {
+            self.index.remove_agent(gone);
+        }
+        self.index.insert_agent(&agent, signed.capabilities());
         DeclareOutcome::applied(&agent, epoch, signed.capabilities().len(), fingerprint)
     }
 
@@ -338,12 +348,20 @@ impl AgentCapabilityGraph {
 
     /// 清理过期邻居，返回被清理的 DID（字典序）。
     pub fn expire_neighbors(&mut self, now: u64) -> Vec<Did> {
-        self.neighbors.expire(now)
+        let expired = self.neighbors.expire(now);
+        for did in &expired {
+            self.index.remove_agent(did);
+        }
+        expired
     }
 
     /// 显式失效一个邻居。
     pub fn invalidate_neighbor(&mut self, did: &Did) -> bool {
-        self.neighbors.invalidate(did)
+        let removed = self.neighbors.invalidate(did);
+        if removed {
+            self.index.remove_agent(did);
+        }
+        removed
     }
 
     pub fn cache_stats(&self) -> CacheStats {
@@ -357,6 +375,92 @@ impl AgentCapabilityGraph {
     /// LRU 顺序（最久未用在前）。
     pub fn lru_order(&self) -> Vec<Did> {
         self.neighbors.lru_order()
+    }
+
+    /// 把索引键解析回能力（自己走 `own`，邻居走缓存）。
+    pub fn capability_at(&self, key: &CapKey) -> Option<&Capability> {
+        let (did, slot) = key;
+        if did == &self.owner {
+            return self.own.get(*slot);
+        }
+        self.neighbors
+            .peek(did)
+            .and_then(|record| record.capabilities.get(*slot))
+    }
+
+    /// 查询：**只走倒排索引**，扫描条数由 [`QueryStats`] 如实报告。
+    ///
+    /// 查询前先清理过期邻居：过期数据不该出现在结果里，也不该留在索引里。
+    pub fn query(&mut self, query: &CapabilityQuery, now: u64) -> QueryResult {
+        let _ = self.expire_neighbors(now);
+        let nodes_total = self.capability_count();
+        let candidates = self
+            .index
+            .candidates_for(&query.skill, query.input_format.as_ref());
+        let mut matches = Vec::new();
+        let mut scanned = 0usize;
+        for key in &candidates {
+            if let Some(cap) = self.capability_at(key) {
+                scanned += 1;
+                if query.matches(cap) {
+                    matches.push(CapabilityMatch {
+                        did: key.0.clone(),
+                        slot: key.1,
+                        score: i64::from(cap.effective_reliability_bp()),
+                        capability: cap.clone(),
+                    });
+                }
+            }
+        }
+        let matched = matches.len();
+        let matches = rank_and_truncate(matches, query.limit);
+        QueryResult {
+            matches,
+            stats: QueryStats {
+                candidates: candidates.len(),
+                scanned,
+                matched,
+                nodes_total,
+            },
+        }
+    }
+
+    /// 「谁最适合做 X」：等价于 `limit = 1` 的查询，但意图更明确。
+    pub fn best_for(&mut self, skill: &SkillId, now: u64) -> QueryResult {
+        self.query(&CapabilityQuery::new(skill.clone()).with_limit(1), now)
+    }
+
+    /// 提供某技能的 Agent（升序、去重）。这也走索引。
+    pub fn providers_of(&self, skill: &SkillId) -> Vec<Did> {
+        let mut providers: Vec<Did> = Vec::new();
+        for key in self.index.candidates_for_skill(skill) {
+            if !providers.contains(&key.0) {
+                providers.push(key.0);
+            }
+        }
+        providers
+    }
+
+    /// 索引不变式：索引条目数 == 图内能力数，且每个键都能解析回**同技能**的能力。
+    ///
+    /// 这条断言是「索引不是猜测」的机器可检查形式：任何漏更新都会让它变成 `false`。
+    pub fn index_consistent(&self) -> bool {
+        if self.index.indexed_entries() != self.capability_count() {
+            return false;
+        }
+        self.index.skill_entries().iter().all(|(skill, key)| {
+            self.capability_at(key)
+                .map(|cap| &cap.skill == skill)
+                .unwrap_or(false)
+        })
+    }
+
+    pub fn index_summary(&self) -> Value {
+        self.index.to_value()
+    }
+
+    pub fn index_writes(&self) -> u64 {
+        self.index.writes()
     }
 
     /// 视图里的 Agent 数量（含自己）。
@@ -403,6 +507,7 @@ impl AgentCapabilityGraph {
             "neighbor_capacity": self.neighbors.capacity(),
             "capability_count": self.capability_count(),
             "cache": self.neighbors.stats().to_value(),
+            "index": self.index.to_value(),
         })
     }
 }

@@ -29,6 +29,7 @@ pub mod cache;
 pub mod capability;
 pub mod declaration;
 pub mod graph;
+pub mod index;
 
 pub use broadcast::{
     announce, announce_to, ingest, parse_announcement, parse_query, pump, query_skill,
@@ -40,6 +41,9 @@ pub use capability::{
 };
 pub use declaration::{Declaration, SignedDeclaration};
 pub use graph::{AgentCapabilityGraph, CapGraphConfig, DeclareOutcome, NeighborRecord};
+pub use index::{
+    CapKey, CapabilityIndex, CapabilityMatch, CapabilityQuery, QueryResult, QueryStats,
+};
 
 use au4a_core::{AgentKeys, CoreResult, Credits, SelfCheck};
 use serde_json::{json, Value};
@@ -400,6 +404,118 @@ fn checks_v114() -> Vec<SelfCheck> {
     checks
 }
 
+/// v1.1.5：查询走索引、过滤是硬条件、排序确定、索引与图始终一致。
+fn checks_v115() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.5.query_does_not_scan_the_graph", || {
+        let owner = AgentKeys::from_seed(&[100; 32]);
+        let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
+        // 60 个邻居 × 2 条能力 = 120 条能力入图。
+        for seed in 0..60u8 {
+            let peer = AgentKeys::from_seed(&[seed; 32]);
+            let caps = vec![
+                Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(3)),
+                Capability::new(SkillId::new("sentiment.analyze").map_err(show)?, Credits(2)),
+            ];
+            let signed = Declaration::new(peer.did(), 1, 1, caps)
+                .map_err(show)?
+                .sign(&peer)
+                .map_err(show)?;
+            graph.apply(&signed, 1);
+        }
+        let result = graph.query(
+            &CapabilityQuery::new(SkillId::new("translate.en-zh").map_err(show)?).with_limit(3),
+            1,
+        );
+        let stats = result.stats;
+        if stats.candidates != 60 || stats.scanned != 60 || stats.nodes_total != 120 {
+            return Err(format!("索引扫描量不符：{}", stats.to_value()));
+        }
+        if stats.scanned >= stats.nodes_total {
+            return Err("查询退化成全图扫描".into());
+        }
+        Ok(format!(
+            "断言：视图 120 条能力，按技能查询只扫 {} 条（nodes_total={}，省掉 {} 条），返回前 3 名",
+            stats.scanned, stats.nodes_total, stats.nodes_total - stats.scanned
+        ))
+    }));
+    checks.push(verdict("1.1.5.filters_are_hard_conditions", || {
+        let owner = AgentKeys::from_seed(&[101; 32]);
+        let peer = AgentKeys::from_seed(&[102; 32]);
+        let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
+        let pricey = Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(99));
+        let signed = Declaration::new(peer.did(), 1, 1, vec![pricey])
+            .map_err(show)?
+            .sign(&peer)
+            .map_err(show)?;
+        graph.apply(&signed, 1);
+        let skill = SkillId::new("translate.en-zh").map_err(show)?;
+        let unfiltered = graph.query(&CapabilityQuery::new(skill.clone()), 1);
+        let filtered = graph.query(
+            &CapabilityQuery::new(skill).with_max_price(Credits(10)),
+            1,
+        );
+        if unfiltered.matches.len() != 1 || !filtered.is_empty() {
+            return Err("价格上限没有生效".into());
+        }
+        if filtered.refusal_code() != Some(au4a_core::RefusalCode::Unsupported) {
+            return Err("「查不到」应给出类型化结局 unsupported".into());
+        }
+        Ok("断言：99 微积分的报价在 max_price=10 的查询下被过滤，空结果给出 unsupported".into())
+    }));
+    checks.push(verdict("1.1.5.index_stays_consistent_through_eviction", || {
+        let owner = AgentKeys::from_seed(&[103; 32]);
+        let mut graph = AgentCapabilityGraph::new(
+            owner.did(),
+            CapGraphConfig {
+                neighbor_capacity: 2,
+                cache_ttl_ticks: 0,
+                ..CapGraphConfig::default()
+            },
+        );
+        for seed in [104u8, 105, 106] {
+            let peer = AgentKeys::from_seed(&[seed; 32]);
+            let signed = Declaration::new(peer.did(), 1, 1, vec![sample_capability()?])
+                .map_err(show)?
+                .sign(&peer)
+                .map_err(show)?;
+            graph.apply(&signed, 1);
+        }
+        if !graph.index_consistent() || graph.index_summary()["entries"].as_u64() != Some(2) {
+            return Err(format!("淘汰后索引与图不一致：{}", graph.index_summary()));
+        }
+        Ok("断言：容量 2 的图接受 3 个邻居后 index.indexed_entries()==2 且每个键都能解析回同技能能力".into())
+    }));
+    checks.push(verdict("1.1.5.ranking_is_deterministic", || {
+        let build = || -> Result<QueryResult, String> {
+            let owner = AgentKeys::from_seed(&[107; 32]);
+            let mut graph = AgentCapabilityGraph::new(owner.did(), CapGraphConfig::default());
+            for (seed, price, reliability) in [(108u8, 5i64, 9_000u16), (109, 5, 9_000), (110, 4, 8_000)] {
+                let peer = AgentKeys::from_seed(&[seed; 32]);
+                let cap = Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(price))
+                    .with_reliability_bp(reliability);
+                let signed = Declaration::new(peer.did(), 1, 1, vec![cap])
+                    .map_err(show)?
+                    .sign(&peer)
+                    .map_err(show)?;
+                graph.apply(&signed, 1);
+            }
+            Ok(graph.query(&CapabilityQuery::new(SkillId::new("translate.en-zh").map_err(show)?), 1))
+        };
+        let first = build()?;
+        let second = build()?;
+        if first.matches != second.matches || first.matches.len() != 3 {
+            return Err("两次相同查询得到不同顺序".into());
+        }
+        let prices: Vec<i64> = first.matches.iter().map(|m| m.capability.price_per_unit.get()).collect();
+        if prices != vec![5, 5, 4] {
+            return Err(format!("排序不符（可靠度优先）：{prices:?}"));
+        }
+        Ok("断言：可靠度 9000/9000/8000 的三条报价排序后为 5,5,4，两次查询逐位相同".into())
+    }));
+    checks
+}
+
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
     Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
@@ -487,6 +603,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(checks_v112());
     checks.extend(checks_v113());
     checks.extend(checks_v114());
+    checks.extend(checks_v115());
     checks
 }
 
@@ -498,7 +615,7 @@ pub fn results_json() -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4"],
+        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5"],
         "checks": checks.len(),
         "checks_passed": passed,
         "schema": {
@@ -558,6 +675,21 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     let bounded_stats = bounded.cache_stats();
     let bounded_expired = bounded.expire_neighbors(100).len();
 
+    // v1.1.5：alice 用索引查询「谁能翻译」「谁能做情感分析」并报告扫描量。
+    let translate = SkillId::new("translate.en-zh")?;
+    let sentiment = SkillId::new("sentiment.analyze")?;
+    let translate_hits = graph.query(&CapabilityQuery::new(translate.clone()), 1);
+    let sentiment_hits = graph.query(&CapabilityQuery::new(sentiment.clone()), 1);
+    let best_translate = translate_hits
+        .best()
+        .map(|m| m.did.as_str().to_string())
+        .unwrap_or_default();
+    let best_sentiment = sentiment_hits
+        .best()
+        .map(|m| m.did.as_str().to_string())
+        .unwrap_or_default();
+    let index_consistent = graph.index_consistent();
+
     // 篡改演示：改动已签通告里的一个数字，验签必然失败（不经过内核，避免污染共享拒绝记录）。
     let tampered_rejected = {
         let mut env = announce(
@@ -576,15 +708,18 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
         format!(
-            "v1.1.4 缓存层：{sent} 条通告入队、{} 条被路由入图；容量 2 的图淘汰 {} 条、到期 {} 条；篡改拒绝={tampered_rejected}",
-            pump_report.routed, bounded_stats.evictions, bounded_expired
+            "v1.1.5 查询接口：translate 命中 {} 条（扫 {} / 全图 {}）、sentiment 命中 {} 条；索引一致={index_consistent}",
+            translate_hits.matches.len(),
+            translate_hits.stats.scanned,
+            translate_hits.stats.nodes_total,
+            sentiment_hits.matches.len()
         ),
     );
     Ok(json!({
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "version": "v1.1.4",
+        "version": "v1.1.5",
         "agents_in_kernel": kernel.agent_count(),
         "newly_registered": newly_registered,
         "announcements_sent": sent,
@@ -592,6 +727,11 @@ pub fn scenario(kernel: &mut au4a_kernel::Kernel) -> CoreResult<Value> {
         "pump": pump_report.to_value(),
         "tampered_rejected": tampered_rejected,
         "graph": graph.to_value(),
+        "queries": [
+            {"skill": "translate.en-zh", "best": best_translate, "result": translate_hits.to_value()},
+            {"skill": "sentiment.analyze", "best": best_sentiment, "result": sentiment_hits.to_value()},
+        ],
+        "index_consistent": index_consistent,
         "bounded_cache": {
             "capacity": 2,
             "ttl_ticks": 30,

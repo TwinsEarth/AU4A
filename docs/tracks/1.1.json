@@ -148,17 +148,37 @@
       "version": "v1.1.5",
       "title": "查询接口",
       "goal": "按技能/格式/价格/可靠度查询能力，走倒排索引而不是全图扫描",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/index.rs: CapabilityIndex（by_skill/by_input_format 倒排表，键为 (did,slot)）+ CapabilityQuery/CapabilityMatch/QueryStats/QueryResult",
+        "src/graph.rs: query/best_for/providers_of/capability_at/index_consistent/index_summary，索引在声明/淘汰/过期/失效四个入口同步",
+        "tests/query_index.rs: 8 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn AgentCapabilityGraph::query(&mut self, q: &CapabilityQuery, now: u64) -> QueryResult",
+        "pub fn AgentCapabilityGraph::best_for(&mut self, skill: &SkillId, now: u64) -> QueryResult",
+        "pub fn AgentCapabilityGraph::providers_of(&self, skill: &SkillId) -> Vec<Did>",
+        "pub fn AgentCapabilityGraph::index_consistent(&self) -> bool",
+        "pub struct QueryStats { candidates, scanned, matched, nodes_total }",
+        "pub fn CapabilityIndex::candidates_for(&self, skill: &SkillId, input_format: Option<&FormatId>) -> Vec<CapKey>"
+      ],
+      "acceptance": [
+        "视图 200 条能力时按技能查询 candidates==scanned==100、nodes_total==200，scanned < nodes_total",
+        "索引结果与朴素全扫（遍历全部邻居能力逐个过滤）集合完全相同",
+        "max_price/min_reliability/max_latency/min_throughput/min_available_bp/region/输入输出格式 均为硬条件",
+        "输入格式过滤 = by_skill ∩ by_input_format：2 条候选中 application/json 只命中 1 条",
+        "排序第一关键字为负载加权可靠度：9000/9000/8000bp → 价格序 5,5,4，两次查询逐位相同",
+        "淘汰/过期/显式失效后 index_consistent()==true，indexed_entries 与实际能力数一致；自有能力也被索引",
+        "查不到给出 QueryResult::refusal_code()==Some(unsupported)（非恶意、非异常）",
+        "scenario 报告 nodes_total=5、translate scanned=2"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-capgraph",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 82,
+        "tests_total": 82,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：lib 40 + broadcast 10 + cache 9 + data_structures 7 + declaration 8 + query_index 8 = 82，0 failed，本 crate 0 warning。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.1.6",
