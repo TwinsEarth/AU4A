@@ -1,0 +1,63 @@
+# AU4A 运行时编排（无数据库 / 无缓存 / 无中间件 —— 这是设计事实，不是省略）
+#
+# 为什么没有 MySQL/Redis/Nginx：
+#   * 状态在进程内（`au4a-core::Ledger` 整数守恒账本 + `Kernel` 注册表），不做持久化；
+#   * 人类观察层就是进程内 HTTP GET（`au4a-node` 自带，6 条只读路由），不需要反向代理也能用；
+#   * 若要对公网暴露，见文件末尾的 nginx 片段（可选，TLS 终止用）。
+#
+# 用法：
+#   cp .env.example .env
+#   docker compose -f deploy/docker-compose.yml up -d
+#   curl -fsS http://127.0.0.1:8787/api/progress | head -c 200
+name: au4a
+
+services:
+  au4a-node:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ${AU4A_IMAGE:-ghcr.io/twinsearth/au4a:1.9.9}
+    container_name: ${AU4A_CONTAINER:-au4a-node}
+    restart: unless-stopped
+    command: ["run", "--agents", "${AU4A_AGENTS:-8}", "--observe", "0.0.0.0:8787"]
+    ports:
+      - "${AU4A_PORT:-8787}:8787"
+    # 只读根文件系统 + 丢弃全部 capability：证明「Agent 只跑在内存里、人类只能读」
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # 健康检查直接用项目自己的自检：10 条轨道自检全绿才返回 0
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/au4a-node", "verify"]
+      interval: 30s
+      timeout: 15s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ---------------------------------------------------------------------------
+# 可选：把只读面板放到 Nginx 后面（TLS 终止 + 只放行 GET）。
+# 注意：观察层本身已经「非 GET 一律 405」，Nginx 只是第二道门与证书终止。
+#
+# server {
+#   listen 443 ssl http2;
+#   server_name au4a.example.com;
+#   ssl_certificate     /etc/letsencrypt/live/au4a.example.com/fullchain.pem;
+#   ssl_certificate_key /etc/letsencrypt/live/au4a.example.com/privkey.pem;
+#
+#   location / {
+#     limit_except GET { deny all; }          # 显式只允许 GET
+#     proxy_pass http://127.0.0.1:8787;
+#     proxy_set_header Host $host;
+#     proxy_read_timeout 30s;
+#   }
+# }
+# ---------------------------------------------------------------------------
