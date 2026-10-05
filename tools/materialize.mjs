@@ -76,6 +76,46 @@ export function materialize({ version, out, root = DEFAULT_ROOT, snapshots = DEF
   const chosen = new Map();
   let newestSnapshot = null;
 
+  // ── 规则 0（v2.1.0 修复）：**按 crate 取单一来源**，且按「轮次」而非「版本序号」筛选 ──
+  //
+  // 为什么必须这样：第 11 轮里 10 条轨道同时发布各自的 `.10` 收尾版本。于是
+  // `au4a-council`(轨道 1.7) 的同轮快照叫 `v1.7.10`、`au4a-chain`(1.8) 叫 `v1.8.10`、
+  // `au4a-scale`(1.9) 叫 `v1.9.9` —— 它们的 **seq 都大于 `v1.6.10`**。
+  // 旧规则 1 按文件 + `seq <= target.seq` 重放，会把这些同轮快照整体排除，
+  // 使这些 crate 回落到工作树（最终版）内容：同一 crate 的 `src/` 与 `tests/` 来自不同轮次，
+  // 于是 `cargo test` 报 `unresolved import au4a_council::audit` 这类"文件互相不认识"的错误。
+  //
+  // 现在的规则：对每个 crate，在「轮次 <= 目标轮次」的快照里取 **seq 最大的那一个**，
+  // 用它的**整个 crate 目录**作为该 crate 的唯一来源 —— src 与 tests 必然同源。
+  const crateSource = new Map(); // "crates/<name>/" -> 用作唯一来源的快照版本
+  if (!fromRoot) {
+    const eligible = listSnapshots({ snapshots, byVersion }).filter(
+      (s) => byVersion.get(s).round <= target.round,
+    );
+    const filesOf = new Map(eligible.map((s) => [s, walk(path.join(snapshots, s))]));
+    const crateNames = new Set();
+    for (const files of filesOf.values()) {
+      for (const rel of files) {
+        const m = rel.match(/^crates\/([^/]+)\//);
+        if (m) crateNames.add(m[1]);
+      }
+    }
+    for (const name of [...crateNames].sort()) {
+      const prefix = `crates/${name}/`;
+      let best = null;
+      for (const s of eligible) {
+        // eligible 已按 seq 升序，后覆盖前 => 最终留下 seq 最大者
+        if (filesOf.get(s).some((r) => r.startsWith(prefix))) best = s;
+      }
+      if (!best) continue;
+      crateSource.set(prefix, best);
+      const dir = path.join(snapshots, best);
+      for (const rel of filesOf.get(best)) {
+        if (rel.startsWith(prefix)) chosen.set(rel, path.join(dir, rel));
+      }
+    }
+  }
+
   if (!fromRoot) {
     for (const s of listSnapshots({ snapshots, byVersion })) {
       if (byVersion.get(s).seq > target.seq) break;
@@ -85,6 +125,8 @@ export function materialize({ version, out, root = DEFAULT_ROOT, snapshots = DEF
       }
       for (const rel of walk(snapDir)) {
         if (rel.includes('..')) throw new Error(`snapshot ${s} contains an escaping path: ${rel}`);
+        // 已由规则 0 确定唯一来源的 crate，不再按文件覆盖（否则又会混源）
+        if ([...crateSource.keys()].some((p) => rel.startsWith(p))) continue;
         chosen.set(rel, path.join(snapDir, rel));
         newestSnapshot = s;
       }

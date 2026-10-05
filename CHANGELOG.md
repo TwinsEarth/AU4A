@@ -1,5 +1,40 @@
 # Changelog
 
+## v2.2.0（2026-10-05）
+
+**冻结基元的两处「serde 绕过构造校验」修复（P1×2）+ 4 个回归测试。**
+线上 JSON 形状**完全不变**，因此这不是协议变更，而是把类型不变式重新钉回反序列化路径。
+
+### 缺陷（同一类，出现在两个类型上）
+
+| 类型 | 问题 | 后果 |
+|---|---|---|
+| `Did` | 只是 `derive(Deserialize)` 的新类型，反序列化**不经过 `parse()`** | 信封体、注册请求、状态导入这些**全部走 serde 的入口**都能造出 `Did("garbage")`：类型成立、校验不成立。它不能伪造签名（`public_key()` 会失败），但会让非法身份先被写进状态、更晚才炸，并污染任何以 `Did` 为键的去重/计费 |
+| `Refusal` | 字段全 `pub` 且 derive `Deserialize`，`retryable` 是**自由字段**而非由 `code` 派生 | 可构造自相矛盾记录（`code: malformed` + `retryable: true`）。`retryable` 正是给 Agent 自主重试策略看的：一旦被写成 `true`，策略会对"不可重试的恶意帧"重试——恰好是这套设计要避免的竞争/恶意误伤 |
+
+### 修复
+
+- `Did`：`#[serde(try_from = "String", into = "String")]` + `impl TryFrom<String> for Did`（复用 `parse`）→ **所有 serde 入口都过校验**；
+- `Refusal`：`#[serde(try_from = "RawRefusal", into = "RawRefusal")]`，反序列化时用 `Refusal::new` 重算 `retryable` 并与输入比对，**矛盾记录返回 `CoreError::Encoding`**；新增 `RawRefusal` 仅表示线上形态，字段一一对应，JSON 形状不变。
+
+### 回归测试（4 个，正是点名的那四个）
+
+- `did::tests::unvalidated_did_is_refused_by_serde` —— 4 种非法 DID 经 serde 全部被拒；合法 DID 往返正常；
+- `did::tests::did_parse_and_serde_agree` —— `parse()` 与 serde 路径对同一字符串**同判**（防两条入口分叉）；
+- `refusal::tests::contradictory_refusal_is_refused_by_serde` —— `malformed + retryable:true` 被拒且原因是 `CoreError::Encoding`；合法记录往返**逐字节相同**（证明线上形状没变）；
+- `refusal::tests::retryable_is_derived_from_code` —— 对全部 10 个码断言 `retryable == code.retryable()`，且**伪造 retryable 一律被拒**。
+
+### 证据
+
+- `cargo test -p au4a-core` → **41 passed / 0 failed**（原 37 + 4）
+- `cargo test --workspace --locked` → **exit 0**（`Did`/`Refusal` 被全仓使用，serde 改动不影响任何 crate）
+
+### 未改变
+
+- 协议与线上 JSON 形状不变；`Refusal` 字段仍为 `pub`（仓内直接字面量构造不受影响，本次修的是**网络输入**路径）。
+
+---
+
 ## v2.1.0（2026-10-05）
 
 **冻结基元的三个安全/正确性修复（P0×1 + P1×2）+ 回归测试。** 按项目自身规则，

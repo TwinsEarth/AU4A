@@ -14,6 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::{CoreError, CoreResult};
+
 /// 十种拒绝码。新增变体是协议变更，必须走新的中版本。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,10 +123,48 @@ pub fn escalate(code: RefusalCode, repeats: u32) -> Escalation {
 
 /// 一条拒绝记录。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawRefusal", into = "RawRefusal")]
 pub struct Refusal {
     pub code: RefusalCode,
     pub reason: String,
     pub retryable: bool,
+}
+
+/// 线上形态：字段与 [`Refusal`] 一一对应，**JSON 形状完全不变**（`{code, reason, retryable}`），
+/// 因此这个修复不改变任何既有序列化结果、不破坏任何调用点。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RawRefusal {
+    pub code: RefusalCode,
+    pub reason: String,
+    pub retryable: bool,
+}
+
+/// v2.2.0 修复（P1）：`retryable` 是**由 `code` 派生**的提示，不是自由字段。
+///
+/// 修复前 `Refusal` 的字段全 `pub` 且 derive 了 `Deserialize`，于是可以造出自相矛盾的记录
+/// （`code: malformed` + `retryable: true`）。`retryable` 正是给 Agent 自主重试策略看的，
+/// 一旦被写成 `true`，策略会对"不可重试的恶意帧"重试——恰好是这套设计要避免的误伤。
+/// 现在反序列化时重算并校验，矛盾记录一律拒绝。
+impl TryFrom<RawRefusal> for Refusal {
+    type Error = CoreError;
+
+    fn try_from(raw: RawRefusal) -> CoreResult<Self> {
+        let refusal = Refusal::new(raw.code, raw.reason);
+        if refusal.retryable != raw.retryable {
+            return Err(CoreError::Encoding);
+        }
+        Ok(refusal)
+    }
+}
+
+impl From<Refusal> for RawRefusal {
+    fn from(r: Refusal) -> Self {
+        RawRefusal {
+            code: r.code,
+            reason: r.reason,
+            retryable: r.retryable,
+        }
+    }
 }
 
 impl Refusal {
@@ -186,5 +226,54 @@ mod tests {
         assert!(RefusalCode::Timeout.retryable());
         assert!(!RefusalCode::Malformed.retryable());
         assert!(!RefusalCode::PolicyDenied.retryable());
+    }
+
+    // ── v2.2.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn contradictory_refusal_is_refused_by_serde() {
+        // P1 回归：修复前可反序列化出 `malformed` + `retryable: true` 的矛盾记录。
+        let contradictory = r#"{"code":"malformed","reason":"tampered frame","retryable":true}"#;
+        let err = serde_json::from_str::<Refusal>(contradictory)
+            .expect_err("矛盾记录（malformed + retryable:true）必须被拒绝");
+        assert!(
+            err.to_string().contains("encoding error"),
+            "拒绝原因应来自 CoreError::Encoding，实际: {err}"
+        );
+        let consistent = r#"{"code":"timeout","reason":"slow peer","retryable":true}"#;
+        assert!(serde_json::from_str::<Refusal>(consistent).is_ok());
+        // 线上 JSON 形状不变：合法记录往返后逐字节相同
+        let r = Refusal::new(RefusalCode::Degraded, "degraded");
+        let json = serde_json::to_string(&r).unwrap();
+        assert_eq!(
+            json,
+            r#"{"code":"degraded","reason":"degraded","retryable":true}"#
+        );
+        assert_eq!(serde_json::from_str::<Refusal>(&json).unwrap(), r);
+    }
+
+    #[test]
+    fn retryable_is_derived_from_code() {
+        // `retryable` 必须等于 `code.retryable()`，对每个码都成立；伪造值一律拒绝。
+        for code in RefusalCode::ALL {
+            let r = Refusal::new(code, "x");
+            assert_eq!(r.retryable, code.retryable(), "{}", code.as_str());
+            let ok = format!(
+                r#"{{"code":"{}","reason":"x","retryable":{}}}"#,
+                code.as_str(),
+                code.retryable()
+            );
+            assert!(serde_json::from_str::<Refusal>(&ok).is_ok());
+            let forged = format!(
+                r#"{{"code":"{}","reason":"x","retryable":{}}}"#,
+                code.as_str(),
+                !code.retryable()
+            );
+            assert!(
+                serde_json::from_str::<Refusal>(&forged).is_err(),
+                "伪造 retryable 必须被拒: {}",
+                code.as_str()
+            );
+        }
     }
 }

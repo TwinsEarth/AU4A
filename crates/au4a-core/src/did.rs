@@ -14,7 +14,28 @@ pub const DID_PREFIX: &str = "did:au4a:";
 
 /// 自证 DID。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct Did(String);
+
+/// v2.2.0 修复（P1）：**serde 路径必须经过 `parse()`**。
+///
+/// 修复前 `Did` 只是 `derive(Deserialize)` 的新类型，反序列化不走校验，于是信封体、注册请求、
+/// 状态导入这些**全部走 serde 的入口**都能造出 `Did("garbage")`：类型成立、校验不成立。
+/// 它不能伪造签名（`public_key()` 会失败），但会让非法身份先被写进状态、更晚才炸，
+/// 并污染任何以 `Did` 为键的去重/计费。
+impl TryFrom<String> for Did {
+    type Error = CoreError;
+
+    fn try_from(s: String) -> CoreResult<Self> {
+        Did::parse(&s)
+    }
+}
+
+impl From<Did> for String {
+    fn from(d: Did) -> String {
+        d.0
+    }
+}
 
 impl Did {
     /// 解析并校验 `did:au4a:<64 hex>`。
@@ -158,6 +179,45 @@ mod tests {
             "did:key:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
         ] {
             assert_eq!(Did::parse(bad), Err(CoreError::InvalidDid), "{bad}");
+        }
+    }
+
+    // ── v2.2.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn unvalidated_did_is_refused_by_serde() {
+        // P1 回归：修复前 `Did` 只有 derive(Deserialize)，可反序列化出未校验的 DID。
+        for bad in [
+            "\"garbage\"",
+            "\"did:au4a:\"",
+            "\"did:au4a:zz\"",
+            "\"did:au4a:00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF\"",
+        ] {
+            assert!(
+                serde_json::from_str::<Did>(bad).is_err(),
+                "serde 必须拒绝未校验的 DID: {bad}"
+            );
+        }
+        let keys = AgentKeys::from_seed(&[9u8; 32]);
+        let json = serde_json::to_string(&keys.did()).unwrap();
+        assert_eq!(serde_json::from_str::<Did>(&json).unwrap(), keys.did());
+    }
+
+    #[test]
+    fn did_parse_and_serde_agree() {
+        // 两条入口必须同判：`parse()` 与 serde 路径对同一字符串给出同一结论。
+        let good = AgentKeys::from_seed(&[11u8; 32]).did();
+        let cases = [
+            good.as_str().to_string(),
+            "did:au4a:".to_string(),
+            "did:au4a:zz".to_string(),
+            "did:key:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff".to_string(),
+        ];
+        for s in cases {
+            let parsed = Did::parse(&s).is_ok();
+            let quoted = serde_json::to_string(&s).unwrap();
+            let via_serde = serde_json::from_str::<Did>(&quoted).is_ok();
+            assert_eq!(parsed, via_serde, "parse 与 serde 判定分歧: {s}");
         }
     }
 }
