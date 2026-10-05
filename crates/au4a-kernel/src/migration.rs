@@ -234,8 +234,17 @@ impl MigrationPlan {
         canonical_hash(&self.payload())
     }
 
+    /// 迁移计划是否**内容完好**（id 与重算值一致）。
+    ///
+    /// v2.4.0 修复（P1）：`is_intact` 把"**无法**计算 id"（编码失败）与"内容被改动"两种
+    /// 完全不同的情况都压成 `false`。新增三态入口给需要区分的调用方；
+    /// `is_intact` 保留为便捷布尔（失败时仍为 `false`，但不再是唯一答案）。
+    pub fn intact_status(&self) -> CoreResult<bool> {
+        self.compute_id().map(|id| id == self.id)
+    }
+
     pub fn is_intact(&self) -> bool {
-        self.compute_id().map(|id| id == self.id).unwrap_or(false)
+        self.intact_status().unwrap_or(false)
     }
 
     /// 是否有权限被拒绝（计划仍可用，但必须让人看见缺口）。

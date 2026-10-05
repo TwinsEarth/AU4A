@@ -393,8 +393,18 @@ impl AutonomyLayer {
             kinds.push(intent.kind());
             self.state.intents_planned += 1;
             let before = kernel.refusals().len();
-            // 执行失败按「没做成」处理：bool 的默认值就是 false，手写 match 是多余的。
-            let acted = self.execute(kernel, &card, intent).unwrap_or_default();
+            // v2.4.0 修复（P1）：执行失败**不得静默吞掉**。
+            // 修复前 `unwrap_or_default()` 把 `Err` 压成 `false`，于是只有"顺带往内核写了拒绝记录"
+            // 的失败才在下文可见；不写拒绝记录的失败（例如编码错误）会**彻底消失**——
+            // 对"Agent 自主"的运行时，自己发起的动作失败必须可观测。
+            // 现在把错误按既有分类记进本回合的 `refused`（Malformed → 实现/数据问题，不是对端竞争）。
+            let acted = match self.execute(kernel, &card, intent) {
+                Ok(acted) => acted,
+                Err(err) => {
+                    refused.push(classify_error(&err));
+                    false
+                }
+            };
             if acted {
                 sent += 1;
             }
