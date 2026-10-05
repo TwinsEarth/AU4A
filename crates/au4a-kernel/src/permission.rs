@@ -148,6 +148,13 @@ pub struct PermissionReport {
     pub limits: BTreeMap<String, i64>,
     /// 生效的权限来源。
     pub authorities: Vec<Authority>,
+    /// 本次判定所用的**逻辑时刻**（`vote_in_council` 的委员会就是按这个时刻抽签的）。
+    ///
+    /// v2.4.0 新增（P1）：修复前报告不记录抽签时刻，于是"默认 `explain` 的结果"第三方
+    /// **无法复算**——同一 Agent 在不同 `now` 会得到不同裁决，而报告本身看不出用了哪个时刻。
+    /// 现在把时刻写进报告：持有该值的节点可用 [`explain_with_council`] + 同时刻抽签
+    /// 复算出完全一致的结果。
+    pub sorted_at: u64,
 }
 
 impl PermissionReport {
@@ -234,6 +241,8 @@ pub fn explain_with_council(
     council: &Council,
 ) -> CoreResult<PermissionReport> {
     let config = kernel.config();
+    // v2.4.0：记录本次判定所用的逻辑时刻，使报告可被复算（见 `PermissionReport::sorted_at`）。
+    let sorted_at = kernel.now();
     let card = kernel.card(did);
     let registered = card.is_some();
     let balance = kernel.ledger().balance(did);
@@ -259,6 +268,7 @@ pub fn explain_with_council(
             denied,
             limits,
             authorities,
+            sorted_at,
         };
         return finished(report);
     }
@@ -378,6 +388,7 @@ pub fn explain_with_council(
         denied,
         limits,
         authorities,
+        sorted_at,
     })
 }
 
@@ -564,6 +575,7 @@ mod tests {
             denied: Vec::new(),
             limits: BTreeMap::new(),
             authorities: Vec::new(),
+            sorted_at: 0,
         };
         assert!(!incomplete.is_total_partition());
         assert_eq!(finished(incomplete), Err(CoreError::Encoding));
