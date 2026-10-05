@@ -227,10 +227,62 @@ impl LifecycleOutcome {
 
 /// 单个 Agent 的生命周期（事件溯源）。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawLifecycle", into = "RawLifecycle")]
 pub struct Lifecycle {
     did: String,
     state: AgentState,
     history: Vec<Transition>,
+}
+
+/// 线上形态（字段一一对应，JSON 形状不变）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RawLifecycle {
+    did: String,
+    state: AgentState,
+    history: Vec<Transition>,
+}
+
+/// v2.4.0 修复（P1）：**反序列化必须重放历史，并断言 `state` 等于折叠结果**。
+///
+/// 修复前 `Lifecycle` 字段虽私有，但 `derive(Deserialize)` 允许造出
+/// `{"state":"retired","history":[]}` —— 一个从未被任何事件产生过的状态。
+/// 这是"派生状态 + derive"家族的第五例（前四例：`Did` / `Refusal` / `MsgKind` / `RegistrySnapshot`）。
+/// 事件溯源的可信度全部压在"状态 = 历史的折叠"这一条上，它必须由代码强制。
+///
+/// 校验内容：DID 可解析；每一步的 `from` 等于当前状态、`to` 等于 `next_state` 的结果（即历史自洽）；
+/// 折叠结束后的状态等于声明状态。
+impl TryFrom<RawLifecycle> for Lifecycle {
+    type Error = CoreError;
+
+    fn try_from(raw: RawLifecycle) -> CoreResult<Self> {
+        let did = Did::parse(&raw.did)?;
+        let mut life = Lifecycle::new(&did);
+        for step in &raw.history {
+            if step.from != life.state {
+                return Err(CoreError::Encoding);
+            }
+            let to = next_state(life.state, step.event).map_err(|_| CoreError::Encoding)?;
+            if to != step.to {
+                return Err(CoreError::Encoding);
+            }
+            life.state = to;
+            life.history.push(*step);
+        }
+        if life.state != raw.state {
+            return Err(CoreError::Encoding);
+        }
+        Ok(life)
+    }
+}
+
+impl From<Lifecycle> for RawLifecycle {
+    fn from(l: Lifecycle) -> Self {
+        RawLifecycle {
+            did: l.did,
+            state: l.state,
+            history: l.history,
+        }
+    }
 }
 
 impl Lifecycle {
@@ -325,8 +377,16 @@ impl Lifecycle {
     }
 
     /// 历史指纹：可用来比对两台节点的重放结果。
+    ///
+    /// v2.4.0 修复（P1）：指纹改为覆盖 **`state` + `history`**。
+    /// 修复前只哈希 `history`，于是"同一历史、不同状态"的两份生命周期**指纹相同**——
+    /// 跨节点比对会把不一致判成一致。现在搭配上一条 serde 校验，两者不可能再分叉。
     pub fn fingerprint(&self) -> CoreResult<String> {
-        let value = serde_json::to_value(&self.history).map_err(|_| CoreError::Encoding)?;
+        let history = serde_json::to_value(&self.history).map_err(|_| CoreError::Encoding)?;
+        let value = json!({
+            "state": self.state.as_str(),
+            "history": history,
+        });
         canonical_hash(&value)
     }
 }
@@ -436,6 +496,57 @@ mod tests {
 
     fn keys(tag: u8) -> AgentKeys {
         AgentKeys::from_seed(&[tag; 32])
+    }
+
+    // ── v2.4.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn a_forged_state_without_history_is_refused_by_serde() {
+        // P1 回归：修复前可以反序列化出 {"state":"retired","history":[]} ——
+        // 一个从未被任何事件产生过的状态。
+        let did = keys(31).did().as_str().to_string();
+        let forged = format!(r#"{{"did":"{did}","state":"retired","history":[]}}"#);
+        assert!(
+            serde_json::from_str::<Lifecycle>(&forged).is_err(),
+            "状态必须等于历史的折叠结果"
+        );
+
+        // 合法历史可以往返（形状不变）
+        let mut life = Lifecycle::new(&keys(31).did());
+        life.apply(LifecycleEvent::Admitted, 1).unwrap();
+        life.apply(LifecycleEvent::WorkStarted, 2).unwrap();
+        let json = serde_json::to_string(&life).unwrap();
+        let back: Lifecycle = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, life);
+
+        // 历史里某一步的 to 被篡改 → 拒绝
+        let tampered = json.replace("\"to\":\"busy\"", "\"to\":\"active\"");
+        assert!(
+            serde_json::from_str::<Lifecycle>(&tampered).is_err(),
+            "历史每一步的 to 必须等于状态机的结果"
+        );
+
+        // 声明状态与历史不符 → 拒绝
+        let lying = json.replace("\"state\":\"busy\"", "\"state\":\"active\"");
+        assert!(serde_json::from_str::<Lifecycle>(&lying).is_err());
+    }
+
+    #[test]
+    fn fingerprint_covers_state_not_only_history() {
+        // P1 回归：修复前指纹只哈希 history，"同历史不同状态"会得到相同指纹。
+        let did = keys(32).did();
+        let mut a = Lifecycle::new(&did);
+        a.apply(LifecycleEvent::Admitted, 1).unwrap();
+        let mut b = Lifecycle::new(&did);
+        b.apply(LifecycleEvent::Admitted, 1).unwrap();
+        assert_eq!(a.fingerprint().unwrap(), b.fingerprint().unwrap());
+
+        b.apply(LifecycleEvent::WorkStarted, 2).unwrap();
+        assert_ne!(
+            a.fingerprint().unwrap(),
+            b.fingerprint().unwrap(),
+            "状态不同 → 指纹必须不同"
+        );
     }
 
     #[test]
