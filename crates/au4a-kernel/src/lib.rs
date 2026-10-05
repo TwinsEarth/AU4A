@@ -531,7 +531,17 @@ impl Kernel {
 
     /// 观察层的 JSON 投影（三个只读面板共用）。
     pub fn observe_json(&self) -> Value {
-        serde_json::to_value(self.observe()).unwrap_or(Value::Null)
+        // v2.4.0 修复（P1）：**不把失败伪装成 `null`**。
+        // 修复前 `unwrap_or(Value::Null)` 让"投影序列化失败"与"投影确实是空"无法区分；
+        // 观察层是"人类只能看真相"的落点，这里的静默比别处更不可接受。失败时给出**显式标记**。
+        match serde_json::to_value(self.observe()) {
+            Ok(view) => view,
+            Err(err) => json!({
+                "projection_available": false,
+                "error": "observer_projection_serialization_failed",
+                "detail": err.to_string(),
+            }),
+        }
     }
 
     /// 内核自检：宿主审计（守恒 / 准入 / 质押覆盖 / 注册表 / 队列 / 拒绝分类 / 时钟）
@@ -954,7 +964,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "journal_len": rehearsal.journal().len(),
         "journal_fingerprint": rehearsal.journal_fingerprint()?,
         "replay_ok": replay.is_ok(),
-        "replay_registry": replay.as_ref().map(|o| o.registry_fingerprint.clone()).unwrap_or_default(),
+        // v2.4.0 修复（P1）：不能把"没有指纹"写成空串——空串是**合法值**，
+        // 两个失败的重放比较起来会相等，等于给"假通过"留了门。用显式哨兵。
+        "replay_registry": replay
+            .as_ref()
+            .map(|o| o.registry_fingerprint.clone())
+            .unwrap_or_else(|_| "<unavailable>".to_string()),
         "invariants_all_passed": all_passed(&invariant_suite(rehearsal.kernel())),
     });
 
