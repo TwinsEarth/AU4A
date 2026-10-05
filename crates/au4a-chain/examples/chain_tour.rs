@@ -1,4 +1,4 @@
-//! v1.8.9 示例：跨链结算九步走（可运行、确定性、无网络 / 无文件 / 无墙钟）。
+//! v1.8.9 示例：跨链结算十步走（可运行、确定性、无网络 / 无文件 / 无墙钟）。
 //!
 //! 运行：
 //!
@@ -54,7 +54,7 @@ fn main() -> au4a_core::CoreResult<()> {
     tampered.payload = json!({ "ticker": "USDT-RGB", "supply": 1_000_000 });
     let tamper_refusal = net.accept(&tampered).unwrap_err();
     println!(
-        "[1/9 v1.8.1 测试网] 交易 {} 入块高度 {}（最终化到 {}，is_final={}），等级 {}；篡改 → {}（{}）",
+        "[1/10 v1.8.1 测试网] 交易 {} 入块高度 {}（最终化到 {}，is_final={}），等级 {}；篡改 → {}（{}）",
         au4a_core::short_id(&receipt.tx_id),
         receipt.height,
         net.finalized_height(),
@@ -72,7 +72,7 @@ fn main() -> au4a_core::CoreResult<()> {
     book.bridge_out(&mut ledger, &alice, Credits(400), "rgb:USDT-RGB", "rgb")?;
     let report = book.require_consistent(&ledger)?;
     println!(
-        "[2/9 v1.8.1 双轨] 桥出 400：本地可用 {} / 锁定 {}，链上表示 {}，一致 = {}，fail_closed = {}",
+        "[2/10 v1.8.1 双轨] 桥出 400：本地可用 {} / 锁定 {}，链上表示 {}，一致 = {}，fail_closed = {}",
         ledger.balance(&alice).available,
         ledger.balance(&alice).locked,
         book.chain_supply(),
@@ -131,7 +131,7 @@ fn main() -> au4a_core::CoreResult<()> {
     rgb.execute(&mut rgbnet, &finalize_tx)
         .map_err(|_| au4a_core::CoreError::InvalidKind)?;
     println!(
-        "[3/9 v1.8.1 RGB] 发行 400 → 转移 250/150，流通量 {}（承诺 {}）；未最终化就最终化 → {}，最终化数量 {}",
+        "[3/10 v1.8.1 RGB] 发行 400 → 转移 250/150，流通量 {}（承诺 {}）；未最终化就最终化 → {}，最终化数量 {}",
         rgb.contract()?.circulating()?,
         au4a_core::short_id(&bundle.commitment),
         early_refusal.code.as_str(),
@@ -174,7 +174,7 @@ fn main() -> au4a_core::CoreResult<()> {
     )?;
     let fake_ok = verify_merkle(&fake, &proof, &anchor.merkle_root)?;
     println!(
-        "[4/9 v1.8.2 Taproot] 锚定总额 {}，输出键 {}，Merkle 根 {}；真叶子证明 = {}，伪造叶子 = {}",
+        "[4/10 v1.8.2 Taproot] 锚定总额 {}，输出键 {}，Merkle 根 {}；真叶子证明 = {}，伪造叶子 = {}",
         anchor.amount_total,
         au4a_core::short_id(&anchor.output_key),
         au4a_core::short_id(&anchor.merkle_root),
@@ -214,7 +214,7 @@ fn main() -> au4a_core::CoreResult<()> {
     let self_refusal = erc.execute(&mut ethnet, &selfish).unwrap_err();
     let reputation = erc.summary(&alice_id)?;
     println!(
-        "[5/9 v1.8.3 ERC-8004] 身份 {} 收到 {} 条反馈，平均 {}bp、独立客户 {}、权重 {}bp；自评被 {} 拒绝（op={}）",
+        "[5/10 v1.8.3 ERC-8004] 身份 {} 收到 {} 条反馈，平均 {}bp、独立客户 {}、权重 {}bp；自评被 {} 拒绝（op={}）",
         au4a_core::short_id(&alice_id),
         reputation.count,
         reputation.average_bp,
@@ -266,7 +266,7 @@ fn main() -> au4a_core::CoreResult<()> {
     x402.claim(&mut ethnet, &mut ledger, &mut book, &claim_tx)
         .map_err(|_| au4a_core::CoreError::InvalidKind)?;
     println!(
-        "[6/9 v1.8.4 x402] 发票 {} 支付 100 → 托管 → 领取；结清 = {}，链上表示回到 {}，服务方余额 {}",
+        "[6/10 v1.8.4 x402] 发票 {} 支付 100 → 托管 → 领取；结清 = {}，链上表示回到 {}，服务方余额 {}",
         au4a_core::short_id(&invoice.id),
         x402.is_settled(&invoice.id),
         book.chain_supply(),
@@ -279,7 +279,7 @@ fn main() -> au4a_core::CoreResult<()> {
     let normal = route(&request, &table, true)?;
     let blocked = route(&request, &table, false)?;
     println!(
-        "[7/9 v1.8.5 路由] 400 → {} 走 {}（费用 {} 到账 {}，eta {} tick）；双轨不一致 → {}（{}）",
+        "[7/10 v1.8.5 路由] 400 → {} 走 {}（费用 {} 到账 {}，eta {} tick）；双轨不一致 → {}（{}）",
         normal.action.as_str(),
         normal.rail.as_str(),
         normal.fee,
@@ -310,7 +310,7 @@ fn main() -> au4a_core::CoreResult<()> {
         .map_err(|_| au4a_core::CoreError::InvalidKind)?;
     let transfer_refusal = trust.execute("reputation.transfer").unwrap_err();
     println!(
-        "[8/9 v1.8.6 信誉] 2 个事件 → 可靠性 {} / 质量 {} / 诚实 {} / 可用性 {}（综合 {}bp）；转让 → {}",
+        "[8/10 v1.8.6 信誉] 2 个事件 → 可靠性 {} / 质量 {} / 诚实 {} / 可用性 {}（综合 {}bp）；转让 → {}",
         profile.reliability_bp,
         profile.quality_bp,
         profile.honesty_bp,
@@ -322,21 +322,44 @@ fn main() -> au4a_core::CoreResult<()> {
     // ── 第 9 步（v1.8.8 文档 + 自检）：节点 verify 聚合的自检项 ───────────────────
     let checks = au4a_chain::self_check();
     let passed = checks.iter().filter(|c| c.passed).count();
-    println!("[9/9 v1.8.8 自检] {} 项自检 {passed} 项通过", checks.len());
+    println!("[9/10 v1.8.8 自检] {} 项自检 {passed} 项通过", checks.len());
     for check in &checks {
         println!("        - {:<36} {}", check.name, check.detail);
+    }
+
+    // ── 第 10 步（v1.8.10）安全审计：风险清单 + 攻击结果 ─────────────────────────
+    let audit = au4a_chain::audit_report();
+    let blocked = audit["attacks"]
+        .as_array()
+        .map(|a| a.iter().filter(|x| x["blocked"] == json!(true)).count())
+        .unwrap_or(0);
+    let total = audit["attacks"].as_array().map(Vec::len).unwrap_or(0);
+    println!(
+        "[10/10 v1.8.10 审计] 风险 {} 条（未防护 {} 条），攻击 {blocked}/{total} 被拦住；未防护项：",
+        audit["risks"].as_array().map(Vec::len).unwrap_or(0),
+        audit["unresolved_count"]
+    );
+    for risk in au4a_chain::unresolved_risks() {
+        println!(
+            "        - {} {:<28} {}（残余：{}）",
+            risk.id,
+            risk.name,
+            risk.status.as_str(),
+            risk.residual
+        );
     }
 
     let mut kernel = Kernel::new(KernelConfig::default());
     let summary = au4a_chain::scenario(&mut kernel)?;
     println!(
-        "\n场景摘要：等级 {}、real_network {}、双轨一致 {}、RGB 流通量 {}、Taproot {}、信誉综合 {}",
+        "\n场景摘要：等级 {}、real_network {}、双轨一致 {}、RGB 流通量 {}、Taproot {}、信誉综合 {}、攻击全拦住 {}",
         summary["grade"],
         summary["real_network"],
         summary["bridge"]["consistent"],
         summary["rgb"]["circulating"],
         summary["taproot"]["amount_total"],
-        summary["reputation"]["alice"]["overall_bp"]
+        summary["reputation"]["alice"]["overall_bp"],
+        summary["audit"]["all_attacks_blocked"]
     );
     println!("场景 JSON：");
     println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());

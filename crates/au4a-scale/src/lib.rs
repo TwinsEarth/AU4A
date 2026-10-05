@@ -19,6 +19,7 @@ pub mod cluster;
 pub mod collect;
 pub mod harness;
 pub mod metrics;
+pub mod paper;
 pub mod schema;
 pub mod verdict;
 
@@ -33,6 +34,7 @@ pub use cluster::{
 };
 pub use collect::{collect, sweep, DataBundle, Record, ScenarioSpec};
 pub use harness::{run as run_experiment, ExperimentConfig, ExperimentReport, Row};
+pub use paper::{paper_json, paper_summary};
 pub use schema::{schema_json, schema_summary};
 pub use verdict::{adjudicate, CapacityVerdict, VerdictKind, VerdictReason};
 pub use metrics::{
@@ -48,7 +50,7 @@ pub const TITLE: &str = "Network Scaling 网络扩展";
 /// 版本区间。
 pub const RANGE: &str = "v1.9.1 → v1.9.9";
 /// 当前小版本（每个小版本落地时前移）。
-pub const CURRENT: &str = "v1.9.8";
+pub const CURRENT: &str = "v1.9.9";
 /// 编译期存在性标记：确保 crate 名与轨道号一致。
 pub const CRATE: &str = "au4a_scale";
 
@@ -124,6 +126,35 @@ pub fn self_check() -> Vec<SelfCheck> {
                 "metrics.analytic_vertex",
                 format!("解析顶点 {analytic}，期望 1000"),
             )
+        }
+    });
+
+    // v1.9.9：论文稿的每条结论都必须带证据分级，且与实算一致。
+    checks.push(match (paper_json(), paper_summary()) {
+        (Ok(paper), Ok(summary)) => {
+            let claims = paper["claims"].as_array().cloned().unwrap_or_default();
+            let graded = claims.iter().all(|claim| {
+                matches!(claim["evidence"].as_str(), Some("verified") | Some("cpu-proto"))
+            });
+            if graded && claims.len() >= 5 {
+                SelfCheck::pass(
+                    TRACK,
+                    "paper.evidence_graded",
+                    format!(
+                        "{} 条结论全部标注证据等级（verified {} / cpu-proto {}），局限 {} 条、未做 {} 项",
+                        summary["claims"],
+                        summary["verified_claims"],
+                        summary["model_derived_claims"],
+                        summary["limitations"],
+                        summary["not_done"]
+                    ),
+                )
+            } else {
+                SelfCheck::fail(TRACK, "paper.evidence_graded", "存在未标注证据等级的结论")
+            }
+        }
+        (Err(err), _) | (_, Err(err)) => {
+            SelfCheck::fail(TRACK, "paper.evidence_graded", err.to_string())
         }
     });
 
@@ -326,6 +357,7 @@ pub fn results_json() -> CoreResult<Value> {
         "checks": checks.len(),
         "checks_passed": checks.iter().filter(|c| c.passed).count(),
         "schema": schema_summary()?,
+        "paper": paper_summary()?,
         "scenario": scenario_value,
     }))
 }
