@@ -279,21 +279,33 @@
       "version": "v1.2.10",
       "title": "示例",
       "goal": "scenario 真跑两条路径：多轮→双签→执行→结算；违约→仲裁，返回两份 JSON 摘要",
-      "deliverables": ["src/example.rs", "tests/example.rs"],
-      "interfaces": ["pub fn success_path(&mut Kernel)", "pub fn breach_path(&mut Kernel)"],
+      "deliverables": [
+        "src/example.rs: success_path / breach_path / run / example_dids",
+        "src/lib.rs: scenario 改为组合两条链路（顶层保留成功链路兼容字段）",
+        "tests/example.rs: 两条链路逐项数值 + 可重复性 + 不吞错"
+      ],
+      "interfaces": [
+        "pub fn success_path(&mut Kernel) -> CoreResult<Value>",
+        "pub fn breach_path(&mut Kernel) -> CoreResult<Value>",
+        "pub fn run(&mut Kernel) -> CoreResult<Value>（{\"success\":…,\"breach\":…}）",
+        "pub fn example_dids() -> [Did; 4]"
+      ],
       "acceptance": [
-        "成功路径摘要 6 个相位全部到达且最终 SETTLED",
-        "违约路径进入 ARBITRATION 并产出裁决",
-        "两条路径都可重复、账本守恒"
+        "成功链路：120→100→(拒绝)→95→接受→双签合约→执行→结算 95，七条消息全部验签，账本 885/1075",
+        "违约链路：80→75→接受→双签→执行→违约申诉→立案→双签裁决（罚没 15 / 赔付 37）→结案 SETTLED",
+        "scenario 返回两份 JSON 摘要（success/breach）+ 顶层兼容字段，paths=2、steps=8",
+        "两条链路同种子可重复：全新内核逐字段相同；同内核重跑仅逻辑时钟导致的 id/ts 变化",
+        "示例不吞错：非法动作照样 Err（未接受就签 → invalid_kind；超轮数 → overflow + policy_denied）",
+        "六个 Agent 自主注册（无人类账户），观察层可见两条链路事件，账本守恒"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 111,
+        "tests_total": 111,
+        "grade": "cpu-proto",
+        "notes": "实测 exit=0：57 单元 + 8 tests/arbitration.rs + 7 tests/breach.rs + 6 tests/contract.rs + 6 tests/example.rs + 4 tests/journal.rs + 6 tests/messages.rs + 8 tests/negotiate.rs + 4 tests/rounds.rs + 5 tests/state_machine.rs 全绿、0 warning（日志 1.2-v1.2.10.log）。两条链路实测：成功链路结算 95（客户可用 1000−20−95=885，服务方 1075）；违约链路案件裁决 upheld（罚没 15 = 75 的 2000bp、赔付 37 = 5000bp 向下取整），账本守恒、发行量不变。修复记录：scenario 重构后 scenario_agents 一度成为死代码（1 条 warning），改为成功链路复用它后 0 warning。"
       },
-      "status": "pending"
+      "status": "done"
     }
   ]
 }

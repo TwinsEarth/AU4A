@@ -24,10 +24,10 @@
 //! | v1.4.4 | [`stake`] | 质押 / 解质押 / 冷静期 / 罚没同步 |
 //! | v1.4.5 | [`arbitration`] | 自主立案 / 投票 / 裁决 / 申诉（罚没上限 = 锁定余额） |
 //! | v1.4.6 | [`settlement`] | 结算路由 + 最大余数法分成 + 收益归属资源提供者 |
-//! | v1.4.7 | `tests/` | 跨模块性质测试与端到端测试（81 个断言） |
+//! | v1.4.7 | `tests/` | 跨模块性质测试与端到端测试（87 个断言） |
 //! | v1.4.8 | 本文件 + `README.md` | 文档与证据汇总 |
-//! | v1.4.9 | `examples/economy_tour.rs` | 可运行示例 |
-//! | v1.4.10 | `monitor`（v1.4.10 落地） | 只读收益面板数据源（与节点 `/api/revenue` 对齐） |
+//! | v1.4.9 | `examples/economy_tour.rs` | 可运行示例（九步走） |
+//! | v1.4.10 | [`monitor`] | 只读收益面板数据源（与节点 `/api/revenue` 字段对齐的超集） |
 //!
 //! # 最短上手路径
 //!
@@ -36,7 +36,7 @@
 //! let panel = au4a_economy::scenario(&mut kernel)?;      // 端到端跑一遍（可复现）
 //! let checks = au4a_economy::self_check();                // 节点 verify 聚合它
 //! let results = au4a_economy::results_json()?;            // 只读产物摘要
-//! // v1.4.10 起：au4a_economy::monitor::revenue_panel(&kernel, &book)?  // 人类只看收益
+//! let revenue = au4a_economy::monitor::revenue_panel(&kernel, &book, &panel)?; // 人类只看收益
 //! ```
 //!
 //! 轨道内**串行**开发：每个小版本落地一个职责，并留下自检与证据。
@@ -45,6 +45,7 @@
 pub mod arbitration;
 pub mod balance;
 pub mod fx;
+pub mod monitor;
 pub mod pricing;
 pub mod settlement;
 pub mod stake;
@@ -64,6 +65,7 @@ pub use fx::{
     ChainExecution, DecisionReason, ExchangeBook, ExchangeIntent, ExchangeRequest, IntentStatus,
     RouteAction, RoutePlan, RouteTable, Urgency, Venue,
 };
+pub use monitor::{ledger_totals, monitor_json, revenue_panel, LedgerTotals, RevenuePanel, RevenueRow};
 pub use pricing::{unit_price, PriceComponents, PriceInputs, PriceKnobs, PriceQuote};
 pub use settlement::{
     Beneficiary, BeneficiaryKind, DecisionRights, ProviderRole, Receipt, RevenueBook, RevenueShare,
@@ -448,6 +450,53 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("monitor.read_only", || {
+        let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+        let a = agent(19);
+        let b = agent(20);
+        let da = ensure_registered(&mut kernel, &a, "monitor.a", &["compute"], Credits(10))
+            .map_err(|e| e.to_string())?;
+        let db = ensure_registered(&mut kernel, &b, "monitor.b", &["buy"], Credits(10))
+            .map_err(|e| e.to_string())?;
+        kernel
+            .settle(&db, &da, Credits(30), EvidenceGrade::Verified)
+            .map_err(|e| format!("结算被拒绝：{e}"))?;
+        let mut revenue = RevenueBook::new();
+        revenue.record_receipt(Receipt {
+            beneficiary: da.as_str().to_string(),
+            amount: Credits(30),
+            share_bp: 10_000,
+            role: ProviderRole::Compute,
+            kind: BeneficiaryKind::Agent,
+            at: 1,
+        });
+        let before = kernel.ledger().view();
+        let panel_checks = monitor::monitor_checks(&kernel, &revenue);
+        let value = monitor::revenue_panel(&kernel, &revenue, &json!({"self_check": true}))
+            .map_err(|e| e.to_string())?;
+        if !au4a_core::all_passed(&panel_checks) {
+            return Err(format!("监控自检未全绿：{panel_checks:?}"));
+        }
+        if kernel.ledger().view() != before {
+            return Err("只读面板改动了账本".to_string());
+        }
+        if value["read_only"] != json!(true)
+            || value["ledger"]["conservation_ok"] != json!(true)
+            || value["total_earned"] != json!(30)
+        {
+            return Err(format!("面板字段不符：{value}"));
+        }
+        Ok(format!(
+            "只读面板：账户 {} 个、注册 Agent {} 个、发行 {}、罚没 {}、收益 {}、守恒 = {}，账本在读取前后逐字段不变",
+            value["ledger"]["account_count"],
+            value["agents"],
+            value["ledger"]["minted"],
+            value["ledger"]["slashed"],
+            value["total_earned"],
+            value["ledger"]["conservation_ok"]
+        ))
+    }));
+
     checks
 }
 
@@ -467,7 +516,7 @@ pub fn results_json() -> CoreResult<Value> {
         "checks_total": checks.len(),
         "checks_passed": passed,
         "all_passed": au4a_core::all_passed(&checks),
-        "modules": ["balance", "pricing", "fx", "stake", "arbitration", "settlement"],
+        "modules": ["balance", "pricing", "fx", "stake", "arbitration", "settlement", "monitor"],
         "invariants": [
             "Σ可用 + Σ锁定 + 罚没 == 发行",
             "整数微积分与基点运算，规范 JSON 禁浮点",
@@ -541,7 +590,7 @@ fn parse_announcement(env: &Envelope) -> Option<Announcement> {
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}：余额 + 定价 + 兑换 + 质押 + 仲裁 + 结算路由（v1.4.6）"),
+        format!("{TITLE} {RANGE}：经济自主全流程 + 只读收益面板（v1.4.10）"),
     );
 
     let seller_keys = agent(41);
@@ -926,6 +975,15 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
 
     // 守恒断言 + 余额变动投影。
     balance::assert_conserved(kernel.ledger())?;
+    // 只读收益面板：人类只看收益，没有任何写路径。
+    let panel_context = json!({
+        "scenario": "v1.4.10 经济自主全流程",
+        "exchange": { "chain_executed": false, "pending": exchange.pending() },
+        "dispute": { "cases": court.total_cases(), "slashed": court.total_slashed()? },
+        "settlement": { "receipts": receipts.len() },
+        "pricing": { "chosen_unit_price": price },
+    });
+    let revenue_panel = monitor::revenue_panel(kernel, &revenue, &panel_context)?;
     let after = kernel.ledger().view();
     let row = |did: &Did| -> CoreResult<Value> {
         let key = did.as_str().to_string();
@@ -944,7 +1002,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.4.6 余额 + 定价 + 兑换 + 质押 + 仲裁 + 结算路由与收益归属",
+        "scenario": "v1.4.10 经济自主全流程 + 只读收益面板",
         "topups": { "seller": seller_topup, "buyer": buyer_topup },
         "agents": [row(&seller)?, row(&buyer)?, row(&rival)?, row(&arbiter)?, row(&owner)?],
         "pricing": {
@@ -996,6 +1054,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             },
             "revenue": revenue.to_json(),
         },
+        "revenue_panel": revenue_panel,
         "settled": [{ "from": buyer.as_str(), "to": seller.as_str(), "amount": price, "gate": "ledger-direct" }],
         "refusals": [
             { "code": RefusalCode::PolicyDenied.as_str(), "verdict": verdict.as_str(), "amount": overreach },
@@ -1093,6 +1152,25 @@ mod tests {
         );
         assert_eq!(a["settlement"]["human_operator"]["earned"], json!(60));
         assert_eq!(a["settlement"]["revenue"]["receipt_count"], json!(2));
+        // 只读收益面板（v1.4.10）：账本总量 + 各账户可用/锁定/收益；人类操作者只收收益。
+        assert_eq!(a["revenue_panel"]["read_only"], json!(true));
+        assert_eq!(a["revenue_panel"]["ledger"]["conservation_ok"], json!(true));
+        assert_eq!(a["revenue_panel"]["ledger"]["account_count"], json!(5));
+        assert_eq!(a["revenue_panel"]["agents"], json!(4));
+        assert_eq!(a["revenue_panel"]["total_earned"], json!(200));
+        let owner_key = agent(45).did().as_str().to_string();
+        assert_eq!(
+            a["revenue_panel"]["ledger"]["accounts"][owner_key.as_str()]["kind"],
+            json!("human_operator")
+        );
+        assert_eq!(
+            a["revenue_panel"]["ledger"]["accounts"][owner_key.as_str()]["earned"],
+            json!(60)
+        );
+        assert_eq!(
+            a["revenue_panel"]["ledger"]["accounts"][owner_key.as_str()]["locked"],
+            json!(0)
+        );
         assert_eq!(a["conservation"]["ok"], json!(true));
         assert_eq!(a["conservation"]["slashed"], json!(100));
         assert_eq!(a["conservation"]["ok"], json!(true));

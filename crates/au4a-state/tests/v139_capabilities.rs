@@ -10,7 +10,7 @@ use au4a_state::{
 };
 
 /// 声明里允许出现的模块前缀（api 字段必须落在这些模块里）。
-const MODULES: [&str; 11] = [
+const MODULES: [&str; 12] = [
     "snapshot",
     "store",
     "diff",
@@ -22,6 +22,7 @@ const MODULES: [&str; 11] = [
     "perf",
     "chain",
     "capabilities",
+    "disaster",
 ];
 
 #[test]

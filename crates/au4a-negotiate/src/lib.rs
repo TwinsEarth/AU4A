@@ -18,6 +18,7 @@
 pub mod arbitration;
 pub mod breach;
 pub mod contract;
+pub mod example;
 pub mod journal;
 pub mod msg;
 pub mod rounds;
@@ -440,6 +441,32 @@ fn journal_roundtrip_check() -> CoreResult<String> {
     ))
 }
 
+fn example_two_paths_check() -> CoreResult<String> {
+    let mut kernel = Kernel::new(au4a_kernel::KernelConfig::default());
+    let both = example::run(&mut kernel)?;
+    let success = &both["success"];
+    let breach = &both["breach"];
+    if success["phase"] != "settled" || breach["phase"] != "settled" {
+        return Err(au4a_core::CoreError::InvalidKind);
+    }
+    if success["settled_amount"] != 95 || success["replay_byte_exact"] != true {
+        return Err(au4a_core::CoreError::Encoding);
+    }
+    if breach["ruling"]["verdict"] != "upheld"
+        || breach["ruling"]["signatures"] != 2
+        || breach["enforcement"]["conservation_ok"] != true
+    {
+        return Err(au4a_core::CoreError::InvalidSignature);
+    }
+    if both["conservation_ok"] != true {
+        return Err(au4a_core::CoreError::Overflow);
+    }
+    Ok(format!(
+        "两条链路真跑：成功链路结算 95；违约链路案件 {} 裁决 upheld（罚没 {} / 赔付 {}）后结案，账本守恒",
+        breach["case_short_id"], breach["enforcement"]["slashed"], breach["enforcement"]["compensated"]
+    ))
+}
+
 /// 轨道自检：节点 `verify` 聚合它，观察层「结果」面板展示它。
 pub fn self_check() -> Vec<SelfCheck> {
     vec![
@@ -456,6 +483,7 @@ pub fn self_check() -> Vec<SelfCheck> {
         check("contract.dual_signature", contract_dual_signature_check()),
         check("breach.requires_contract", breach_requires_contract_check()),
         check("arbitration.conservation", arbitration_conservation_check()),
+        check("example.two_paths", example_two_paths_check()),
     ]
 }
 
@@ -471,6 +499,7 @@ pub fn results_json() -> CoreResult<Value> {
         "legal_transitions": LEGAL_TRANSITIONS.len(),
         "journal_version": JOURNAL_VERSION,
         "default_max_rounds": DEFAULT_MAX_ROUNDS,
+        "example_paths": ["success", "breach"],
         "checks": self_check().len(),
         "checks_passed": self_check().iter().filter(|c| c.passed).count(),
     }))
@@ -479,65 +508,22 @@ pub fn results_json() -> CoreResult<Value> {
 /// 端到端自有流程：用共享内核跑一遍本轨道的能力，返回 JSON 摘要。
 ///
 /// 契约（不可改）：不 panic、不读文件、不开网络、不读墙钟；同样的输入给同样的输出。
-/// 每一版迭代都应该让这里多做一件真实的事，而不是多打印一行字。
+///
+/// v1.2.10 起这里**真跑两条链路**（见 [`example`]）：
+/// `success`（多轮 → 双签合约 → 执行 → 结算）与 `breach`（违约 → 双签裁决 → 罚没 + 赔付 → 结案）。
+/// 顶层字段保留成功链路的摘要，供前几版的断言与观察层继续使用。
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
-    let (proposer, responder) = scenario_agents(kernel)?;
-    let opening = Terms::new("summarize.zh", Credits(120), 40, EvidenceGrade::Verified)?;
-
-    // 多轮协商引擎真跑：开局 → 还价 → 拒绝（不占额度）→ 再还价。
-    let mut negotiation =
-        Negotiation::open(kernel, &proposer, &responder, opening, DEFAULT_MAX_ROUNDS)?;
-    negotiation.counter(
-        kernel,
-        &responder,
-        &proposer,
-        Terms::new("summarize.zh", Credits(100), 40, EvidenceGrade::Verified)?,
-    )?;
-    negotiation.reject(kernel, &proposer, &responder, "deadline too tight")?;
-    // 还价必须由上一次报价的对端发出：上一次是应答方报的价，所以这次由提议方还价。
-    negotiation.counter(
-        kernel,
-        &proposer,
-        &responder,
-        Terms::new("summarize.zh", Credits(95), 42, EvidenceGrade::Verified)?,
-    )?;
-    // 应答方接受提议方的 95，然后双方签订合约（双方签名 + 锚定哈希），开始执行并结算。
-    negotiation.accept(kernel, &responder, &proposer)?;
-    let contract = negotiation.sign_contract(kernel, &proposer, &responder)?;
-    negotiation.execute(kernel, &proposer, &responder)?;
-    let paid = negotiation.settle(kernel, &proposer, &responder)?;
-
-    let delivered = kernel.drain();
-    let mut transcript: Vec<Value> = Vec::new();
-    for env in &delivered {
-        let parsed = NegotiationMsg::from_env(env)?;
-        transcript.push(json!({
-            "kind": parsed.kind(),
-            "id": env.id,
-            "from": env.from.as_str(),
-            "ts": env.ts,
-        }));
-    }
-
-    // 归档：把这次协商持久化成规范 JSON，再解回来做逐字节比对（纯内存，无文件 I/O）。
-    let archived = negotiation.archive()?;
-    let restored = Journal::decode(&archived)?;
-    let byte_exact = restored.encode()? == archived;
-    let replay_digest = restored.replay_digest()?;
-    let summary = negotiation.summary()?;
-
+    let both = example::run(kernel)?;
+    let success = &both["success"];
+    let breach = &both["breach"];
     kernel.emit(
         format!("{TRACK}.scenario").as_str(),
         format!(
-            "{TITLE}：{} 条协商消息经 PMB 投递并逐条验签；{} → {}（{} 条双签记录，{} 轮报价）；合约 {} 双签并锚定；归档 {} 字节，重放{}",
-            transcript.len(),
-            Phase::Idle.as_str(),
-            negotiation.phase().as_str(),
-            negotiation.machine().seq(),
-            negotiation.rounds_used(),
-            au4a_core::short_id(&contract.hash),
-            archived.len(),
-            if byte_exact { "逐字节一致" } else { "不一致" }
+            "{TITLE}：两条链路跑通——成功链路结算 {} 微积分；违约链路裁决 {}（罚没 {} / 赔付 {}）",
+            success["settled_amount"],
+            breach["ruling"]["verdict"],
+            breach["enforcement"]["slashed"],
+            breach["enforcement"]["compensated"]
         ),
     );
 
@@ -545,25 +531,29 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "session": negotiation.session(),
-        "delivered": transcript.len(),
-        "transcript": transcript,
-        "phase": negotiation.phase().as_str(),
-        "transitions": negotiation.machine().seq(),
-        "rounds_used": negotiation.rounds_used(),
-        "max_rounds": negotiation.max_rounds(),
-        "offers": negotiation.offers().len(),
-        "rejections": negotiation.rejections().len(),
-        "price_trail": negotiation.price_trail(),
-        "history_tip": summary["history_tip"],
-        "journal_bytes": archived.len(),
-        "replay_byte_exact": byte_exact,
-        "replay_digest": replay_digest,
-        "contract": contract.summary(),
-        "contract_anchored": contract.verify_anchor().is_ok(),
-        "settled_amount": paid.0,
-        "conservation_ok": kernel.ledger().check_conservation().is_ok(),
-        "steps": 7,
+        "paths": 2,
+        "steps": 8,
+        "success": success,
+        "breach": breach,
+        "conservation_ok": both["conservation_ok"],
+        // ---- 兼容字段（v1.2.1 → v1.2.9 的断言与人类观察层继续可读）----
+        "session": success["session"],
+        "delivered": success["delivered"],
+        "transcript": success["transcript"],
+        "phase": success["phase"],
+        "transitions": success["transitions"],
+        "rounds_used": success["rounds_used"],
+        "max_rounds": success["max_rounds"],
+        "offers": success["offers"],
+        "rejections": success["rejections"],
+        "price_trail": success["price_trail"],
+        "history_tip": success["history_tip"],
+        "journal_bytes": success["journal_bytes"],
+        "replay_byte_exact": success["replay_byte_exact"],
+        "replay_digest": success["replay_digest"],
+        "contract": success["contract"],
+        "contract_anchored": success["contract_anchored"],
+        "settled_amount": success["settled_amount"],
     }))
 }
 

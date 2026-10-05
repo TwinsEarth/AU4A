@@ -327,17 +327,36 @@
       "version": "v1.3.10",
       "title": "灾难恢复",
       "goal": "备份 → 源丢失 → 2PC 重建 → 增量续跑 的完整演练。",
-      "deliverables": [],
-      "interfaces": [],
-      "acceptance": [],
+      "deliverables": [
+        "src/disaster.rs: Backup（create/verify/restore_into）+ verify_media（任意介质的独立验证）",
+        "src/disaster.rs: DrillOptions/run_drill/DrillReport",
+        "src/capabilities.rs: 新增 disaster.drill 与 disaster.corrupted_backup_refused 两条能力（共 21 条）",
+        "tests/v1310_disaster.rs: 10 个集成测试"
+      ],
+      "interfaces": [
+        "pub fn Backup::create(agent, snapshot) -> CoreResult<Backup>",
+        "pub fn Backup::verify(&self, policy) -> CoreResult<StateSnapshot>",
+        "pub fn Backup::restore_into(&self, node, policy) -> CoreResult<u64>",
+        "pub fn verify_media(store, prefix, signed, policy) -> CoreResult<StateSnapshot>",
+        "pub fn run_drill(agent, source, evolved, to_node, options) -> CoreResult<DrillReport>",
+        "pub struct DrillReport { backup_verified, source_lost, rebuild_first_*, rebuild_committed, ops_skipped, identical_to_source, consistency_clean, ... }"
+      ],
+      "acceptance": [
+        "备份可独立验证：改块/删块/伪造 provenance → 恢复被拒（不是尽力恢复）",
+        "源丢失后仅凭备份与签名重建出与源逐字节一致的 base",
+        "第一次 2PC 注入故障 → 回滚干净 → 同一笔迁移重试成功",
+        "增量续跑：dropped_frames>0、resumed_from>0、ops_skipped>0，最终内容根与源一致",
+        "consistency_clean、node_findings=0、rebuild_orphans=0 同时成立",
+        "5 个故障点逐个验证「注入→回滚→重试成功」；报告逐字节可重放"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-state",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 215,
+        "tests_total": 215,
+        "grade": "verified",
+        "notes": "lib 92 + v1310 10 + v131 13 + v132 11 + v133 16 + v134 13 + v135 11 + v136 14 + v137 10 + v138 16 + v139 9 全绿 0 warning。备份/重建/续跑本机实跑；备份介质与跨节点传输为内存实现（transfer.resumable 标注 cpu-proto）。日志 E:\\DS\\_forangent\\logs\\1.3-v1.3.10.log"
       },
-      "status": "pending"
+      "status": "done"
     }
   ]
 }
