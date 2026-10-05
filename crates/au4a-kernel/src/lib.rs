@@ -67,6 +67,7 @@ pub use registry::{AgentRegistry, RegistrySnapshot};
 
 /// 内核配置。人类可以设定初始资源与安全底线，但不能设定「谁做什么」。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawKernelConfig", into = "RawKernelConfig")]
 pub struct KernelConfig {
     /// 网络标识（进入签名载荷，跨网络重放无效）。
     pub network_id: String,
@@ -78,6 +79,81 @@ pub struct KernelConfig {
     pub cpu_proto_settle_cap: Credits,
     /// 每账户可携带的最大能力声明数（防止公告轰炸）。
     pub max_skills: usize,
+}
+
+/// 单笔 `cpu-proto` 结算上限的**硬上界**（微积分）。超过它的配置值本身就是策略错误：
+/// `cpu-proto` 是"纯 CPU 语义原型"，不允许承载大额信任。
+pub const MAX_CPU_PROTO_SETTLE_CAP: Credits = Credits(1_000_000);
+/// 能力声明数的硬上界（`usize::MAX` 会让"公告轰炸"防护形同虚设）。
+pub const MAX_SKILLS_LIMIT: usize = 4096;
+
+/// 线上形态（字段一一对应，JSON 形状不变）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RawKernelConfig {
+    pub network_id: String,
+    pub min_stake: Credits,
+    pub genesis_mint: Credits,
+    pub cpu_proto_settle_cap: Credits,
+    pub max_skills: usize,
+}
+
+impl KernelConfig {
+    /// v2.4.0 新增（P1）：**配置校验**。
+    ///
+    /// 修复前 `KernelConfig` 是纯 `derive(Deserialize)`，于是结算闸门上限
+    /// （`cpu_proto_settle_cap`）、准入下限（`min_stake`）、能力数上限（`max_skills`）
+    /// 可以被任意 JSON **注入**——这些值直接决定"哪些结算能过闸门"，
+    /// 把 `cpu_proto_settle_cap` 写成极大值等于关掉证据闸门的一部分。
+    ///
+    /// 上界是刻意的（不是"能表示就行"）：`cpu-proto` 是纯 CPU 原型，
+    /// 不允许承载大额信任；能力数上限过大会让"公告轰炸"防护失效。
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.network_id.trim().is_empty() {
+            return Err(CoreError::InvalidKind);
+        }
+        if self.min_stake < Credits::ZERO
+            || self.genesis_mint < Credits::ZERO
+            || self.cpu_proto_settle_cap < Credits::ZERO
+        {
+            return Err(CoreError::NegativeAmount);
+        }
+        if self.cpu_proto_settle_cap > MAX_CPU_PROTO_SETTLE_CAP {
+            return Err(CoreError::Overflow);
+        }
+        if self.max_skills == 0 || self.max_skills > MAX_SKILLS_LIMIT {
+            return Err(CoreError::InvalidKind);
+        }
+        Ok(())
+    }
+}
+
+/// 反序列化即校验：任何"从外部读进来的配置"都必须过 `validate()`。
+impl TryFrom<RawKernelConfig> for KernelConfig {
+    type Error = CoreError;
+
+    fn try_from(raw: RawKernelConfig) -> CoreResult<Self> {
+        let config = KernelConfig {
+            network_id: raw.network_id,
+            min_stake: raw.min_stake,
+            genesis_mint: raw.genesis_mint,
+            cpu_proto_settle_cap: raw.cpu_proto_settle_cap,
+            max_skills: raw.max_skills,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+}
+
+impl From<KernelConfig> for RawKernelConfig {
+    fn from(c: KernelConfig) -> Self {
+        RawKernelConfig {
+            network_id: c.network_id,
+            min_stake: c.min_stake,
+            genesis_mint: c.genesis_mint,
+            cpu_proto_settle_cap: c.cpu_proto_settle_cap,
+            max_skills: c.max_skills,
+        }
+    }
 }
 
 impl Default for KernelConfig {
