@@ -167,8 +167,22 @@ impl PmbRouter {
         self.seen.contains_key(id)
     }
 
+    /// v2.4.0 修复（P1）：**回收已不可能再被判为"重放"的旧 id**。
+    ///
+    /// 修复前 `seen` 只增不减：长跑节点被"大量合法且各不相同的消息"持续撑大内存（呼吸式 DoS）。
+    /// 回收是安全的：任何 `ts < now - MAX_LAG` 的信封在准入第 5 步就会被判 `stale_epoch`，
+    /// 因此"不记得它"不会放过任何真正的重放。
+    fn evict_stale(&mut self, now: u64) {
+        let horizon = now.saturating_sub(MAX_LAG);
+        // 用 `>=`：准入的迟到判定是严格不等式（`ts + MAX_LAG < now`），
+        // 因此 `ts == now - MAX_LAG` 仍然可准入，不能回收（否则重放保护会被自己的回收绕过）。
+        self.seen.retain(|_, ts| *ts >= horizon);
+    }
+
     /// 准入判定。纯函数（除了记录「见过哪些 id」这一个必要状态）。
     pub fn admit(&mut self, kernel: &Kernel, env: &Envelope) -> RouteDecision {
+        // 先回收，再判定：保证 `seen` 的规模只与"滞后视野内的信封数"有关，与总消息量无关。
+        self.evict_stale(kernel.now());
         let class = classify_kind(env.kind.as_str());
         let mut decision = RouteDecision {
             id: env.id.clone(),
@@ -224,6 +238,24 @@ impl PmbRouter {
                 RefusalCode::StaleEpoch,
                 format!(
                     "信封时刻 {} 落后当前 {} 超过 {MAX_LAG}",
+                    env.ts,
+                    kernel.now()
+                ),
+            );
+        }
+
+        // 5b. **时钟不得超前**（v2.4.0 修复 P0：对称界）。
+        //
+        // 修复前只查"落后"，于是 `ts = u64::MAX` 的合法信封能通过准入；而 `Kernel::send`
+        // 会用 `clock.observe(env.ts)` 把本地逻辑时钟取 max —— 一条消息就能把时钟顶到天花板，
+        // 此后任何正常信封都满足 `ts + MAX_LAG < now` 而被判 stale_epoch：
+        // **远端可触发、单条消息、节点不会自愈的拒绝服务。**
+        if env.ts > kernel.now().saturating_add(MAX_LAG) {
+            return self.refuse(
+                decision,
+                RefusalCode::StaleEpoch,
+                format!(
+                    "信封时刻 {} 超前当前 {} 超过 {MAX_LAG}",
                     env.ts,
                     kernel.now()
                 ),
@@ -484,6 +516,97 @@ mod tests {
         assert!(!RefusalCode::Conflict.is_misconduct());
         assert_eq!(router.stats().replays, 1);
         assert!(router.has_seen(&env.id));
+    }
+
+    #[test]
+    fn future_timestamp_cannot_poison_the_clock() {
+        // P0 回归：修复前只查"落后"不查"超前"，于是 `ts = u64::MAX` 的合法信封能通过准入，
+        // 而 `Kernel::send` 会把本地逻辑时钟取 max 顶到天花板 →
+        // 之后所有正常信封都被判 stale_epoch → **远端一条消息即可让节点永久拒收**。
+        let mut k = kernel_with(2);
+        let mut router = PmbRouter::new();
+        let poisoned = settle_request(
+            &keys(120),
+            keys(121).did(),
+            u64::MAX,
+            Credits(7),
+            EvidenceGrade::CpuProto,
+        )
+        .unwrap();
+
+        let decision = router.admit(&k, &poisoned);
+        assert!(!decision.accepted, "超前信封必须被拒");
+        assert_eq!(decision.code, Some(RefusalCode::StaleEpoch));
+        assert!(
+            !RefusalCode::StaleEpoch.is_misconduct(),
+            "超前是竞争语义，不是单次即成立的恶意"
+        );
+
+        // 关键：被拒之后，正常信封仍然可以准入（时钟没被顶走）。
+        let normal = settle_request(
+            &keys(120),
+            keys(121).did(),
+            k.now(),
+            Credits(7),
+            EvidenceGrade::CpuProto,
+        )
+        .unwrap();
+        assert!(
+            router.admit(&k, &normal).accepted,
+            "被拒的超前信封不得影响后续正常投递"
+        );
+
+        // 内核层纵深防御：即使绕过路由直接 send，时钟也只能前进 MAX_LAG 步。
+        let before = k.now();
+        let _ = k.send(&poisoned);
+        assert!(
+            k.now() <= before.saturating_add(MAX_LAG),
+            "时钟不得被单条远端信封推进超过 MAX_LAG（{before} -> {}）",
+            k.now()
+        );
+    }
+
+    #[test]
+    fn replay_table_is_bounded_by_the_lag_horizon() {
+        // P1 回归：修复前 `seen` 只增不减——长跑节点会被"大量合法且各不相同的消息"撑爆内存。
+        let mut k = kernel_with(2);
+        let mut router = PmbRouter::new();
+        // 要触发回收，时钟必须越过 MAX_LAG 的滞后视野：投递 100 条 ts 递增的信封，
+        // 每条都把逻辑时钟推进一步。
+        for ts in 0..100u64 {
+            let env = settle_request(
+                &keys(120),
+                keys(121).did(),
+                ts,
+                Credits(7),
+                EvidenceGrade::CpuProto,
+            )
+            .unwrap();
+            let _ = k.send(&env); // 推进逻辑时钟（有界）
+            let _ = router.admit(&k, &env); // 记录 id
+        }
+        let seen = router.seen_count();
+        assert!(
+            seen < 100,
+            "重放表必须随滞后视野回收，实际保留 {seen} 条 / 共投递 100 条"
+        );
+        assert!(
+            seen as u64 <= MAX_LAG + 4,
+            "保留量应与 MAX_LAG 同量级，实际 {seen}"
+        );
+        // 回收不等于失忆：视野内的重复投递仍然会被判重放。
+        let fresh = settle_request(
+            &keys(120),
+            keys(121).did(),
+            k.now(),
+            Credits(7),
+            EvidenceGrade::CpuProto,
+        )
+        .unwrap();
+        assert!(router.admit(&k, &fresh).accepted);
+        let again = router.admit(&k, &fresh);
+        assert!(!again.accepted);
+        assert_eq!(again.code, Some(RefusalCode::Conflict));
     }
 
     #[test]

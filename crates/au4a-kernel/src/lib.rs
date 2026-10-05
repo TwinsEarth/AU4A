@@ -402,7 +402,20 @@ impl Kernel {
         }
         self.queue.push(env.clone());
         self.delivered += 1;
-        self.clock.observe(env.ts);
+        // v2.4.0 修复（P0）：时钟只能被远端**有限**推进。
+        // 修复前直接 `observe(env.ts)`：一条 `ts = u64::MAX` 的合法信封会把本地逻辑时钟顶到天花板，
+        // 之后所有正常信封都会被 `pmb::admit` 判为 stale_epoch → 节点通信永久瘫痪
+        // （远端可触发、单条消息、不自愈）。这里做纵深防御：即使某个入口漏了超前检查，
+        // 时钟也只能前进 MAX_LAG 步。
+        // 注意 `observe` 的定义是 `max(本地, remote) + 1`，所以这里上界取 `MAX_LAG - 1`，
+        // 才能让"单条远端信封最多把时钟推进 MAX_LAG 步"成为一个**精确**不变式
+        //（测试 `future_timestamp_cannot_poison_the_clock` 按精确值断言）。
+        let capped = env.ts.min(
+            self.clock
+                .now()
+                .saturating_add(crate::pmb::MAX_LAG.saturating_sub(1)),
+        );
+        self.clock.observe(capped);
         Ok(DeliveryReport {
             id: env.id.clone(),
             accepted: true,
