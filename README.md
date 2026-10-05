@@ -5,15 +5,13 @@
 > 仓库：<https://github.com/TwinsEarth/AU4A> ｜
 > 全称：**Agents-UniverseForAgent**（简称 **AU4A**，仓库原名 `agent-universeForAngent`）
 
-<p align="center">
+<p align="left">
   <a href="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml/badge.svg?branch=master"></a>
   <a href="https://github.com/TwinsEarth/AU4A/releases"><img alt="latest release" src="https://img.shields.io/github/v/release/TwinsEarth/AU4A?label=release&sort=semver&color=brightgreen"></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/github/license/TwinsEarth/AU4A?label=license&color=blue"></a>
-  <img alt="rust" src="https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust&logoColor=white">
-</p>
-<p align="center">
-  <a href="docs/DESIGN.md"><img alt="design doc" src="https://img.shields.io/badge/docs-DESIGN%20%2B%20DEV-informational"></a>
+   <a href="docs/DESIGN.md"><img alt="design doc" src="https://img.shields.io/badge/docs-DESIGN%20%2B%20DEV-informational"></a>
   <a href="https://github.com/TwinsEarth/AU4A/issues"><img alt="issues" src="https://img.shields.io/github/issues/TwinsEarth/AU4A"></a>
+  <img alt="rust" src="https://img.shields.io/badge/rust-1.88%2B-orange?logo=rust&logoColor=white">
 </p>
 ## 智能体宇宙的三重目标
 
