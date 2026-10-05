@@ -31,10 +31,10 @@
 //! | v1.8.4 | [`x402`] | 发票 / 支付 / 领取 |
 //! | v1.8.5 | [`routing`] | 金额/时效/费用阈值选轨 + fail-closed 闸门 |
 //! | v1.8.6 | [`reputation`] | 链上事件 → 本地 4 维信誉 |
-//! | v1.8.7 | `tests/` | 跨模块不变量与端到端（87 个断言） |
+//! | v1.8.7 | `tests/` | 跨模块不变量与端到端（92 个断言） |
 //! | v1.8.8 | 本文件 + `README.md` | 文档与证据汇总 |
-//! | v1.8.9 | `examples/chain_tour.rs` | 可运行示例 |
-//! | v1.8.10 | `audit` | 安全审计：风险清单 + 攻击测试 |
+//! | v1.8.9 | `examples/chain_tour.rs` | 可运行示例（十步） |
+//! | v1.8.10 | [`audit`] | 安全审计：风险登记表（含未防护项）+ 真跑攻击 |
 //!
 //! # 最短上手路径
 //!
@@ -43,8 +43,10 @@
 //! let panel = au4a_chain::scenario(&mut kernel)?;   // 端到端跑一遍（可复现）
 //! let checks = au4a_chain::self_check();             // 节点 verify 聚合它
 //! let results = au4a_chain::results_json()?;         // 只读产物摘要
+//! let audit = au4a_chain::audit_report();            // 风险清单 + 攻击结果（含未防护项）
 //! ```
 
+pub mod audit;
 pub mod bridge;
 pub mod erc8004;
 pub mod reputation;
@@ -58,6 +60,10 @@ use au4a_core::{AgentKeys, CoreError, CoreResult, Credits, Did, Ledger, RefusalC
 use au4a_kernel::Kernel;
 use serde_json::{json, Value};
 
+pub use audit::{
+    attack_suite, audit_report, risk_register, unresolved_risks, AttackOutcome, Risk, RiskStatus,
+    RISKS,
+};
 pub use bridge::{
     reconcile, BridgeBook, BridgeDirection, BridgeEvent, Reconciliation, BRIDGE_INCONSISTENCY_CODE,
 };
@@ -319,6 +325,31 @@ pub fn self_check() -> Vec<SelfCheck> {
         ))
     }));
 
+    checks.push(check("audit.attack_suite", || {
+        let attacks = attack_suite();
+        let blocked = attacks.iter().filter(|a| a.blocked).count();
+        if blocked != attacks.len() {
+            let failed: Vec<&str> = attacks
+                .iter()
+                .filter(|a| !a.blocked)
+                .map(|a| a.name.as_str())
+                .collect();
+            return Err(format!("有攻击未被拦住：{failed:?}"));
+        }
+        let unresolved = unresolved_risks();
+        let unprotected: Vec<&str> = unresolved
+            .iter()
+            .filter(|r| r.status == RiskStatus::Unprotected)
+            .map(|r| r.name)
+            .collect();
+        Ok(format!(
+            "{} 个攻击全部被拦住；风险 {} 条，其中未防护 {} 条（如实保留）：{unprotected:?}",
+            attacks.len(),
+            RISKS.len(),
+            unresolved.len()
+        ))
+    }));
+
     checks.push(check("chain.dual_track_conservation", || {
         let who = did_of(2);
         let mut ledger = Ledger::new();
@@ -443,7 +474,7 @@ fn adapter_ok<T>(
 pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
     kernel.emit(
         &format!("{TRACK}.scenario"),
-        format!("{TITLE} {RANGE}： RGB + Taproot + ERC-8004 + x402 + 路由 + 信誉桥接（v1.8.6）"),
+        format!("{TITLE} {RANGE}：四条轨 + 路由 + 信誉 + 安全审计（v1.8.10，确定性测试网）"),
     );
 
     let alice_keys = agent(81);
@@ -774,6 +805,18 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         ),
     );
 
+    // 安全审计（v1.8.10）：风险登记表 + 真跑一遍攻击。
+    let audit = audit_report();
+    kernel.emit(
+        "chain.audit",
+        format!(
+            "安全审计：{} 条风险（未防护 {} 条）、{} 个攻击全部被拦住",
+            audit["risks"].as_array().map(Vec::len).unwrap_or(0),
+            audit["unresolved_count"],
+            audit["attacks"].as_array().map(Vec::len).unwrap_or(0)
+        ),
+    );
+
     // 双轨对账（fail-closed）：本地托管 == 链上表示 == RGB 流通量 == Taproot 锚定总量。
     let report = book.require_consistent(kernel.ledger())?;
     rgb.contract()?.check_supply_conservation()?;
@@ -791,7 +834,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "scenario": "v1.8.6 四条轨 + 结算路由 + 跨链信誉桥接（确定性测试网）",
+        "scenario": "v1.8.10 四条轨 + 结算路由 + 信誉桥接 + 安全审计（确定性测试网）",
         "agents": [alice.as_str(), bob.as_str()],
         "bridge": {
             "out": bridged,
@@ -860,6 +903,7 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "transfer_refusal_code": transfer_refusal.code.as_str(),
             "bridge": reputation_bridge.to_json(),
         },
+        "audit": audit,
         "refusals": [
             { "op": early_refusal.op, "code": early_refusal.code.as_str(), "detail": early_refusal.detail },
             { "op": refusal.op, "code": refusal.code.as_str(), "detail": refusal.detail },

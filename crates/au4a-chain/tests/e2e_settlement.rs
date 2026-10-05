@@ -33,6 +33,7 @@ fn the_scenario_contract_has_every_section() {
         "x402",
         "routing",
         "reputation",
+        "audit",
         "refusals",
         "testnet",
         "grade",
@@ -120,6 +121,24 @@ fn the_pinned_numbers_of_the_end_to_end_flow_hold() {
     // 双轨对账：托管 == 链上表示 == 400。
     assert_eq!(value["bridge"]["escrowed"], json!(400));
     assert_eq!(value["bridge"]["chain_supply"], json!(400));
+    // 安全审计：风险如实登记（含未防护项），攻击全部被拦住。
+    assert_eq!(value["audit"]["all_attacks_blocked"], json!(true));
+    assert_eq!(value["audit"]["grade"], json!("cpu-proto"));
+    assert!(
+        value["audit"]["risks"].as_array().map(Vec::len).unwrap_or(0) >= 8,
+        "风险登记表过短"
+    );
+    assert!(
+        value["audit"]["unresolved_count"].as_u64().unwrap_or(0) >= 3,
+        "未防护/部分防护的风险必须如实保留"
+    );
+    assert!(
+        value["audit"]["attacks"]
+            .as_array()
+            .map(|a| a.iter().all(|x| x["blocked"] == json!(true)))
+            .unwrap_or(false),
+        "攻击用例必须全部被拦住"
+    );
 }
 
 #[test]
