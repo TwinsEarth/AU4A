@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.3.0（2026-10-05）
+
+**冻结基元四项 P1 修复 + 4 个回归测试。** 这是 P1-1（`au4a-core` 九个文件逐行审查）的落地批次。
+
+### 修复
+
+| # | 缺陷 | 文件 | 修法 |
+|---|---|---|---|
+| ① | **`MsgKind` 的 serde 绕过校验**：`#[serde(transparent)]` + `derive(Deserialize)` 让 `"UPPER!!"` 直接成为合法 kind。而 `kind` 是**路由键**（`classify_kind`、安全轨道 schema 映射），脏值会绕开路由假设 | `au4a-core/src/msg.rs` | `#[serde(try_from = "String", into = "String")]` + `TryFrom`（复用 `new`）→ 所有 serde 入口都过校验；线上形状仍是字符串。**这是 v2.2.0 修掉 `Did`/`Refusal` 后，在同一个文件里发现的第三例** |
+| ② | **`slash()` 静默部分执行**：超出锁定余额时钳制并返回 `Ok(())`，调用方看不到"要求罚 999、实际只罚 20" | `au4a-core/src/ledger.rs` | 改为返回**实际销毁量** `CoreResult<Credits>`；钳制语义保留（刻意的），但真实数量不再被吞掉。10 个调用点（safety/economy/negotiate/council）源码兼容 |
+| ③ | **`checked_sub` 可产出负值**，与类型注释「永远非负」矛盾 | `au4a-core/src/ledger.rs` | **不改旧语义**（全仓 30 处调用中有若干合法依赖负差值：规模轨道 `step_gain`、学习轨道 `revenue_lift`、度量 diff）；新增 `checked_sub_nonneg`（负结果返回 `NegativeAmount`）给金额路径，并把类型注释改成说真话的版本 |
+| ④ | **守恒破坏被误报为 `Overflow`** | `au4a-core/src/error.rs`、`ledger.rs` | 新增 `CoreError::ConservationViolated`；`check_conservation` 改用它。**新增变体是接口变更**：4 处穷举 match 同步适配（core/error 的 Display、safety/schema 的拒绝码、kernel/errors 的 `code()`、kernel/autonomy 的 `classify_error`——后者归类为 `ResourceExhausted`，因为内部状态不一致不是对端行为，不能因此隔离对方） |
+
+### 回归测试（4 个新增）
+
+- `msg::tests::unvalidated_kind_is_refused_by_serde` —— 4 种非法 kind 经 serde 全被拒；合法 kind 往返且线上形状仍是字符串；**信封里的 kind 同样受校验**；
+- `ledger::tests::slash_reports_the_actual_amount_destroyed` —— `slash(999)` 在锁定 20 时返回 `Credits(20)`；罚光后再罚返回 0；
+- `ledger::tests::checked_sub_is_signed_for_deltas_but_nonneg_for_money` —— 同时钉住两种减法的语义；
+- `ledger::tests::broken_conservation_reports_its_own_error_not_overflow` —— 制造真实守恒破坏，断言专属错误码且不再是 `Overflow`。
+
+### 证据
+
+- `cargo test -p au4a-core` → **45 passed / 0 failed**（v2.2.0 时 41，本版 +4）
+- `cargo test --workspace --locked` → **exit 0**（`slash` 签名变更 + 枚举新增变体，零破坏）
+- `cargo fmt --all --check` → exit 0
+
+### 系统性结论（P1-1 九文件审查的产出）
+
+**「`derive(Deserialize)` 绕过构造函数」是这一层的模式性缺陷**，已在三个类型上确认：
+`Did`（v2.2.0 修）、`Refusal`（v2.2.0 修）、`MsgKind`（本版修）。
+凡是 `new()` 里做校验的新类型，都必须走 `try_from` —— 否则类型成立、校验不成立。
+
+---
+
 ## v2.2.0（2026-10-05）
 
 **冻结基元的两处「serde 绕过构造校验」修复（P1×2）+ 4 个回归测试。**

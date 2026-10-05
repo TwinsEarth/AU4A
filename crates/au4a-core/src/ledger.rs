@@ -17,7 +17,13 @@ use serde::{Deserialize, Serialize};
 use crate::did::Did;
 use crate::error::{CoreError, CoreResult};
 
-/// 微积分金额。永远非负，运算检查溢出。
+/// 微积分金额。**金额语义上非负**，运算检查溢出。
+///
+/// v2.3.0 澄清（原注释写「永远非负」，与代码不符）：
+/// * [`Credits::new`] 拒绝负数；负数余额在账本里不可能出现；
+/// * 但 [`Credits::checked_sub`] 是**带溢出检查的减法**，用于增量/差值时会合法地产生负值
+///   （规模轨道的 `step_gain`、学习轨道的 `revenue_lift` 都依赖这个语义）；
+/// * **金额路径**（转账/锁定/解押/罚没）请用 [`Credits::checked_sub_nonneg`]，它拒绝负结果。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Credits(pub i64);
 
@@ -48,6 +54,19 @@ impl Credits {
             .checked_sub(other.0)
             .map(Credits)
             .ok_or(CoreError::Overflow)
+    }
+
+    /// v2.3.0 新增：**金额语义的减法**——结果不得为负，否则 [`CoreError::NegativeAmount`]。
+    ///
+    /// 为什么不是把 `checked_sub` 改成这样：全仓 30 处调用里有若干**依赖负差值**
+    /// （规模轨道的 `step_gain`、学习轨道的 `revenue_lift`、度量 diff），改语义会静默改变它们的行为。
+    /// 因此新增一个显式 API 给金额路径用，旧的留给"差值/增量"。
+    pub fn checked_sub_nonneg(self, other: Credits) -> CoreResult<Credits> {
+        let v = self.0.checked_sub(other.0).ok_or(CoreError::Overflow)?;
+        if v < 0 {
+            return Err(CoreError::NegativeAmount);
+        }
+        Ok(Credits(v))
     }
 
     /// 按万分比计价：`rate_bp` 是基点（1 bp = 0.01%），向下取整，整数运算。
@@ -165,7 +184,11 @@ impl Ledger {
     }
 
     /// 罚没：从锁定余额销毁。销毁量进入 `slashed`，等式仍然成立。
-    pub fn slash(&mut self, who: &Did, amount: Credits) -> CoreResult<()> {
+    ///
+    /// v2.3.0 修复（P1）：返回**实际销毁量**。此前返回 `Ok(())` 并静默钳制超出部分，
+    /// 于是"要求罚没 999、实际只有 20"对调用方不可见——政策层会以为已罚 999，账实分叉。
+    /// 钳制本身是刻意的（保留），但现在把真实数量交回调用方，可自行断言或记账。
+    pub fn slash(&mut self, who: &Did, amount: Credits) -> CoreResult<Credits> {
         if amount.0 == 0 {
             return Err(CoreError::ZeroAmount);
         }
@@ -175,9 +198,10 @@ impl Ledger {
         } else {
             amount
         };
-        self.account_mut(who).locked = acct.locked.checked_sub(take)?;
+        self.account_mut(who).locked = acct.locked.checked_sub_nonneg(take)?;
         self.slashed = self.slashed.checked_add(take)?;
-        self.check_conservation()
+        self.check_conservation()?;
+        Ok(take)
     }
 
     pub fn balance(&self, who: &Did) -> Account {
@@ -296,6 +320,49 @@ mod tests {
     }
 
     // ── v2.3.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn slash_reports_the_actual_amount_destroyed() {
+        // P1 回归：修复前 `slash` 返回 `Ok(())` 并静默钳制，调用方看不到"只罚到 20"。
+        let d = dids(1);
+        let mut l = Ledger::new();
+        l.mint(&d[0], Credits(100)).unwrap();
+        l.lock(&d[0], Credits(20)).unwrap();
+        let destroyed = l.slash(&d[0], Credits(999)).unwrap();
+        assert_eq!(
+            destroyed,
+            Credits(20),
+            "必须如实返回实际销毁量，而不是静默吞掉"
+        );
+        assert_eq!(l.slashed(), Credits(20));
+        // 首次全罚光后，再罚只能得到 0（返回 0 而不是报错，语义明确）
+        assert_eq!(l.slash(&d[0], Credits(5)).unwrap(), Credits::ZERO);
+        assert_eq!(l.slashed(), Credits(20));
+        l.check_conservation().unwrap();
+    }
+
+    #[test]
+    fn checked_sub_is_signed_for_deltas_but_nonneg_for_money() {
+        // v2.3.0：两种减法各有明确语义，不再靠注释含糊。
+        assert_eq!(Credits(10).checked_sub(Credits(20)).unwrap(), Credits(-10)); // 差值可为负
+        assert_eq!(
+            Credits(10).checked_sub_nonneg(Credits(20)),
+            Err(CoreError::NegativeAmount)
+        );
+        assert_eq!(
+            Credits(20).checked_sub_nonneg(Credits(20)).unwrap(),
+            Credits::ZERO
+        );
+        assert_eq!(
+            Credits(30).checked_sub_nonneg(Credits(20)).unwrap(),
+            Credits(10)
+        );
+        // 溢出仍然报 Overflow，与符号无关
+        assert_eq!(
+            Credits(i64::MIN).checked_sub_nonneg(Credits::ZERO),
+            Err(CoreError::NegativeAmount)
+        );
+    }
 
     #[test]
     fn broken_conservation_reports_its_own_error_not_overflow() {
