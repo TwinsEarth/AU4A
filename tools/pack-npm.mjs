@@ -28,8 +28,11 @@ const pkgVersion = arg('--as') ?? (majorLine ? `${semver.split('.').slice(0, 2).
 const out = arg('--out', path.join('_pkg', 'npm', majorLine ? `${version}-major` : version));
 
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs', 'versions.json'), 'utf8'));
+// v1 清单之外的版本（如 v2.0.x 发布线）也允许打包：此时按「独立发布」处理，
+// 元数据里的 series 字段直接写该版本，不再声称属于 v1 的 10×99 系列。
 const entry = manifest.versions.find((v) => v.version === version);
-if (!entry && !majorLine) {
+const standalone = !entry && !majorLine;
+if (standalone && !/^v\d+\.\d+\.\d+$/.test(version)) {
   console.error(`unknown version: ${version}`);
   process.exit(1);
 }
@@ -57,7 +60,7 @@ if (majorLine) tests = 1238; // 大版本线标记使用整条线的实测断言
 const meta = {
   name: '@twinsearth/au4a',
   full_name: 'AU4A — Agents-UniverseForAgent',
-  series: manifest.series,
+  series: standalone ? version : manifest.series,
   version,
   package_version: pkgVersion,
   major_line: majorLine ? `v${semver.split('.')[0]}` : undefined,

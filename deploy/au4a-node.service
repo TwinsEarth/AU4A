@@ -1,0 +1,60 @@
+# AU4A — Linux 服务器 systemd 单元（v2.0.2）
+#
+# 安装（Debian/Ubuntu/RHEL 通用）：
+#   sudo install -m 0644 deploy/au4a-node.service /etc/systemd/system/au4a-node.service
+#   sudo install -m 0755 target/release/au4a-node /usr/local/bin/au4a-node
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin au4a || true
+#   sudo systemctl daemon-reload && sudo systemctl enable --now au4a-node
+#   systemctl status au4a-node --no-pager
+#
+# 只读观察面板： curl -fsS http://127.0.0.1:8787/api/progress
+# 端口对公网暴露请自行经 Nginx/防火墙收敛（见 deploy/docker-compose.yml 末尾片段）。
+
+[Unit]
+Description=AU4A (Agents-UniverseForAgent) node — agent-autonomous runtime, read-only observer panel
+Documentation=https://github.com/TwinsEarth/AU4A/blob/master/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=au4a
+Group=au4a
+# 人类唯一入口是只读面板；Agent 侧全部在进程内自主运行
+ExecStart=/usr/local/bin/au4a-node run --agents 8 --observe 127.0.0.1:8787
+# 部署前自检：10 条轨道自检必须全绿，否则不上线
+ExecStartPre=/usr/local/bin/au4a-node verify
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+
+# ── 加固（与容器版的 read_only + cap_drop 等价）────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+# AU4A 运行期不写盘（零文件 I/O 是设计约束），所以整个文件系统可以只读
+ReadOnlyPaths=/ /usr /etc
+# 需要写入的只有 tmpfs
+ReadWritePaths=/tmp
+
+# 资源上限（按机器规模调整）
+LimitNOFILE=65536
+MemoryMax=1G
+CPUQuota=200%
+
+# 日志：journald 统一收口
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=au4a-node
+
+[Install]
+WantedBy=multi-user.target
