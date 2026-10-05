@@ -205,6 +205,19 @@ impl PermissionReport {
     }
 }
 
+/// v2.4.0 修复（P1）：把「划分完备性」从**文档承诺**变成**构造期强制**。
+///
+/// 模块文档写着"任何一次 `explain` 都必须满足 `allowed ∪ denied == ALL` 且两两不交"，
+/// 但修复前没有任何地方在构造路径上检查它——某个分支漏推一个能力，报告会静默变成不完备，
+/// 只有 `to_json()` 里的 `total_partition` 字段会变成 `false`，而没有人会因此失败。
+fn finished(report: PermissionReport) -> CoreResult<PermissionReport> {
+    if report.is_total_partition() {
+        Ok(report)
+    } else {
+        Err(CoreError::Encoding)
+    }
+}
+
 /// 解释「这个 Agent 在当前内核状态下能做什么」。
 ///
 /// `vote_in_council` 用一个在 `kernel.now()` 那一刻抽签出的默认委员会判定；
@@ -247,7 +260,7 @@ pub fn explain_with_council(
             limits,
             authorities,
         };
-        return Ok(report);
+        return finished(report);
     }
 
     let card = match card {
@@ -358,7 +371,7 @@ pub fn explain_with_council(
     authorities.sort();
     authorities.dedup();
 
-    Ok(PermissionReport {
+    finished(PermissionReport {
         did: did.as_str().to_string(),
         registered,
         allowed,
@@ -539,6 +552,27 @@ mod tests {
         let denial = report2.denial_for(Capability::WithdrawStake).unwrap();
         assert_eq!(denial.code, RefusalCode::PolicyDenied);
         assert!(!denial.is_misconduct());
+    }
+
+    #[test]
+    fn an_incomplete_partition_is_refused_at_construction() {
+        // P1 回归：修复前"划分完备性"只是文档承诺，构造路径不检查。
+        let incomplete = PermissionReport {
+            did: keys(90).did().as_str().to_string(),
+            registered: true,
+            allowed: vec![Capability::PublishCard],
+            denied: Vec::new(),
+            limits: BTreeMap::new(),
+            authorities: Vec::new(),
+        };
+        assert!(!incomplete.is_total_partition());
+        assert_eq!(finished(incomplete), Err(CoreError::Encoding));
+
+        // 反向：真实 explain 的结果一定通过同一个闸门
+        let k = kernel_with(1, KernelConfig::default());
+        let ok = explain(&k, &keys(60).did()).unwrap();
+        assert!(ok.is_total_partition());
+        assert!(finished(ok).is_ok());
     }
 
     #[test]
