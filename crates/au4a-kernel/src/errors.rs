@@ -90,6 +90,7 @@ fn core_code(e: &CoreError) -> &'static str {
         CoreError::FrameTruncated => "frame_truncated",
         CoreError::NotSealed => "not_sealed",
         CoreError::InvalidVersion => "invalid_version",
+        CoreError::ConservationViolated => "conservation_violated",
     }
 }
 

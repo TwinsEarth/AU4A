@@ -202,10 +202,13 @@ impl Ledger {
     }
 
     /// 守恒断言：`total + slashed == minted`。
+    ///
+    /// v2.3.0 修复（P1）：不成立时返回 [`CoreError::ConservationViolated`]，
+    /// 不再误报为 `Overflow`——后者会把日志与告警引向"算术溢出"这个错误方向。
     pub fn check_conservation(&self) -> CoreResult<()> {
         let expected = self.minted.checked_sub(self.slashed)?;
         if self.total()? != expected {
-            return Err(CoreError::Overflow);
+            return Err(CoreError::ConservationViolated);
         }
         Ok(())
     }
@@ -290,5 +293,31 @@ mod tests {
         assert_eq!(Credits(1_000).scaled_bp(250).unwrap(), Credits(25));
         assert_eq!(Credits(999).scaled_bp(1).unwrap(), Credits(0));
         assert_eq!(Credits(1_000).scaled_bp(-1), Err(CoreError::NegativeAmount));
+    }
+
+    // ── v2.3.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn broken_conservation_reports_its_own_error_not_overflow() {
+        // P1 回归：修复前守恒被破坏会报 `Overflow`，把日志/告警引向"算术溢出"这个错误方向。
+        let d = dids(1);
+        let mut l = Ledger::new();
+        l.mint(&d[0], Credits(100)).unwrap();
+        l.check_conservation().unwrap();
+        // 直接破坏内部状态（同一模块的测试可以访问私有字段），制造真实的守恒破坏
+        l.minted = Credits(999);
+        assert_eq!(l.check_conservation(), Err(CoreError::ConservationViolated));
+        assert_ne!(
+            l.check_conservation(),
+            Err(CoreError::Overflow),
+            "守恒破坏不得再报成 Overflow"
+        );
+        assert_eq!(
+            CoreError::ConservationViolated.to_string(),
+            "conservation violated"
+        );
+        // 修回后恢复一致
+        l.minted = Credits(100);
+        l.check_conservation().unwrap();
     }
 }

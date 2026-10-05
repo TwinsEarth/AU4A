@@ -38,6 +38,11 @@ pub enum CoreError {
     NotSealed,
     /// 版本号不合法。
     InvalidVersion,
+    /// 守恒不变式被破坏：`Σavailable + Σlocked + slashed == minted` 不成立。
+    ///
+    /// v2.3.0 新增：这**不是溢出**（v2.3.0 之前 `check_conservation` 误报 `Overflow`），
+    /// 也不是金额问题，而是账本内部状态不一致——必须能被独立识别与告警。
+    ConservationViolated,
 }
 
 impl fmt::Display for CoreError {
@@ -59,6 +64,7 @@ impl fmt::Display for CoreError {
             CoreError::FrameTruncated => "frame truncated",
             CoreError::NotSealed => "envelope not sealed",
             CoreError::InvalidVersion => "invalid version",
+            CoreError::ConservationViolated => "conservation violated",
         };
         f.write_str(s)
     }

@@ -150,6 +150,7 @@ pub fn core_error_kind_name(err: &CoreError) -> &'static str {
         CoreError::FrameTruncated => "frame_truncated",
         CoreError::NotSealed => "not_sealed",
         CoreError::InvalidVersion => "invalid_version",
+        CoreError::ConservationViolated => "conservation_violated",
     }
 }
 

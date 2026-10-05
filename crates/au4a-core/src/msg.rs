@@ -18,8 +18,28 @@ pub const MAX_FRAME: usize = 1024 * 1024;
 /// 消息类型名。刻意做成受校验的字符串而不是封闭枚举：
 /// 后续轨道（协商、安全、治理）可以引入新的消息类型而不必修改冻结基元。
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(try_from = "String", into = "String")]
 pub struct MsgKind(String);
+
+/// v2.3.0 修复（P1）：**serde 路径必须经过 `MsgKind::new()`**。
+///
+/// 这是 v2.2.0 修掉 `Did` / `Refusal` 的同类缺陷后，在**同一个文件里**发现的第三例：
+/// `#[serde(transparent)]` + `derive(Deserialize)` 让 `"UPPER!!"` 这样的串直接变成合法 `MsgKind`。
+/// 而 `kind` 是**路由键**（`classify_kind`、安全轨道的 schema 映射），脏值会绕开路由假设。
+/// 线上形状不变（仍是一个字符串）。
+impl TryFrom<String> for MsgKind {
+    type Error = CoreError;
+
+    fn try_from(s: String) -> CoreResult<Self> {
+        MsgKind::new(&s)
+    }
+}
+
+impl From<MsgKind> for String {
+    fn from(k: MsgKind) -> String {
+        k.0
+    }
+}
 
 impl MsgKind {
     pub fn new(s: &str) -> CoreResult<Self> {
@@ -280,6 +300,33 @@ mod tests {
         assert!(MsgKind::new("Upper").is_err());
         assert!(MsgKind::new("has space").is_err());
         assert!(MsgKind::new(&"a".repeat(65)).is_err());
+    }
+
+    // ── v2.3.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn unvalidated_kind_is_refused_by_serde() {
+        // P1 回归：修复前 `#[serde(transparent)]` 让任意字符串直接变成合法 MsgKind。
+        for bad in ["\"Upper\"", "\"has space\"", "\"\"", "\"UPPER!!\""] {
+            assert!(
+                serde_json::from_str::<MsgKind>(bad).is_err(),
+                "serde 必须拒绝非法 kind: {bad}"
+            );
+        }
+        // 合法 kind 往返，且线上形状仍是**字符串**（协议未变）
+        let k = MsgKind::new("negotiate.propose").unwrap();
+        let json = serde_json::to_string(&k).unwrap();
+        assert_eq!(json, "\"negotiate.propose\"");
+        assert_eq!(serde_json::from_str::<MsgKind>(&json).unwrap(), k);
+        // 信封里的 kind 同样受校验（路由键不能被脏值污染）
+        let a = agent(11);
+        let env = Envelope::new(a.did(), None, kinds::AGENT_CARD, 1, None, json!({})).unwrap();
+        let mut v = serde_json::to_value(&env).unwrap();
+        v["kind"] = json!("UPPER!!");
+        assert!(
+            serde_json::from_value::<Envelope>(v).is_err(),
+            "信封里的非法 kind 必须被拒"
+        );
     }
 
     #[test]

@@ -535,6 +535,9 @@ pub fn classify_error(err: &CoreError) -> RefusalCode {
             RefusalCode::Malformed
         }
         CoreError::InvalidVersion => RefusalCode::Unsupported,
+        // v2.3.0：守恒被破坏是内部状态不一致，属于"不可重试的实现问题"，按 ResourceExhausted 归类
+        // （它不是对端行为，因此不能因为对端触发而隔离对方）。
+        CoreError::ConservationViolated => RefusalCode::ResourceExhausted,
     }
 }
 
