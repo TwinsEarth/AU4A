@@ -180,6 +180,11 @@ pub fn next_state(state: AgentState, event: LifecycleEvent) -> Result<AgentState
                 Ok(S::Quarantined)
             } else {
                 match state {
+                    // v2.4.0 修复（P1）：未准入的 Agent 不得因一次**竞争性**拒绝而离开 Provisional。
+                    // 修复前 `_ => Ok(S::Degraded)` 把 Provisional 也降级，于是
+                    // `Provisional --Refused(竞争)--> Degraded --Recovered--> Active`
+                    // 可以**绕过 `Admitted` 准入事件**直接进入 Active。
+                    S::Provisional => Ok(S::Provisional),
                     S::Quarantined => Ok(S::Quarantined), // 已被隔离：竞争失败不改变状态
                     S::Degraded => Ok(S::Degraded),
                     _ => Ok(S::Degraded),
@@ -529,6 +534,27 @@ mod tests {
         // 声明状态与历史不符 → 拒绝
         let lying = json.replace("\"state\":\"busy\"", "\"state\":\"active\"");
         assert!(serde_json::from_str::<Lifecycle>(&lying).is_err());
+    }
+
+    #[test]
+    fn an_unadmitted_agent_cannot_reach_active_by_a_competitive_refusal() {
+        // P1 回归：修复前 `Provisional --Refused(竞争)--> Degraded --Recovered--> Active`
+        // 可以绕过 `Admitted` 准入事件直接进入 Active。
+        let did = keys(33).did();
+        let mut life = Lifecycle::new(&did);
+        life.apply(LifecycleEvent::Refused(RefusalCode::Timeout), 1)
+            .unwrap();
+        assert_eq!(
+            life.state(),
+            AgentState::Provisional,
+            "竞争性拒绝不得让未准入的 Agent 降级"
+        );
+        // 因此恢复事件也无法把它直接送进 Active
+        assert!(life.apply(LifecycleEvent::Recovered, 2).is_err());
+        assert_eq!(life.state(), AgentState::Provisional);
+        // 正常准入路径不受影响
+        life.apply(LifecycleEvent::Admitted, 3).unwrap();
+        assert_eq!(life.state(), AgentState::Active);
     }
 
     #[test]
