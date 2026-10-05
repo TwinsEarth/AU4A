@@ -12,6 +12,7 @@ members = [
     "crates/au4a-council",
     "crates/au4a-chain",
     "crates/au4a-scale",
+    "crates/au4a-node",
 ]
 
 # The series version (v1.0.1 → v1.9.9) lives in ./VERSION and in the git tag.
@@ -22,7 +23,7 @@ members = [
 version = "1.0.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/TwinsEarth/agent-universeForAngent"
+repository = "https://github.com/TwinsEarth/AU4A"
 authors = ["TwinsEarth"]
 rust-version = "1.88"
 
