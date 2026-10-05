@@ -2,8 +2,8 @@
 
 > **一切面向智能体开发！人类用户兼任观察者，只展示进度、结果与收益。**
 >
-> 仓库：<https://github.com/TwinsEarth/AU4A> ｜
-> 全称：**Agents-UniverseForAgent**（简称 **AU4A**，仓库原名 `agent-universeForAngent`）
+> 仓库：<https://github.com/TwinsEarth/AU4A>
+> ｜全称：**Agents-UniverseForAgent**（简称 **AU4A**，仓库原名 `agent-universeForAngent`）
 
 <p align="left">
   <a href="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml/badge.svg?branch=master"></a>
