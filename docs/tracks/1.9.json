@@ -247,18 +247,19 @@
         "pub fn paper_json() -> CoreResult<Value>"
       ],
       "acceptance": [
-        "每条结论都带 evidence: verified | cpu-proto",
-        "结论与实验数据一致（论文里的数值由代码复算，测试断言一致）",
-        "局限明确写出：无真实分布式压测、参数为模型标定而非外部系统实测"
+        "6 条结论全部带合法证据等级（verified 4 / cpu-proto 2），摘要计数与结论数一致",
+        "结论与实验数据一致（顶点/解析值/开销占比/拟合恢复值由测试现场重算并比对）",
+        "局限 5 条、未做 3 项，且明确写出无真实分布式压测、参数为本模型标定",
+        "论文稿可规范化（无浮点）"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-scale",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现：v1.9.8 全绿后开工"
+        "tests_passed": 48,
+        "tests_total": 48,
+        "grade": "verified",
+        "notes": "2026-10-04 本机 Windows 实测，本 crate 0 warning；日志 _forangent\\logs\\1.9-v1.9.9.log；lib 42 + 集成 6 = 48。论文数值部分为 verified（本机复算），10k 节点推论为 cpu-proto（非真实分布式压测）"
       },
-      "status": "planned"
+      "status": "done"
     }
   ]
 }
