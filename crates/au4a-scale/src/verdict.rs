@@ -49,7 +49,33 @@ pub enum VerdictReason {
     RangeTooNarrow,
 }
 
+impl VerdictKind {
+    pub const ALL: [VerdictKind; 3] = [
+        VerdictKind::VertexFound,
+        VerdictKind::MonotonicNoVertex,
+        VerdictKind::InsufficientRange,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            VerdictKind::VertexFound => "vertex_found",
+            VerdictKind::MonotonicNoVertex => "monotonic_no_vertex",
+            VerdictKind::InsufficientRange => "insufficient_range",
+        }
+    }
+}
+
 impl VerdictReason {
+    pub const ALL: [VerdictReason; 7] = [
+        VerdictReason::AggregatePeaked,
+        VerdictReason::CompletionPeaked,
+        VerdictReason::OverheadWorsened,
+        VerdictReason::MarginalTurnedNegative,
+        VerdictReason::NetTurnedNegative,
+        VerdictReason::NoInteriorPeak,
+        VerdictReason::RangeTooNarrow,
+    ];
+
     pub fn as_str(self) -> &'static str {
         match self {
             VerdictReason::AggregatePeaked => "aggregate_peaked",

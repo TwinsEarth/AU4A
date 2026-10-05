@@ -1,4 +1,4 @@
-//! v1.4.9 示例：经济自主九步走（可运行、确定性、无网络 / 无文件 / 无墙钟）。
+//! v1.4.9 示例：经济自主八步走（可运行、确定性、无网络 / 无文件 / 无墙钟）。
 //!
 //! 运行：
 //!
@@ -8,8 +8,8 @@
 //! ```
 //!
 //! 每一步都直接调用本 crate 的 public API 并打印**真实数字**（不是说明文字），
-//! 最后跑一遍 `scenario` 输出完整 JSON 摘要，并用只读收益面板（v1.4.10）收尾。
-//! 同一个种子永远给出同样的输出。
+//! 最后跑一遍 `scenario` 输出完整 JSON 摘要。同一个种子永远给出同样的输出。
+//! （v1.4.10 会在这里追加「只读收益面板」一步。）
 
 use au4a_core::{AgentKeys, Credits, Did, EvidenceGrade, Ledger};
 use au4a_economy::arbitration::{ArbitrationTerms, Court};
@@ -46,7 +46,7 @@ fn main() -> au4a_core::CoreResult<()> {
     let left = spend(&mut ledger, &alice, &bob, Credits(300), &policy)?;
     let locked = balances.autostake(&mut ledger, &alice, Credits(1_000))?;
     println!(
-        "[1/9 v1.4.1 余额] 支出 600 判定={}（越单笔上限）；支出 300 成功，剩余额度 {left}，自主质押 {locked}",
+        "[1/8 v1.4.1 余额] 支出 600 判定={}（越单笔上限）；支出 300 成功，剩余额度 {left}，自主质押 {locked}",
         verdict.as_str()
     );
 
@@ -63,7 +63,7 @@ fn main() -> au4a_core::CoreResult<()> {
         &PriceKnobs::DEFAULT,
     )?;
     println!(
-        "[2/9 v1.4.2 定价] 空闲={} → 高信誉+稀缺+半载={}（乘数 {}bp：折扣 {} / 稀缺 +{} / 负载 +{}）",
+        "[2/8 v1.4.2 定价] 空闲={} → 高信誉+稀缺+半载={}（乘数 {}bp：折扣 {} / 稀缺 +{} / 负载 +{}）",
         idle.unit_price,
         busy.unit_price,
         busy.multiplier_bp,
@@ -85,7 +85,7 @@ fn main() -> au4a_core::CoreResult<()> {
     let tight = route(&ask(400, 12), &table)?;
     let ok = route(&ask(400, 30), &table)?;
     println!(
-        "[3/9 v1.4.3 兑换] 150→{}（{}）；400/剩余12→{}（{}）；400/剩余30→{} 走 {} 费用 {} 到账 {}，链上已执行={}",
+        "[3/8 v1.4.3 兑换] 150→{}（{}）；400/剩余12→{}（{}）；400/剩余30→{} 走 {} 费用 {} 到账 {}，链上已执行={}",
         small.action.as_str(),
         small.reason.as_str(),
         tight.action.as_str(),
@@ -106,7 +106,7 @@ fn main() -> au4a_core::CoreResult<()> {
     let released = stakes.release_matured(&mut ledger, &alice, unbond.release_at)?;
     stakes.assert_consistent(&ledger)?;
     println!(
-        "[4/9 v1.4.4 质押] 解质押 40（{} → 到点 {}）：提前释放 {early}、到点释放 {released}，质押簿与账本一致",
+        "[4/8 v1.4.4 质押] 解质押 40（{} → 到点 {}）：提前释放 {early}、到点释放 {released}，质押簿与账本一致",
         unbond.requested_at, unbond.release_at
     );
 
@@ -123,7 +123,7 @@ fn main() -> au4a_core::CoreResult<()> {
     let ruling = court.rule(&mut case_ledger, &case.id, &arbi_terms, 2)?;
     let appeal = court.appeal(&case.id, &respondent, "new evidence", &arbi_terms, 3)?;
     println!(
-        "[5/9 v1.4.5 仲裁] 索赔 1000000、锁定 50 → 罚没 {}（上限来源 {}，支持票权 {}bp）；败方申诉第 {} 轮",
+        "[5/8 v1.4.5 仲裁] 索赔 1000000、锁定 50 → 罚没 {}（上限来源 {}，支持票权 {}bp）；败方申诉第 {} 轮",
         ruling.slashed,
         ruling.cap.as_str(),
         ruling.uphold_bp,
@@ -158,7 +158,7 @@ fn main() -> au4a_core::CoreResult<()> {
         },
     ];
     println!(
-        "[6/9 v1.4.6 结算] 10 按 3333/3333/3334 拆成 {:?}；分成表 {} 条；人类操作者决策权={:?}、已收 {}",
+        "[6/8 v1.4.6 结算] 10 按 3333/3333/3334 拆成 {:?}；分成表 {} 条；人类操作者决策权={:?}、已收 {}",
         parts.iter().map(|c| c.get()).collect::<Vec<_>>(),
         shares.len(),
         owner.decision_rights(),
@@ -169,7 +169,7 @@ fn main() -> au4a_core::CoreResult<()> {
     ledger.check_conservation()?;
     case_ledger.check_conservation()?;
     println!(
-        "[7/9 v1.4.7 不变量] 演示账本 Σ可用={} 罚没={} 发行={}；仲裁账本罚没={}；两本账均守恒",
+        "[7/8 v1.4.7 不变量] 演示账本 Σ可用={} 罚没={} 发行={}；仲裁账本罚没={}；两本账均守恒",
         ledger.total()?,
         ledger.slashed(),
         ledger.minted(),
@@ -180,7 +180,7 @@ fn main() -> au4a_core::CoreResult<()> {
     let checks = au4a_economy::self_check();
     let passed = checks.iter().filter(|c| c.passed).count();
     println!(
-        "[8/9 v1.4.8 自检] {} 项自检 {passed} 项通过（{}）",
+        "[8/8 v1.4.8 自检] {} 项自检 {passed} 项通过（{}）",
         checks.len(),
         au4a_economy::TITLE
     );
@@ -190,30 +190,6 @@ fn main() -> au4a_core::CoreResult<()> {
 
     let mut kernel = Kernel::new(KernelConfig::default());
     let summary = au4a_economy::scenario(&mut kernel)?;
-
-    // ── 第 9 步（v1.4.10）监控：只读收益面板（节点 /api/revenue 的超集） ──────────
-    let panel = au4a_economy::monitor::revenue_panel(&kernel, &revenue, &summary)?;
-    println!(
-        "[9/9 v1.4.10 监控] 只读面板：账户 {} 个、注册 Agent {} 个、发行 {}、罚没 {}、收益 {}、守恒={}",
-        panel["ledger"]["account_count"],
-        panel["agents"],
-        panel["ledger"]["minted"],
-        panel["ledger"]["slashed"],
-        panel["total_earned"],
-        panel["ledger"]["conservation_ok"]
-    );
-    println!(
-        "        账本：Σ可用={} Σ锁定={} 罚没={} ⇒ 发行={}（read_only={}）",
-        panel["ledger"]["available"],
-        panel["ledger"]["locked"],
-        panel["ledger"]["slashed"],
-        panel["ledger"]["minted"],
-        panel["read_only"]
-    );
-    for check in au4a_economy::monitor::monitor_checks(&kernel, &revenue) {
-        println!("        - {:<28} {}", check.name, check.detail);
-    }
-
     println!("\n场景摘要 JSON：");
     println!("{}", serde_json::to_string_pretty(&summary).unwrap_or_default());
 

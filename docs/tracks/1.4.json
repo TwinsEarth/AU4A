@@ -249,6 +249,33 @@
         "notes": "文档版不新增代码路径；测试结果沿用 v1.4.7 全绿运行（日志 _forangent\\logs\\1.4-v1.4.7.log）"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.9",
+      "title": "示例",
+      "goal": "可运行、确定性的「经济自主八步走」示例：用真实数字走完余额/定价/兑换/质押/仲裁/结算/不变量/自检，并打印场景 JSON。",
+      "deliverables": [
+        "examples/economy_tour.rs: 8 步示例，直接调用 public API 打印真实数字，最后输出 scenario JSON",
+        "docs/tracks/1.4.md: 示例原始输出摘录（来自本机运行日志）"
+      ],
+      "interfaces": [
+        "cargo run -p au4a-economy --example economy_tour",
+        "示例 main 返回 au4a_core::CoreResult<()>（不用 unwrap/panic）"
+      ],
+      "acceptance": [
+        "示例 exit code 0，输出 8 行真实数字且与文档摘录一致",
+        "每步调用真实 API：check_spend/spend/autostake、quote、route、adopt/request_unstake/release_matured、Court::open/vote/rule/appeal、split_weights/earned、check_conservation、self_check、scenario",
+        "示例不读文件/不开网络/不读墙钟，同种子同输出",
+        "cargo test -p au4a-economy 仍 81 passed / 0 failed、0 warning（示例参与编译检查）"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy; cargo run -p au4a-economy --example economy_tour",
+        "tests_passed": 81,
+        "tests_total": 81,
+        "grade": "verified",
+        "notes": "示例本机实测 exit 0，输出见 _forangent\\logs\\1.4-v1.4.9-example.log；测试日志 _forangent\\logs\\1.4-v1.4.9.log"
+      },
+      "status": "done"
     }
   ]
 }

@@ -255,17 +255,25 @@
       "version": "v1.2.9",
       "title": "文档",
       "goal": "docs/tracks/1.2.md 与 1.2.json 覆盖 10 个小版本的目标/交付物/接口/验收/证据/状态",
-      "deliverables": ["docs/tracks/1.2.md", "docs/tracks/1.2.json"],
+      "deliverables": [
+        "docs/tracks/1.2.md: 轨道总览（能力→代码→证据等级、验证命令、设计决定、已知边界）+ 10 版逐版记录",
+        "docs/tracks/1.2.json: 10 版机器可读元数据（goal/deliverables/interfaces/acceptance/evidence/status）"
+      ],
       "interfaces": ["（文档，无新公共 API）"],
-      "acceptance": ["10 个小版本恰好一节，顺序与 brief 一致", "每条证据都是真实运行结果"],
+      "acceptance": [
+        "10 个小版本恰好一节，顺序与 brief 一致",
+        "每条证据都是真实运行结果（命令 + 通过数 + 日志路径）",
+        "总览表逐条标注真实/原型，并列出已知边界（内存传输、非链上锚定、仲裁员无质押抽签）",
+        "错误映射表说明 CoreError 冻结枚举下的语义映射"
+      ],
       "evidence": {
         "test_command": "cargo test -p au4a-negotiate",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "未开始"
+        "tests_passed": 101,
+        "tests_total": 101,
+        "grade": "cpu-proto",
+        "notes": "文档版：本版不改代码，重跑同一套测试确认 exit=0、101 passed / 0 failed / 0 warning（日志 1.2-v1.2.9.log）。docs/tracks/1.2.md 新增轨道总览（能力→代码→证据等级表、可复制验证命令、5 条设计决定、5 条已知边界），并补齐 10 个小版本的逐版记录。"
       },
-      "status": "pending"
+      "status": "done"
     },
     {
       "version": "v1.2.10",

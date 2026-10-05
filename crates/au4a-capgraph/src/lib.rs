@@ -49,8 +49,8 @@ pub use index::{
 };
 pub use perf::{rank_top_k, QueryCache, QueryCacheStats, QueryPerf};
 pub use planner::{
-    plan, NoPath, NoPathReason, Pipeline, PipelineNode, PipelineRequest, PipelineStep, PlanCost,
-    PlanOutcome, SearchStats,
+    plan, verify_pipeline, NoPath, NoPathReason, Pipeline, PipelineNode, PipelineRequest,
+    PipelineStep, PlanCost, PlanOutcome, SearchStats,
 };
 pub use version::{VersionHistory, VersionRecord, HISTORY_CAPACITY};
 
@@ -887,6 +887,76 @@ fn checks_v118() -> Vec<SelfCheck> {
     checks
 }
 
+/// v1.1.9：独立校验器（收到方案的一方必须能自己验），以及场景输出的逐版覆盖。
+fn checks_v119() -> Vec<SelfCheck> {
+    let mut checks = Vec::new();
+    checks.push(verdict("1.1.9.plan_is_independently_verifiable", || {
+        let mut graph = demo_graph()?;
+        let request = demo_request()?;
+        let outcome = graph.plan(&request, &PlanCost::default(), 0);
+        let pipeline = outcome.pipeline().ok_or("应有可行路径")?.clone();
+        verify_pipeline(&graph, &request, &PlanCost::default(), &pipeline)
+            .map_err(|err| format!("校验器拒绝了合法方案：{err}"))?;
+        Ok("断言：规划结果能被 verify_pipeline 逐项验通（步数/格式链/度量/代价/约束）".into())
+    }));
+    checks.push(verdict("1.1.9.verifier_rejects_tampered_plan", || {
+        let mut graph = demo_graph()?;
+        let request = demo_request()?;
+        let pipeline = graph
+            .plan(&request, &PlanCost::default(), 0)
+            .pipeline()
+            .ok_or("应有可行路径")?
+            .clone();
+        let mut wrong_price = pipeline.clone();
+        wrong_price.nodes[0].price_per_unit = Credits(1);
+        let mut wrong_format = pipeline.clone();
+        wrong_format.nodes[1].input_format = FormatId::new("text/html").map_err(show)?;
+        let mut short = pipeline.clone();
+        short.nodes.pop();
+        let mut forged = pipeline.clone();
+        forged.nodes[0].did = AgentKeys::from_seed(&[250; 32]).did();
+        let cases = [
+            ("改价", &wrong_price),
+            ("改格式", &wrong_format),
+            ("少一步", &short),
+            ("换 DID", &forged),
+        ];
+        for (name, candidate) in cases {
+            if verify_pipeline(&graph, &request, &PlanCost::default(), candidate).is_ok() {
+                return Err(format!("校验器接受了被篡改的方案：{name}"));
+            }
+        }
+        Ok("断言：改价 / 改格式 / 少一步 / 换 DID 四种篡改方案全部被校验器拒绝".into())
+    }));
+    checks.push(verdict("1.1.9.scenario_covers_every_version", || {
+        let mut kernel = au4a_kernel::Kernel::new(au4a_kernel::KernelConfig::default());
+        let value = scenario(&mut kernel).map_err(show)?;
+        let required = [
+            ("/graph/owner", "v1.1.1-2 图投影"),
+            ("/announcements_sent", "v1.1.3 广播"),
+            ("/bounded_cache/evictions", "v1.1.4 缓存"),
+            ("/index_consistent", "v1.1.5 索引"),
+            ("/plan/outcome", "v1.1.6 规划"),
+            ("/versions/own", "v1.1.7 版本化"),
+            ("/perf/queries/index_rebuilds", "v1.1.8 性能"),
+            ("/query_cache_hit", "v1.1.8 查询缓存"),
+        ];
+        for (pointer, label) in required {
+            if value.pointer(pointer).is_none() {
+                return Err(format!("scenario 缺少 {label} 的证据字段 {pointer}"));
+            }
+        }
+        if value.pointer("/plan/outcome").and_then(Value::as_str) != Some("path") {
+            return Err("scenario 没有给出流水线".into());
+        }
+        Ok(format!(
+            "断言：scenario 输出同时覆盖 8 个版本的证据字段（{} 个必填指针全部存在）",
+            required.len()
+        ))
+    }));
+    checks
+}
+
 /// 自检用的一条合法能力。
 fn sample_capability() -> Result<Capability, String> {
     Ok(Capability::new(SkillId::new("translate.en-zh").map_err(show)?, Credits(4)))
@@ -978,6 +1048,7 @@ pub fn self_check() -> Vec<SelfCheck> {
     checks.extend(checks_v116());
     checks.extend(checks_v117());
     checks.extend(checks_v118());
+    checks.extend(checks_v119());
     checks
 }
 
@@ -989,7 +1060,10 @@ pub fn results_json() -> CoreResult<Value> {
         "track": TRACK,
         "title": TITLE,
         "range": RANGE,
-        "versions": ["v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5", "v1.1.6", "v1.1.7", "v1.1.8"],
+        "versions": [
+            "v1.1.1", "v1.1.2", "v1.1.3", "v1.1.4", "v1.1.5",
+            "v1.1.6", "v1.1.7", "v1.1.8", "v1.1.9",
+        ],
         "checks": checks.len(),
         "checks_passed": passed,
         "schema": {

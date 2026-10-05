@@ -306,27 +306,34 @@
     {
       "version": "v1.6.9",
       "title": "示例",
-      "goal": "可运行示例：一个 Agent 跑完整学习循环，并打印可核对的 JSON 报告。",
+      "goal": "可运行示例：一个 Agent 跑完整学习循环（六阶段），打印可核对的 JSON 报告；示例不含逻辑，测试断言的就是示例打印的内容。",
       "deliverables": [
-        "examples/learning_loop.rs",
-        "src/demo.rs: demo_report(seed)"
+        "src/demo.rs: demo_report(seed) / demo_report_is_publishable() / DEMO_SEED / DEMO_EXPERIENCES / DEMO_GENERATIONS / DEMO_QUOTES",
+        "examples/learning_loop.rs: 命令行入口（可选种子），打印 pretty JSON",
+        "tests/demo.rs: 4 个集成测试"
       ],
       "interfaces": [
-        "pub fn demo_report(seed: u64) -> CoreResult<serde_json::Value>"
+        "pub fn demo_report(seed: u64) -> CoreResult<serde_json::Value>",
+        "pub fn demo_report_is_publishable(report: &Value) -> bool",
+        "pub const DEMO_SEED: u64 = 0x160909; DEMO_EXPERIENCES = 18; DEMO_GENERATIONS = 3; DEMO_QUOTES = 24"
       ],
       "acceptance": [
-        "示例编译并被 cargo test 构建",
-        "示例调用的 demo_report 与测试断言同一份输出结构",
-        "两次运行输出逐字节一致"
+        "六阶段（经验收集/反馈分析/学习信号/行为调整/模型更新/效果评估）齐全、顺序正确、每段证据非空",
+        "行为调整 changed=true 且 price_moved_bp=-500（接受率 5000bp 低于目标 8500bp）",
+        "模型更新 3 代，第一步位移幅度 < 第三步（动量可见），代际 1→3",
+        "效果评估 improved=true、成功率与收益提升 > 0、params_differ=true",
+        "同种子两次报告完全相等且规范 JSON 一致；换种子得到不同报告；5 个额外种子均成功",
+        "报告不含 did:au4a: 与上下文原文，可被规范 JSON 编码；policy_before.price_bp=12000 且 policy_after≠12000",
+        "cargo run --example learning_loop 退出码 0"
       ],
       "evidence": {
         "test_command": "cargo test -p au4a-learning",
-        "tests_passed": 0,
-        "tests_total": 0,
-        "grade": "unverified",
-        "notes": "尚未实现"
+        "tests_passed": 90,
+        "tests_total": 90,
+        "grade": "verified",
+        "notes": "本机 Windows 实测：5 单元 + 4 示例 + 10 经验库 + 5 解释 + 10 反馈 + 10 市场 + 11 模型 + 8 隐私 + 9 策略 + 8 信号 + 3 不变式 + 4 复现 + 3 拒绝。附加证据：cargo run -p au4a-learning --example learning_loop → exit 0，实测成功率 2864→5156bp、收益 4692→6700、违规 9→7（日志 1.6-v1.6.9-example.log）。日志 E:\\DS\\_forangent\\logs\\1.6-v1.6.9.log"
       },
-      "status": "planned"
+      "status": "done"
     },
     {
       "version": "v1.6.10",
