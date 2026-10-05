@@ -333,9 +333,23 @@ mod tests {
 
     #[test]
     fn duplicate_skill_declarations_are_a_registry_defect() {
+        // v2.4.0：`insert` 现在会**拒绝**重复声明，所以这里改用审计旁路钩子构造坏状态——
+        // 证明"准入拒绝"与"审计发现"是两道独立闸门，后者不依赖前者。
         let keys = AgentKeys::from_seed(&[4u8; 32]);
         let mut k = Kernel::new(KernelConfig::default());
-        k.register(&keys, "dup", &["x", "x"], Credits(20)).unwrap();
+        k.register(&keys, "dup", &["x"], Credits(20)).unwrap();
+        assert!(
+            k.registry_defects().is_empty(),
+            "正常注册不再产生注册表瑕疵"
+        );
+        let card = AgentCard {
+            did: keys.did(),
+            display: "dup".to_string(),
+            skills: vec!["x".to_string(), "x".to_string()],
+            stake: Credits(20),
+            evidence: EvidenceGrade::Verified,
+        };
+        k.replace_card_for_audit(card);
         assert!(!k.registry_defects().is_empty());
         let audit = audit_kernel(&k);
         assert!(audit

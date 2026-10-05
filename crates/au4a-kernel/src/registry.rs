@@ -61,9 +61,24 @@ impl AgentRegistry {
     }
 
     /// 加入一个名片。重复身份是调用错误（`DuplicateAgent`），不是竞争。
+    ///
+    /// v2.4.0 修复（P1）：**同一张名片内重复声明同一能力要被拒绝**（`InvalidKind`）。
+    /// 修复前只是"如实记录"（`duplicate_skills()` 事后报告），于是一个 Agent 用重复字符串
+    /// 就能稀释能力图权重、放大能力索引——在自治网络里这是**单方可得利**的准入瑕疵。
+    /// 现在准入即拒绝；审计侧的 `registry.consistent` 作为第二道闸门继续保留（两者独立）。
     pub fn insert(&mut self, card: AgentCard) -> CoreResult<()> {
         if self.cards.contains_key(&card.did) {
             return Err(CoreError::DuplicateAgent);
+        }
+        let mut seen: Vec<&String> = Vec::with_capacity(card.skills.len());
+        for skill in &card.skills {
+            if skill.is_empty() {
+                return Err(CoreError::InvalidKind);
+            }
+            if seen.contains(&skill) {
+                return Err(CoreError::InvalidKind);
+            }
+            seen.push(skill);
         }
         for skill in &card.skills {
             self.skills
@@ -293,12 +308,26 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_skill_declarations_are_reported() {
+    fn duplicate_skill_declarations_are_refused_at_admission() {
+        // v2.4.0 回归：修复前只是事后报告（`duplicate_skills()`），准入照收；
+        // 一个 Agent 用重复字符串就能放大能力索引。
         let mut reg = AgentRegistry::new();
-        reg.insert(card(1, "a", &["x", "x", "y"], 10)).unwrap();
-        assert_eq!(reg.duplicate_skills().len(), 1);
-        assert!(reg.duplicate_skills()[0].1 == "x");
-        assert_eq!(reg.agents_with_skill("x").len(), 2, "索引如实记录重复声明");
+        assert_eq!(
+            reg.insert(card(1, "a", &["x", "x", "y"], 10)),
+            Err(CoreError::InvalidKind)
+        );
+        assert_eq!(reg.len(), 0, "被拒的名片不得进入注册表");
+        assert!(reg.agents_with_skill("x").is_empty());
+        // 空能力名同样拒绝
+        assert_eq!(
+            reg.insert(card(2, "b", &[""], 10)),
+            Err(CoreError::InvalidKind)
+        );
+        // 正常名片仍然可以加入，且索引干净
+        reg.insert(card(3, "c", &["x", "y"], 10)).unwrap();
+        assert_eq!(reg.agents_with_skill("x").len(), 1);
+        assert!(reg.duplicate_skills().is_empty());
+        assert!(reg.index_is_faithful());
     }
 
     #[test]
