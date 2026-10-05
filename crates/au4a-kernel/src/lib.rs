@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 pub mod audit;
 pub mod autonomy;
 pub mod council;
+pub mod errors;
 pub mod harness;
 pub mod lifecycle;
 pub mod manifest;
@@ -37,6 +38,8 @@ pub use council::{
     motions_for_kernel, Ballot, Council, CouncilConfig, CouncilFailure, Decision, Motion,
     MotionKind, Tally, Verdict, Vote,
 };
+// v2.1.0 · 迁移 S1：内核语义错误独立成类型（见 `errors.rs` 的四段迁移说明）
+pub use errors::{lift, KernelError, KernelResult};
 pub use harness::{invariant_suite, Harness, Journal, JournalEntry, JournalStep, ReplayOutcome};
 pub use lifecycle::{
     next_state, AgentState, Lifecycle, LifecycleBook, LifecycleEvent, LifecycleOutcome, Transition,
@@ -437,6 +440,11 @@ impl Kernel {
     }
 
     /// 结算：先过证据闸门，再动账本。`unverified` 永远不结算。
+    ///
+    /// **兼容入口**（v2.1.0 · 迁移 S1）：保留原签名，195 处旧调用点不受影响；
+    /// 内部走 [`Self::settle_checked`]，并把 [`KernelError::EvidenceGateRefused`]
+    /// 经兼容边界降级为 [`CoreError::InsufficientFunds`]。
+    /// 需要区分"证据不够"与"没钱"，请直接调用 `settle_checked`。
     pub fn settle(
         &mut self,
         from: &Did,
@@ -444,13 +452,26 @@ impl Kernel {
         amount: Credits,
         evidence: EvidenceGrade,
     ) -> CoreResult<()> {
+        self.settle_checked(from, to, amount, evidence)
+            .map_err(CoreError::from)
+    }
+
+    /// 结算（**可区分错误**的入口）：证据闸门拒绝返回 [`KernelError::EvidenceGateRefused`]，
+    /// 与账本层的 [`CoreError::InsufficientFunds`] 彻底分开——这正是 v2.1.0 修掉的语义重载。
+    pub fn settle_checked(
+        &mut self,
+        from: &Did,
+        to: &Did,
+        amount: Credits,
+        evidence: EvidenceGrade,
+    ) -> KernelResult<()> {
         if !evidence.settleable(amount, self.config.cpu_proto_settle_cap) {
             self.refuse(
                 from,
                 RefusalCode::PolicyDenied,
                 "evidence gate refused settlement",
             );
-            return Err(CoreError::InsufficientFunds);
+            return Err(KernelError::EvidenceGateRefused);
         }
         self.ledger.transfer(from, to, amount)?;
         self.clock.tick();
