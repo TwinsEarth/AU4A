@@ -276,6 +276,40 @@
         "notes": "示例本机实测 exit 0，输出见 _forangent\\logs\\1.4-v1.4.9-example.log；测试日志 _forangent\\logs\\1.4-v1.4.9.log"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.4.10",
+      "title": "监控",
+      "goal": "只读收益面板数据源：与节点 /api/revenue 字段对齐（minted/slashed/total/accounts.*），补上 earned/kind/display/conservation_ok；收益只算真实到账凭证。",
+      "deliverables": [
+        "src/monitor.rs: READ_ONLY / LedgerTotals / RevenueRow / RevenuePanel(to_json, conservation_ok, rows_earned_total) / ledger_totals / panel / revenue_panel / monitor_json / monitor_checks",
+        "src/lib.rs: 场景 JSON 新增 revenue_panel；self_check 新增 monitor.read_only（共 12 项）",
+        "examples/economy_tour.rs: 追加第 9 步（只读面板 + 3 条监控自检）",
+        "README.md: 只读收益面板章节 + 模块地图补齐 v1.4.10"
+      ],
+      "interfaces": [
+        "pub const READ_ONLY: bool = true",
+        "pub fn ledger_totals(ledger: &Ledger) -> CoreResult<LedgerTotals>",
+        "pub fn panel(kernel: &Kernel, revenue: &RevenueBook, context: &Value) -> CoreResult<RevenuePanel>",
+        "pub fn revenue_panel(kernel: &Kernel, revenue: &RevenueBook, context: &Value) -> CoreResult<Value>",
+        "pub fn monitor_checks(kernel: &Kernel, revenue: &RevenueBook) -> Vec<SelfCheck>"
+      ],
+      "acceptance": [
+        "账本总量：发行 1500 / 罚没 50 / 锁定 150 / 可用 1300 / 总量 1450，total == available + locked，conservation_ok",
+        "面板列出每个账本账户：3 账户/2 Agent/收益 200；卖方 available 1130 earned 140 kind agent；人类操作者 kind human_operator display human-operator earned 60 locked 0",
+        "两次只读投影逐字段相同且读取前后 LedgerView 不变；rows_earned_total == total_earned",
+        "拒付后收益为 0 且余额不变（withheld/escrowed 永不计入收益）",
+        "3 条监控自检（ledger_conservation / conservation_gate / read_only）全部通过且 detail 非空",
+        "端到端：revenue_panel.ledger.account_count=5、total_earned=200、Σ可用+Σ锁定==总量；示例 exit 0"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-economy; cargo run -p au4a-economy --example economy_tour",
+        "tests_passed": 87,
+        "tests_total": 87,
+        "grade": "verified",
+        "notes": "lib 71 + e2e 6 + invariants 10；本 crate 0 warning；示例实测 Σ可用 3059 + Σ锁定 841 + 罚没 100 = 发行 4000；日志 _forangent\\logs\\1.4-v1.4.10.log、1.4-v1.4.10-example.log"
+      },
+      "status": "done"
     }
   ]
 }

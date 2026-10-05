@@ -28,7 +28,7 @@ use crate::{
 
 /// crate 承诺的全部不变式名字。测试会断言「清单与实现严格相等」——
 /// 删掉任何一条不变式都会让测试变红，避免静默减少保证。
-pub const INVARIANT_NAMES: [&str; 19] = [
+pub const INVARIANT_NAMES: [&str; 20] = [
     "council.committees.installed",
     "council.quorum.bft",
     "council.committees.nonempty",
@@ -48,6 +48,7 @@ pub const INVARIANT_NAMES: [&str; 19] = [
     "council.policies.well_formed",
     "council.emergency.security_only",
     "council.emergency.resolved",
+    "council.audit.chain_verifies",
 ];
 
 /// 整个治理状态的内容地址（可复算、可比较）。
@@ -189,6 +190,23 @@ pub fn check_all(council: &Council) -> Vec<SelfCheck> {
     } else {
         SelfCheck::fail(track, "council.policies.well_formed", "存在非法策略键")
     });
+
+    // 18. 审计链：治理历史必须能被复算成一条完好的哈希链。
+    match crate::audit::AuditLog::rebuild(council) {
+        Ok(log) => {
+            let verdict = log.verify();
+            checks.push(if verdict.ok {
+                SelfCheck::pass(
+                    track,
+                    "council.audit.chain_verifies",
+                    format!("{} 条治理事件的哈希链全部通过复算（链根 {}）", log.len(), au4a_core::short_id(log.root())),
+                )
+            } else {
+                SelfCheck::fail(track, "council.audit.chain_verifies", verdict.reason)
+            });
+        }
+        Err(err) => checks.push(SelfCheck::fail(track, "council.audit.chain_verifies", err.to_string())),
+    }
 
     checks
 }

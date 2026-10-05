@@ -16,7 +16,7 @@ fn sweep_config(seed: u64) -> MarketConfig {
         ticks_per_round: 8,
         peers: 6,
         noise_span_bp: 1_200,
-        learn: true,
+        ..MarketConfig::default()
     }
 }
 
@@ -180,7 +180,7 @@ fn zero_ticks_and_tiny_markets_stay_well_formed() {
         ticks_per_round: 4,
         peers: 2,
         noise_span_bp: 0,
-        learn: true,
+        ..MarketConfig::default()
     };
     let (control, learning, comparison) = ab_test(&config).unwrap();
     check_run(&control, &config, "control-min");

@@ -318,6 +318,42 @@
         "notes": "EXIT=0；单元 26 + claims 6 + election 8 + emergency 7 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，示例由 cargo test 编译保证可构建，本 crate 0 warning"
       },
       "status": "done"
+    },
+    {
+      "version": "v1.7.10",
+      "title": "审计",
+      "goal": "治理事件串成不可悄悄改写的哈希链，并可只读导出提案/否决/紧急指令/执行/策略快照",
+      "deliverables": [
+        "src/audit.rs: AuditLog(rebuild/from_entries/verify/root) / AuditVerdict / AuditExport / 各类快照 / audit_checks",
+        "src/lib.rs: Council::audit_log / audit_export、results_json().audit、scenario 的 audit.export",
+        "src/invariants.rs: 不变式清单扩到 20 条（council.audit.chain_verifies）",
+        "src/claims.rs: 能力清单扩到 19 条（audit.hash_chain / audit.readonly_export）",
+        "tests/audit.rs: 7 个集成测试"
+      ],
+      "interfaces": [
+        "pub struct AuditEntry { seq, at, kind, subject, detail, prev_hash, entry_hash }",
+        "pub struct AuditLog;  // rebuild(&Council) / from_entries(Vec<AuditEntry>) / verify() -> AuditVerdict / root()",
+        "pub struct AuditVerdict { ok, checked, broken_at, reason }",
+        "pub struct AuditExport { track, state_digest, audit_root, audit_entries, chain_ok, proposals, vetoes, emergency, executions, policies, invariants }",
+        "pub fn Council::audit_log() / audit_export()"
+      ],
+      "acceptance": [
+        "链由事件重建、条数与事件数一致、链根 64 位 hex、重建确定性",
+        "改写任意一条 → 断链且 broken_at 指向该条",
+        "删除/交换/改写 subject → 断链并指出第一处位置",
+        "空链可验证（checked=0，链根=创世哈希）",
+        "只读导出不改变治理状态（导出前后 state_digest 相同）且携带全部快照",
+        "审计自检项出现在 self_check() 与 results_json() 中",
+        "GovernorToken 只映射动议，与紧急指令互不混淆"
+      ],
+      "evidence": {
+        "test_command": "cargo test -p au4a-council",
+        "tests_passed": 113,
+        "tests_total": 113,
+        "grade": "verified",
+        "notes": "EXIT=0；单元 26 + claims 6 + audit 7 + election 8 + emergency 7 + execution 10 + invariants 8 + ongov 6 + proposal 10 + veto 8 + voting 10 + doc-tests 7，本 crate 0 warning"
+      },
+      "status": "done"
     }
   ]
 }

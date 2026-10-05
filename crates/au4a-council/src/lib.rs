@@ -21,6 +21,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod claims;
 pub mod committee;
 pub mod election;
@@ -33,6 +34,10 @@ pub mod proposal;
 pub mod veto;
 pub mod voting;
 
+pub use audit::{
+    audit_checks, AuditEntry, AuditExport, AuditLog, AuditVerdict, EmergencySnapshot,
+    ExecutionSnapshot, ProposalSnapshot, VetoSnapshot,
+};
 pub use claims::{claims_are_well_formed, claims_json, Claim, CLAIMS};
 pub use committee::{Committee, CommitteeKind, Member, COMMITTEE_COUNT};
 pub use election::{
@@ -831,6 +836,16 @@ impl Council {
         emergency::confirm(self, kernel, directive_id, approvals)
     }
 
+    /// 由治理事件重建审计哈希链（只读；不改变任何状态）。
+    pub fn audit_log(&self) -> CoreResult<AuditLog> {
+        AuditLog::rebuild(self)
+    }
+
+    /// 生成只读审计导出（提案 / 否决 / 紧急指令 / 执行收据 / 策略 / 不变式）。
+    pub fn audit_export(&self) -> CoreResult<AuditExport> {
+        audit::export(self)
+    }
+
     /// 治理层自检（v1.7.2 覆盖选举、席位与动议；后续版本追加表决、否决、审计）。
     pub fn checks(&self) -> Vec<SelfCheck> {
         let mut checks = Vec::new();
@@ -1540,6 +1555,7 @@ pub fn self_check() -> Vec<SelfCheck> {
             } else {
                 SelfCheck::fail(TRACK, "council.emergency.confirmed", "紧急通道演练未走到 confirmed")
             });
+            checks.extend(audit::audit_checks(&v.council));
             checks.extend(v.council.checks());
         }
         Err(err) => checks.push(SelfCheck::fail(TRACK, "council.veto.blocks_only", err.to_string())),
@@ -1672,6 +1688,16 @@ pub fn results_json() -> CoreResult<Value> {
             "replay": invariants::replay_report(&[1, 2, 3], 48)?,
         },
         "claims": claims_json(),
+        "audit": {
+            "chain_ok": run.council.audit_log()?.verify().ok,
+            "entries": run.council.audit_log()?.len(),
+            "root": run.council.audit_log()?.root(),
+            "export_proposals": run.council.audit_export()?.proposals.len(),
+            "export_vetoes": run.council.audit_export()?.vetoes.len(),
+            "export_emergency": run.council.audit_export()?.emergency.len(),
+            "vetoed_export_vetoes": vetoed.council.audit_export()?.vetoes.len(),
+            "vetoed_export_emergency": vetoed.council.audit_export()?.emergency.len(),
+        },
         "events": run.council.events().len(),
         "agents_enrolled": run.agents.len(),
         "kernel_delivered": run.kernel.observe().messages_delivered,
@@ -1907,6 +1933,12 @@ pub fn scenario(kernel: &mut Kernel) -> CoreResult<Value> {
             "policy_kept": council.policy("emergency_freeze") == Some(1),
         },
         "governor_tokens": project_all(&council)?.iter().map(|t| t.to_json()).collect::<Vec<_>>(),
+        "audit": {
+            "entries": council.audit_log()?.len(),
+            "chain_ok": council.audit_log()?.verify().ok,
+            "root": council.audit_log()?.root(),
+            "export": council.audit_export()?.to_json()?,
+        },
         "events": council.events().len(),
     }))
 }
