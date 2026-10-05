@@ -198,6 +198,9 @@ mod tests {
             CoreError::FrameTruncated,
             CoreError::NotSealed,
             CoreError::InvalidVersion,
+            // v2.4.0 修复：v2.3.0 新增了 ConservationViolated，但这份往返清单漏了它——
+            // 测试照旧通过，覆盖却静默缩小。清单式测试必须跟着枚举一起改。
+            CoreError::ConservationViolated,
         ] {
             let k = KernelError::from(e.clone());
             assert_eq!(k.as_core(), Some(&e), "基元错误必须原样保留在 Core 变体里");

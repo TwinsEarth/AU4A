@@ -160,11 +160,68 @@ impl AgentRegistry {
 
 /// 注册表的只读投影。指纹建立在它上面，而不是建立在内部容器布局上。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawSnapshot", into = "RawSnapshot")]
 pub struct RegistrySnapshot {
     /// 加入序的 DID。
     pub dids: Vec<String>,
     /// 能力 → 声明者（加入序）。
     pub skills: BTreeMap<String, Vec<String>>,
+}
+
+/// 线上形态（字段一一对应，JSON 形状不变）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RawSnapshot {
+    pub dids: Vec<String>,
+    pub skills: BTreeMap<String, Vec<String>>,
+}
+
+/// v2.4.0 修复（P1）：**快照反序列化必须校验一致性**。
+///
+/// 修复前 `RegistrySnapshot` 只是 `derive(Deserialize)` + 全 `pub` 字段，
+/// 于是 `dids` 与 `skills` 可以互相矛盾（索引里有 `dids` 未列的 DID、或某 DID 从未在索引里出现），
+/// 而它**照样能算出指纹**——即"不忠实的状态也有合法指纹"。这与 v2.2.0（`Did`/`Refusal`）、
+/// v2.3.0（`MsgKind`）是同一模式：*派生数据的入口绕过不变式*。
+///
+/// 忠实性无法只靠快照自身判定（需要名片集合），但**一致性**可以，而且这正是跨节点比对的前提：
+/// * 每个 DID 都必须能解析（拒绝脏值，与 v2.2.0 的 `Did` 校验同一口径）；
+/// * `dids` 不得重复（加入序是语义的一部分）；
+/// * `skills` 里出现的每个 DID 都必须在 `dids` 里（否则索引指向不存在的人）。
+impl TryFrom<RawSnapshot> for RegistrySnapshot {
+    type Error = CoreError;
+
+    fn try_from(raw: RawSnapshot) -> CoreResult<Self> {
+        let mut seen: Vec<&str> = Vec::with_capacity(raw.dids.len());
+        for did in &raw.dids {
+            Did::parse(did)?;
+            if seen.contains(&did.as_str()) {
+                return Err(CoreError::DuplicateAgent);
+            }
+            seen.push(did);
+        }
+        for (skill, holders) in &raw.skills {
+            if skill.is_empty() {
+                return Err(CoreError::InvalidKind);
+            }
+            for holder in holders {
+                if !seen.contains(&holder.as_str()) {
+                    return Err(CoreError::UnknownAgent);
+                }
+            }
+        }
+        Ok(RegistrySnapshot {
+            dids: raw.dids,
+            skills: raw.skills,
+        })
+    }
+}
+
+impl From<RegistrySnapshot> for RawSnapshot {
+    fn from(s: RegistrySnapshot) -> Self {
+        RawSnapshot {
+            dids: s.dids,
+            skills: s.skills,
+        }
+    }
 }
 
 impl RegistrySnapshot {
@@ -250,5 +307,40 @@ mod tests {
         reg.insert(card(1, "a", &[], 10)).unwrap();
         reg.insert(card(2, "b", &[], 32)).unwrap();
         assert_eq!(reg.stake_total().unwrap(), Credits(42));
+    }
+
+    // ── v2.4.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn inconsistent_snapshot_is_refused_by_serde() {
+        // P1 回归：修复前 dids 与 skills 可以互相矛盾，而且照样能算出指纹。
+        let d1 = AgentKeys::from_seed(&[1u8; 32]).did().as_str().to_string();
+        let d2 = AgentKeys::from_seed(&[2u8; 32]).did().as_str().to_string();
+
+        // 合法快照：往返且指纹稳定
+        let ok = format!(r#"{{"dids":["{d1}","{d2}"],"skills":{{"x":["{d1}"]}}}}"#);
+        let snap: RegistrySnapshot = serde_json::from_str(&ok).unwrap();
+        assert_eq!(snap.dids.len(), 2);
+        let json = serde_json::to_string(&snap).unwrap();
+        assert_eq!(
+            serde_json::from_str::<RegistrySnapshot>(&json).unwrap(),
+            snap
+        );
+
+        // ① 索引指向不在册的 DID → 拒绝
+        let outsider = format!(r#"{{"dids":["{d1}"],"skills":{{"x":["{d2}"]}}}}"#);
+        assert!(serde_json::from_str::<RegistrySnapshot>(&outsider).is_err());
+
+        // ② 重复 DID → 拒绝（加入序是语义的一部分）
+        let dup = format!(r#"{{"dids":["{d1}","{d1}"],"skills":{{}}}}"#);
+        assert!(serde_json::from_str::<RegistrySnapshot>(&dup).is_err());
+
+        // ③ 脏 DID → 拒绝（与 v2.2.0 的 Did 校验同口径）
+        let dirty = r#"{"dids":["did:au4a:zz"],"skills":{}}"#;
+        assert!(serde_json::from_str::<RegistrySnapshot>(dirty).is_err());
+
+        // ④ 空能力名 → 拒绝
+        let empty_skill = format!(r#"{{"dids":["{d1}"],"skills":{{"":["{d1}"]}}}}"#);
+        assert!(serde_json::from_str::<RegistrySnapshot>(&empty_skill).is_err());
     }
 }

@@ -289,7 +289,12 @@ mod tests {
         let audit = audit_kernel(&k);
         assert_eq!(audit.failures().len(), 0, "{:?}", audit.failures());
         assert!(audit.is_clean());
-        assert!(audit.findings.len() >= 7);
+        // v2.4.0：从 `>= 7` 收紧为精确值——删掉一项检查必须显式改测试，而不是静默少查一项。
+        assert_eq!(
+            audit.findings.len(),
+            8,
+            "审计必须恰好 8 项检查（少一项即失去覆盖）"
+        );
         assert!(audit.to_json()["clean"].as_bool().unwrap_or(false));
     }
 
