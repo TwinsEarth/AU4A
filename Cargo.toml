@@ -12,7 +12,6 @@ members = [
     "crates/au4a-council",
     "crates/au4a-chain",
     "crates/au4a-scale",
-    "crates/au4a-node",
 ]
 
 # The series version (v1.0.1 → v1.9.9) lives in ./VERSION and in the git tag.
