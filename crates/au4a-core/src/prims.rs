@@ -33,14 +33,20 @@ impl LogicalClock {
     }
 
     /// 推进一格并返回新读数。
+    ///
+    /// v2.1.0 修复（P1）：原实现 `self.t += 1` 在 `u64::MAX` 时 debug 会 panic、release 会回绕到 0，
+    /// 而"逻辑时钟单调"是整个确定性重放的前提。改饱和加：到顶后停在 `u64::MAX`，不再回绕。
     pub fn tick(&mut self) -> u64 {
-        self.t += 1;
+        self.t = self.t.saturating_add(1);
         self.t
     }
 
     /// 合并外部观察到的时刻（保证单调：取 max+1）。
+    ///
+    /// v2.1.0 修复（P1）：`remote` 来自对端信封的 `ts`，是**外部可控**输入；
+    /// 原 `self.t.max(remote) + 1` 在 `remote == u64::MAX` 时溢出。改饱和加。
     pub fn observe(&mut self, remote: u64) -> u64 {
-        self.t = self.t.max(remote) + 1;
+        self.t = self.t.max(remote).saturating_add(1);
         self.t
     }
 }
@@ -112,5 +118,29 @@ mod tests {
             SelfCheck::pass("1.0", "x", "d"),
             SelfCheck::fail("1.0", "y", "d")
         ]));
+    }
+
+    // ── v2.1.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn clock_saturates_at_u64_max_instead_of_wrapping() {
+        // P1 回归：修复前 tick() 用 `+= 1`（debug panic / release 回绕到 0），
+        // observe() 的 `max(remote) + 1` 在 remote == u64::MAX 时溢出——
+        // 而 remote 来自对端信封 ts，是外部可控输入。
+        let mut c = LogicalClock::new();
+        assert_eq!(c.observe(u64::MAX), u64::MAX, "饱和而非回绕");
+        assert_eq!(c.now(), u64::MAX);
+        assert_eq!(c.tick(), u64::MAX, "到顶后停在 u64::MAX");
+        assert_eq!(c.observe(u64::MAX), u64::MAX);
+        // 单调不减仍然成立（这是确定性重放的前提）
+        let mut d = LogicalClock::new();
+        let mut last = d.now();
+        for remote in [0u64, 5, u64::MAX, 3, u64::MAX] {
+            let now = d.observe(remote);
+            assert!(now >= last, "observe 必须单调不减：{last} -> {now}");
+            last = now;
+        }
+        let top = LogicalClock { t: u64::MAX };
+        assert_eq!(top.now(), u64::MAX);
     }
 }

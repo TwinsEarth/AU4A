@@ -1,5 +1,36 @@
 # Changelog
 
+## v2.1.0（2026-10-05）
+
+**冻结基元的三个安全/正确性修复（P0×1 + P1×2）+ 回归测试。** 按项目自身规则，
+改动冻结基元必须走新的中版本，因此这些修复不塞进 v2.0.x 补丁，而是升到 v2.1.0。
+
+### 修复
+
+| 级别 | 文件 | 问题 | 修法 |
+|---|---|---|---|
+| **P0** | `crates/au4a-core/src/evidence.rs` | `EvidenceGrade` 派生 `PartialOrd, Ord`，按**声明顺序**得到 `Verified < CpuProto < Unverified`，与"值越大越可信"完全相反——任何 `max()`/排序都会选到**最不可信**的那一级 | 删除派生，改为显式 `rank()`（Unverified=0 < CpuProto=1 < Verified=2）+ 手写 `Ord`/`PartialOrd` 以 `rank()` 为准，使 `Ord` 与结算闸门不再分叉 |
+| **P1** | `crates/au4a-core/src/evidence.rs` | `settleable()` 只比大小不校验符号；`Credits(pub i64)` 的元组构造可绕过 `Credits::new` 的非负校验，负数在下溢包装后落进 `amount <= threshold` 的"小额"分支被放行 | 闸门首行拒绝负额：任何等级下 `amount < 0` 一律不可结算 |
+| **P1** | `crates/au4a-core/src/prims.rs` | `LogicalClock::tick()` 用 `self.t += 1`（`u64::MAX` 时 debug panic / release 回绕到 0）；`observe(remote)` 的 `max(remote) + 1` 在 `remote == u64::MAX` 时溢出，而 `remote` 来自**对端信封的 ts**（外部可控） | 两处改 `saturating_add`：到顶停在 `u64::MAX`，单调不减性质（确定性重放的前提）得以保持 |
+
+### 回归测试（共 3 个新用例）
+
+- `evidence::tests::ord_direction_matches_trust_not_declaration_order` —— 断言 `Verified > CpuProto > Unverified`，并用 `Iterator::max()` 断言**选出的是最可信级别**（这正是修复前会错的场景）；
+- `evidence::tests::negative_amount_is_never_settleable` —— `Credits(-1)`、`Credits(i64::MIN)` 在三个等级下全部拒绝；同时断言 0 与正额行为未变（防过度收紧）;
+- `prims::tests::clock_saturates_at_u64_max_instead_of_wrapping` —— `observe(u64::MAX)` 饱和、`tick()` 到顶停住，并以 [0, 5, u64::MAX, 3, u64::MAX] 序列验证 `observe` 单调不减。
+
+### 证据
+
+- `cargo test -p au4a-core` → **37 passed / 0 failed**（原 34 + 新增 3）
+- `cargo test --workspace --locked` → **exit 0**（96 个测试套件；`Ord` 派生移除未破坏任何 crate）
+
+### 未改变（明确边界）
+
+- `CoreError` 的语义重载（`InsufficientFunds` 复用为"证据闸门拒绝"）**未修**：它需要内核侧新增错误变体，属于接口变更，留给下一个中版本；
+- 基元错误枚举被内核语义污染（`UnknownAgent`/`DuplicateAgent`/`InsufficientStake`）同样**未修**，理由同上。
+
+---
+
 ## v2.0.2（2026-10-05）
 
 **多平台交付级补齐 + 版本线缺陷修复。** 基线仍是 Rust 重写线（12 crate / 69,092 行），
