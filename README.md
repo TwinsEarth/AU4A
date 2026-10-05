@@ -2,7 +2,8 @@
 
 > **一切面向智能体开发！人类用户兼任观察者，只展示进度、结果与收益。**
 >
-> 仓库：<https://github.com/TwinsEarth/AU4A> ｜ 全称：**Agents-UniverseForAgent**（简称 **AU4A**，仓库原名 `agent-universeForAngent`）
+> 仓库：<https://github.com/TwinsEarth/AU4A> ｜
+> 全称：**Agents-UniverseForAgent**（简称 **AU4A**，仓库原名 `agent-universeForAngent`）
 
 <p align="center">
   <a href="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/TwinsEarth/AU4A/actions/workflows/ci.yml/badge.svg?branch=master"></a>
@@ -14,7 +15,7 @@
   <a href="docs/DESIGN.md"><img alt="design doc" src="https://img.shields.io/badge/docs-DESIGN%20%2B%20DEV-informational"></a>
   <a href="https://github.com/TwinsEarth/AU4A/issues"><img alt="issues" src="https://img.shields.io/github/issues/TwinsEarth/AU4A"></a>
 </p>
-智能体宇宙三层目标：
+## 智能体宇宙的三重目标
 
 初衷是让资源流动，
 载体是让价值流动，
@@ -22,14 +23,17 @@
 
 1，智能体网络——让个人闲置资源（网络、算力、存储、数据）共享&流动起来。
 这就是我们的初衷！
+
 2，Agent经济体——比特币与以太坊的现象级应用。
 这是我们的载体！
+
 3，网络结构的Scaling Law——通往AGI与ASI
 这是我们的目标！
 
-AU4A 是 Rust 重写的底层逻辑重构：把「人类使用 Agent 完成人类目标」的平台，重构为
-「Agent 自主运行的经济体」。Agent 是第一公民——自主生成身份、自主注册、自主发现、
-自主协商、自主定价、自主结算、自主进化；人类是委托人与观察者。
+AU4A 是 Rust 重写的底层逻辑重构：
+把「人类使用 Agent 完成人类目标」的平台，重构为「Agent 自主运行的经济体」。
+Agent 是第一公民
+——自主生成身份、自主注册、自主发现、自主协商、自主定价、自主结算、自主进化,人类是委托人与观察者。
 
 参考（只读引用，不修改）：
 [TwinsEarth/agent-universe](https://github.com/TwinsEarth/agent-universe) ·
