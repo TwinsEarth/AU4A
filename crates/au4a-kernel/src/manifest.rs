@@ -60,6 +60,7 @@ pub struct VersionSpec {
 
 /// 轨道清单。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawTrackManifest", into = "RawTrackManifest")]
 pub struct TrackManifest {
     pub track: String,
     pub crate_name: String,
@@ -67,6 +68,117 @@ pub struct TrackManifest {
     pub range: String,
     pub owner: String,
     pub versions: Vec<VersionSpec>,
+}
+
+/// 线上形态（字段一一对应，JSON 形状不变）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RawTrackManifest {
+    pub track: String,
+    pub crate_name: String,
+    pub medium_title: String,
+    pub range: String,
+    pub owner: String,
+    pub versions: Vec<VersionSpec>,
+}
+
+impl VersionEvidence {
+    /// v2.4.0 新增（P1）：**证据本身必须自洽**。
+    ///
+    /// 修复前 `VersionEvidence` 是纯 `derive(Deserialize)`：外部 JSON 可以写成
+    /// `tests_passed = 9999 / tests_total = 0`、`grade = "definitely-verified"`，
+    /// 而"证据分级"正是本项目"不吹不藏"的载体——被伪造的证据等于把诚实机制关掉。
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.test_command.trim().is_empty() {
+            return Err(CoreError::Encoding);
+        }
+        if self.tests_total == 0 || self.tests_passed > self.tests_total {
+            return Err(CoreError::Encoding);
+        }
+        if EvidenceGrade::parse(&self.grade).is_none() {
+            return Err(CoreError::Encoding);
+        }
+        Ok(())
+    }
+}
+
+impl VersionSpec {
+    /// v2.4.0 新增（P1）：版本号形状、必填文本、以及内嵌证据的校验。
+    pub fn validate(&self) -> CoreResult<()> {
+        let shaped = self
+            .version
+            .strip_prefix('v')
+            .map(|rest| {
+                let parts: Vec<&str> = rest.split('.').collect();
+                parts.len() == 3
+                    && parts
+                        .iter()
+                        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
+            })
+            .unwrap_or(false);
+        if !shaped {
+            return Err(CoreError::InvalidVersion);
+        }
+        if self.title.trim().is_empty() || self.status.trim().is_empty() {
+            return Err(CoreError::InvalidKind);
+        }
+        self.evidence.validate()
+    }
+}
+
+impl TrackManifest {
+    /// v2.4.0 新增（P1）：整份清单的校验（含逐版本校验与版本号唯一性）。
+    pub fn validate(&self) -> CoreResult<()> {
+        if self.track.trim().is_empty()
+            || self.crate_name.trim().is_empty()
+            || self.owner.trim().is_empty()
+            || self.range.trim().is_empty()
+        {
+            return Err(CoreError::InvalidKind);
+        }
+        if self.versions.is_empty() {
+            return Err(CoreError::Encoding);
+        }
+        let mut seen: Vec<&str> = Vec::with_capacity(self.versions.len());
+        for spec in &self.versions {
+            spec.validate()?;
+            if seen.contains(&spec.version.as_str()) {
+                return Err(CoreError::DuplicateAgent);
+            }
+            seen.push(spec.version.as_str());
+        }
+        Ok(())
+    }
+}
+
+/// 反序列化即校验：版本清单是"证据"的载体，不能让外部 JSON 绕过校验。
+impl TryFrom<RawTrackManifest> for TrackManifest {
+    type Error = CoreError;
+
+    fn try_from(raw: RawTrackManifest) -> CoreResult<Self> {
+        let manifest = TrackManifest {
+            track: raw.track,
+            crate_name: raw.crate_name,
+            medium_title: raw.medium_title,
+            range: raw.range,
+            owner: raw.owner,
+            versions: raw.versions,
+        };
+        manifest.validate()?;
+        Ok(manifest)
+    }
+}
+
+impl From<TrackManifest> for RawTrackManifest {
+    fn from(m: TrackManifest) -> Self {
+        RawTrackManifest {
+            track: m.track,
+            crate_name: m.crate_name,
+            medium_title: m.medium_title,
+            range: m.range,
+            owner: m.owner,
+            versions: m.versions,
+        }
+    }
 }
 
 impl TrackManifest {
