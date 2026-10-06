@@ -142,22 +142,43 @@ impl ObserverReport {
         canonical_hash(&value)
     }
 
-    /// v2.5.0：**被签名的载荷**。
+    /// v2.5.0 / **v2.6.0 收窄**：被签名的载荷**只覆盖重点与高风险项**。
     ///
-    /// 只覆盖 `network_id + now + 每个投影的 route/fingerprint`：
-    /// 投影指纹本身已经把载荷内容绑住，因此这里不必重复编码整份载荷，
-    /// 同时保证签名**可复算**（两个节点对同一状态得到同一载荷）。
+    /// 覆盖范围（按产品决策）：
+    /// * `network_id`（跨网络重放防护）与 `now`（时序）；
+    /// * **「结果」面板**（`results`）——审计结论（守恒/准入/质押覆盖/注册表/队列/生命周期/时钟）；
+    /// * **「收益」面板**（`yield`）——账本投影与每个 Agent 的可用/锁定余额（**钱**）。
+    ///
+    /// **不覆盖「进度」面板**（`progress`）：它是事件流，体量大且风险低——
+    /// 逐条事件签名会让签名成本随事件数增长，而"进度被篡改"不改变任何账或审计结论。
+    /// 这一取舍是显式的：`progress` 的 `fingerprint` 仍然算得出来（可自行比对），只是不在签名范围内。
+    ///
+    /// 每个被覆盖的投影以 `(route, fingerprint)` 进入载荷：指纹已把载荷内容绑住，
+    /// 因此不必重复编码整份载荷，同时保证签名**可复算**。
     pub fn signing_payload(&self) -> CoreResult<String> {
+        let scoped: Vec<Value> = self
+            .projections
+            .iter()
+            .filter(|p| {
+                p.route == ObserverRoute::Results.as_str()
+                    || p.route == ObserverRoute::Yield.as_str()
+            })
+            .map(|p| json!({"route": p.route, "fingerprint": p.fingerprint}))
+            .collect();
         let value = json!({
             "network_id": self.network_id,
             "now": self.now,
-            "projections": self
-                .projections
-                .iter()
-                .map(|p| json!({"route": p.route, "fingerprint": p.fingerprint}))
-                .collect::<Vec<Value>>(),
+            "scoped": scoped,
         });
         au4a_core::canonicalize(&value).map_err(|_| CoreError::Encoding)
+    }
+
+    /// 本报告**被签名覆盖**的投影路由（供面板与测试枚举，口径单点维护）。
+    pub fn signed_routes() -> [&'static str; 2] {
+        [
+            ObserverRoute::Results.as_str(),
+            ObserverRoute::Yield.as_str(),
+        ]
     }
 
     /// v2.5.0：**来源验证**。
@@ -179,6 +200,11 @@ impl ObserverReport {
             return Err(CoreError::NotSealed);
         }
         for p in &self.projections {
+            // 只校验**签名覆盖范围内**的投影（结果 / 收益）。进度面板刻意不在范围内：
+            // 它的篡改不改变任何账或审计结论，逐条事件签名会让成本随事件数增长。
+            if !ObserverReport::signed_routes().contains(&p.route.as_str()) {
+                continue;
+            }
             // 与 `Observer::render` 里的指纹公式**逐字一致**：canonical_**hash**({route, capability, payload})。
             // 注意是 `canonical_hash`（SHA-256 hex）而不是 `canonicalize`（规范字符串）——
             // 用错后者会让比对永远不等，把合法报告判成伪造。
