@@ -26,20 +26,11 @@ fn http_get(addr: std::net::SocketAddr, path: &str) -> String {
     }
 }
 
-/// 复刻 `main.rs` 的发布闭包：把签名报告塞进快照的 `provenance`。
+/// v2.6.4：**直接调用库函数** `publish_snapshot`，不再复刻 `main.rs` 的闭包——
+/// 测试与真实节点从此用同一份实现，漂移不可能发生（这是本版存在的唯一理由）。
 fn snapshot_with_provenance(identity: &NodeIdentity) -> (String, String) {
     let (kernel, _outcomes, _dids) = au4a_node::scenario::run_full(2, |_| {}).expect("scenario");
-    let report = au4a_kernel::Observer::report_signed(&kernel, identity.keys()).expect("sign");
-    let mut v: serde_json::Value =
-        serde_json::from_str(&au4a_node::scenario::view_json(&kernel)).expect("view json");
-    v["provenance"] = serde_json::json!({
-        "node_did": report.node_did,
-        "sig": report.sig,
-        "scheme": "ed25519",
-        "scope": au4a_kernel::ObserverReport::signed_routes(),
-        "report": report,
-    });
-    let snapshot = au4a_core::canonicalize(&v).expect("canonical snapshot");
+    let snapshot = au4a_node::publish_snapshot(&kernel, Some(identity));
     (snapshot, identity.did().as_str().to_string())
 }
 

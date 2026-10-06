@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.6.4（2026-10-07）
+
+**消除 v2.6.3 自认的测试缺口：发布逻辑提取为库函数，测试与真实节点用同一份实现。**
+
+### 问题（v2.6.3 的"说明"里已如实记录）
+
+"渲染快照 + 注入来源签名"的逻辑此前只存在于 **`main.rs` 的一个闭包**里。
+集成测试（`tests/provenance_e2e.rs`）无法调用二进制内部，只能**复刻**它——
+两者一旦漂移，测试就再也证明不了"节点真正发出的面板是带签名的"，而测试**不会报警**。
+
+### 修法
+
+新增 `au4a_node::publish_snapshot(kernel: &Kernel, identity: Option<&NodeIdentity>) -> String`：
+
+* **唯一实现**：`main.rs` 与集成测试都调用它；
+* `identity = None` → **匿名只读模式**，快照原样返回（与 v2.6.2 之前逐字节一致）；
+* `identity = Some` → 用 v2.6.0 口径签发（**只覆盖结果 + 收益**），把
+  `{node_did, sig, scheme, scope, report}` 写入快照的 `provenance`；
+* 私钥只在这一刻使用，快照里只出现 DID 与签名。
+
+`main.rs` 的闭包缩成一行转发：
+```rust
+let publish = |k: &au4a_kernel::Kernel| -> String {
+    au4a_node::publish_snapshot(k, node_identity.as_ref())
+};
+```
+
+### 测试变化
+
+`tests/provenance_e2e.rs` 的 `snapshot_with_provenance` 由"复刻闭包"改为**直接调用
+`au4a_node::publish_snapshot`**。于是那条端到端断言——
+
+> 起带身份的节点 → `GET /api/results` → 取 `provenance.report` → `verify_provenance()` 通过
+
+——现在证明的是**节点真实使用的代码路径**，而不是测试自己拼出来的一份等价物。
+
+### 证据
+
+* `cargo test -p au4a-node --test provenance_e2e` → 2 passed / 0 failed
+* `cargo test --workspace --locked -j 2` → exit 0
+
+---
+
 ## v2.6.3（2026-10-06）
 
 **补齐 v2.6.2 的端到端缺口：面板经 HTTP 送达的签名报告**真的**验签通过。**

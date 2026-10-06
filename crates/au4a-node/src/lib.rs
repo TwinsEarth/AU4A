@@ -16,6 +16,42 @@ pub fn version() -> &'static str {
     include_str!("../../../VERSION").trim()
 }
 
+/// v2.6.4：**渲染快照 + 注入来源签名**的**唯一实现**。
+///
+/// 为什么必须提取：这段逻辑此前只存在于 `main.rs` 的一个闭包里，而集成测试
+/// （`tests/provenance_e2e.rs`）只能**复刻**它——两者一旦漂移，测试就再也证明不了
+/// "节点真正发出的面板是带签名的"。现在 `main.rs` 与测试调用同一份代码，漂移不可能发生。
+///
+/// 行为：
+/// * `identity = None` → **匿名只读模式**：快照原样返回（与 v2.6.2 之前逐字节一致）；
+/// * `identity = Some` → 用 v2.6.0 的口径签发报告（**只覆盖结果 + 收益**），
+///   并把 `{node_did, sig, scheme, scope, report}` 写进快照的 `provenance`。
+///   私钥只在这一刻被使用，快照里只出现 DID 与签名。
+pub fn publish_snapshot(
+    kernel: &au4a_kernel::Kernel,
+    identity: Option<&identity::NodeIdentity>,
+) -> String {
+    let text = scenario::view_json(kernel);
+    let Some(id) = identity else {
+        return text;
+    };
+    let Ok(mut value) = serde_json::from_str::<Value>(&text) else {
+        return text;
+    };
+    if let Ok(report) = au4a_kernel::Observer::report_signed(kernel, id.keys()) {
+        value["provenance"] = json!({
+            "node_did": report.node_did,
+            "sig": report.sig,
+            "scheme": "ed25519",
+            "scope": au4a_kernel::ObserverReport::signed_routes(),
+            // 把被签名的报告本体一并给出：验证方可直接对它跑 `verify_provenance()`，
+            // 不必自己拼装签名载荷（拼装规则若漂移，"验签通过"就失去意义）。
+            "report": report,
+        });
+    }
+    au4a_core::canonicalize(&value).unwrap_or(text)
+}
+
 /// 轨道清单（轨道号、crate 名、标题、版本区间）。
 pub fn track_table() -> Vec<String> {
     vec![
