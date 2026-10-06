@@ -45,6 +45,36 @@ pub enum CoreError {
     ConservationViolated,
 }
 
+impl CoreError {
+    /// 基元错误的**唯一**稳定短名。
+    ///
+    /// v2.4.0（P2）收敛：这份映射此前在 `au4a-kernel::errors::core_code` 与
+    /// `au4a-safety::schema::core_error_kind_name` 各有一份**副本**，于是新增一个变体要改 4 处
+    /// （`Display` + 两份映射 + 内核的分类器）——v2.3.0 加 `ConservationViolated` 时就是实证。
+    /// 现在两处一律转发到这里，口径不可能再漂移。
+    pub fn code(&self) -> &'static str {
+        match self {
+            CoreError::InvalidDid => "invalid_did",
+            CoreError::InvalidSignature => "invalid_signature",
+            CoreError::FloatForbidden => "float_forbidden",
+            CoreError::Encoding => "encoding",
+            CoreError::NegativeAmount => "negative_amount",
+            CoreError::ZeroAmount => "zero_amount",
+            CoreError::Overflow => "overflow",
+            CoreError::InsufficientFunds => "insufficient_funds",
+            CoreError::InsufficientStake => "insufficient_stake",
+            CoreError::UnknownAgent => "unknown_agent",
+            CoreError::DuplicateAgent => "duplicate_agent",
+            CoreError::InvalidKind => "invalid_kind",
+            CoreError::FrameTooLarge => "frame_too_large",
+            CoreError::FrameTruncated => "frame_truncated",
+            CoreError::NotSealed => "not_sealed",
+            CoreError::InvalidVersion => "invalid_version",
+            CoreError::ConservationViolated => "conservation_violated",
+        }
+    }
+}
+
 impl fmt::Display for CoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {

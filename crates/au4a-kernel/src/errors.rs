@@ -71,27 +71,10 @@ impl KernelError {
     }
 }
 
-/// 基元错误的稳定短名（与 `au4a-safety` 的连线口径保持一致）。
+/// 基元错误的稳定短名。**唯一口径在 [`au4a_core::CoreError::code`]**，这里只转发——
+/// v2.4.0（P2）之前这里有一份完整副本，与 `au4a-safety/src/schema.rs` 的副本各自维护。
 fn core_code(e: &CoreError) -> &'static str {
-    match e {
-        CoreError::InvalidDid => "invalid_did",
-        CoreError::InvalidSignature => "invalid_signature",
-        CoreError::FloatForbidden => "float_forbidden",
-        CoreError::Encoding => "encoding",
-        CoreError::NegativeAmount => "negative_amount",
-        CoreError::ZeroAmount => "zero_amount",
-        CoreError::Overflow => "overflow",
-        CoreError::InsufficientFunds => "insufficient_funds",
-        CoreError::InsufficientStake => "insufficient_stake",
-        CoreError::UnknownAgent => "unknown_agent",
-        CoreError::DuplicateAgent => "duplicate_agent",
-        CoreError::InvalidKind => "invalid_kind",
-        CoreError::FrameTooLarge => "frame_too_large",
-        CoreError::FrameTruncated => "frame_truncated",
-        CoreError::NotSealed => "not_sealed",
-        CoreError::InvalidVersion => "invalid_version",
-        CoreError::ConservationViolated => "conservation_violated",
-    }
+    e.code()
 }
 
 impl fmt::Display for KernelError {

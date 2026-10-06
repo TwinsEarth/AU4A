@@ -132,26 +132,12 @@ pub fn schema_summary() -> CoreResult<Value> {
 }
 
 /// 让 `CoreError` 的类型名进入契约（防止误以为可以新增变体）。
+///
+/// v2.4.0（P2）：改为**转发**到唯一口径 [`au4a_core::CoreError::code`]。
+/// 此前这里与 `au4a-kernel::errors::core_code` 各有一份完整副本，
+/// 新增一个变体要同时改两处（v2.3.0 的 `ConservationViolated` 就是实证）。
 pub fn core_error_kind_name(err: &CoreError) -> &'static str {
-    match err {
-        CoreError::InvalidDid => "invalid_did",
-        CoreError::InvalidSignature => "invalid_signature",
-        CoreError::FloatForbidden => "float_forbidden",
-        CoreError::Encoding => "encoding",
-        CoreError::NegativeAmount => "negative_amount",
-        CoreError::ZeroAmount => "zero_amount",
-        CoreError::Overflow => "overflow",
-        CoreError::InsufficientFunds => "insufficient_funds",
-        CoreError::InsufficientStake => "insufficient_stake",
-        CoreError::UnknownAgent => "unknown_agent",
-        CoreError::DuplicateAgent => "duplicate_agent",
-        CoreError::InvalidKind => "invalid_kind",
-        CoreError::FrameTooLarge => "frame_too_large",
-        CoreError::FrameTruncated => "frame_truncated",
-        CoreError::NotSealed => "not_sealed",
-        CoreError::InvalidVersion => "invalid_version",
-        CoreError::ConservationViolated => "conservation_violated",
-    }
+    err.code()
 }
 
 #[cfg(test)]
