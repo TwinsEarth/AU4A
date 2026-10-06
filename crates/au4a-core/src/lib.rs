@@ -31,9 +31,17 @@ pub use msg::{decode_frame, encode_frame, kinds, Envelope, MsgKind, MAX_FRAME};
 pub use prims::{all_passed, content_hash, short_id, LogicalClock, SelfCheck};
 pub use refusal::{Escalation, Refusal, RefusalCode};
 
-/// 版本系列：v1.0.1 → v1.9.9。
-pub const SERIES: &str = "v1.0.1 → v1.9.9";
-/// 中版本数量。
+/// v1 系列（冻结基线）：v1.0.1 → v1.9.9。
+pub const V1_SERIES: &str = "v1.0.1 → v1.9.9";
+/// **历史口径**：`SERIES` 描述的只是 v1 系列。项目已进入 v2 发布线（v2.0.2 → v2.4.0），
+/// 因此**不要**用 `SERIES` 声称"当前系列"——需要当前线请用 [`V2_LINE`]，需要 v1 事实请用 [`V1_SERIES`]。
+///
+/// v2.4.0（P2）修正：此前这里写着"版本系列：v1.0.1 → v1.9.9"，与 `VERSION`（v2.4.0）不一致，
+/// 任何读取它的展示/元数据都会声称"最到 v1.9.9"。
+pub const SERIES: &str = V1_SERIES;
+/// 当前 v2 发布线。
+pub const V2_LINE: &str = "v2.0.2 → v2.4.0";
+/// v1 系列的中版本数量。
 pub const MEDIUM_VERSIONS: usize = 10;
-/// 小版本数量。
+/// v1 系列的小版本数量。
 pub const SMALL_VERSIONS: usize = 99;

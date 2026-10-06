@@ -1,5 +1,55 @@
 # Changelog
 
+## v2.4.0（2026-10-06）
+
+**内核审计（P1-2）落地批次：1 条 P0 + 15 条 P1 + 若干 P2。** 全部带回归测试，每批都过
+`cargo test --workspace --locked`。
+
+### 🔴 P0（远端可触发、单条消息、节点不自愈）
+
+| 缺陷 | 修法 |
+|---|---|
+| **时钟毒化**：`pmb::admit` 只查"落后"不查"超前"，一条 `ts = u64::MAX` 的**合法**信封通过准入后，`Kernel::send` 会把本地逻辑时钟取 max 顶到天花板 → 此后所有正常信封都被判 `stale_epoch` → 节点通信永久瘫痪 | ① `admit` 增加**对称的超前界**；② `Kernel::send` 改为**有界推进**（`observe` 自带 +1，故上界取 `MAX_LAG - 1`），使"单条远端信封最多推进 MAX_LAG 步"成为**精确**不变式 |
+
+### P1（15 条）
+
+| 类别 | 内容 |
+|---|---|
+| **serde 绕过构造校验**（同族第 4、5 例） | `RegistrySnapshot` 反序列化校验一致性（DID 可解析、无重复、索引不指向局外人）；`Lifecycle` 反序列化**必须重放历史**并断言 `state == 折叠结果` |
+| **策略阈值可注入** | `KernelConfig` 反序列化校验（结算上限有**硬上界**、准入下限/创世额度非负、能力数上限在 `[1, 4096]`、网络标识非空） |
+| **证据可伪造** | `TrackManifest`/`VersionSpec`/`VersionEvidence` 校验（分级名必须是三个已知值、`tests_passed <= tests_total` 且总数非零、版本号形状、版本号唯一） |
+| **投递账可伪造** | `RouteDecision` 校验自洽（`accepted` 与 `code` 互斥、通过必须有收件人、被拒必须有类型化码、`class` 必须等于 `classify_kind(kind)`） |
+| **静默失败** | `autonomy` 意图执行失败不再被 `unwrap_or_default()` 吞掉（按既有分类记入本回合拒绝）；`lib.rs` 观察投影失败不再伪装成 `null`；重放指纹失败用显式哨兵 `<unavailable>` 而非空串（空串会让两次失败比较相等 = 假通过）；`migration` 新增三态 `intact_status` 区分"无法计算"与"内容不符" |
+| **不变式未强制** | `permission` 在**构造期**强制"allowed ∪ denied == ALL"（此前只是文档承诺）；`Lifecycle` 指纹改为覆盖 `state + history`（此前"同历史不同状态"指纹相同） |
+| **准入瑕疵** | `registry` **准入即拒绝**重复/空能力声明（此前只事后报告，一个 Agent 用重复字符串即可稀释能力图权重）；审计侧保留为**第二道闸门** |
+| **可复算性** | `permission` 报告记录抽签时刻 `sorted_at` 并导出到 JSON（此前默认 `explain` 的结果第三方无法复算） |
+| **内存型 DoS** | `pmb` 重放表按滞后视野**回收**（此前只增不减）；`audit` 乱序计数基线改 `last.max(event.at)`（此前一次倒退会被重复计数） |
+
+### P2（本版）
+
+- `canon` 补"像整数的浮点"拒绝测试（`1.0` / `1e10` / `-0.0`），防止有人"优化"成"小数部分为 0 就转整数"；
+- `observer` 的「结果」面板**审计只算一次**（原来连续调三次，每次遍历全部 Agent/队列/拒绝）；
+- `audit` 模块文档补齐第 8 条检查（生命周期台账）；
+- `au4a-core` 的 `SERIES` 常量拆分：`V1_SERIES`（v1 事实）+ `V2_LINE`（当前线），不再用 `SERIES` 声称"当前系列"。
+
+### 证据
+
+- `cargo test -p au4a-core -p au4a-kernel` → 全绿（内核 lib 套件 **95 passed**；新增 4 个集成测试文件：`config_validation`(3) / `manifest_validation`(2) / `route_decision_validation`(2)）
+- `cargo test --workspace --locked -j 2` → **exit 0**
+- 每个修复都有回归测试，且断言"修复前会失败"的具体行为（例：P0 断言时钟 `2 -> 66` 而非 `67`；`Lifecycle` 断言 `Provisional` 经竞争性拒绝后仍是 `Provisional`）
+
+### 未纳入本版
+
+- **`observer` 报告来源签名**（节点 DID + 签名 + 验证路径）——属新增能力，按计划单列 **v2.5.0**；
+- `CoreError → 短名` 的两份映射尚未合并（`kernel/errors.rs` 与 `safety/schema.rs`）。
+
+### 运维注记
+
+- 工作区构建**必须加 `-j 2`**：本机为每次闸门开独立 `CARGO_TARGET_DIR` 会累积数十 GB 构建缓存，
+  并发编译会以 `rustc-LLVM ERROR: out of memory` / `STATUS_STACK_BUFFER_OVERRUN` 失败（本会话已发生两次，已清理 ~45 GB）。
+
+---
+
 ## v2.3.0（2026-10-05）
 
 **冻结基元四项 P1 修复 + 4 个回归测试。** 这是 P1-1（`au4a-core` 九个文件逐行审查）的落地批次。
