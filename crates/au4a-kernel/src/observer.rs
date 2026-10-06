@@ -145,18 +145,23 @@ impl Observer {
                 "events": kernel.progress_events(),
                 "messages_delivered": kernel.results_json()["delivered"],
             }),
-            ObserverRoute::Results => json!({
-                "results": kernel.results_json(),
-                // 注意：这里刻意不用 `Kernel::self_check()`——它会调用本模块的自检，
-                // 而本模块的自检会再渲染本面板，形成递归。宿主的「结果」面板展示
-                // 审计结论（同样的不变式，不含观察层自身），观察层自身的检查由
-                // `observer_self_checks` 单独提供、由节点聚合。
-                "self_checks": kernel.audit().to_self_checks(crate::TRACK),
-                "self_checks_passed": kernel.audit().is_clean(),
-                "audit": kernel.audit().to_json(),
-                "lifecycle": kernel.lifecycles().to_json(),
-                "observer_api": observer_api(),
-            }),
+            ObserverRoute::Results => {
+                // v2.4.0（P2）：审计只算一次。修复前这里连续调了三次 `kernel.audit()`，
+                // 每次都要遍历全部 Agent / 队列 / 拒绝记录 —— HTTP 面板每刷新一次付三倍代价。
+                let audit = kernel.audit();
+                json!({
+                    "results": kernel.results_json(),
+                    // 注意：这里刻意不用 `Kernel::self_check()`——它会调用本模块的自检，
+                    // 而本模块的自检会再渲染本面板，形成递归。宿主的「结果」面板展示
+                    // 审计结论（同样的不变式，不含观察层自身），观察层自身的检查由
+                    // `observer_self_checks` 单独提供、由节点聚合。
+                    "self_checks": audit.to_self_checks(crate::TRACK),
+                    "self_checks_passed": audit.is_clean(),
+                    "audit": audit.to_json(),
+                    "lifecycle": kernel.lifecycles().to_json(),
+                    "observer_api": observer_api(),
+                })
+            }
             ObserverRoute::Yield => json!({
                 "ledger": kernel.ledger().view(),
                 "agents": kernel
