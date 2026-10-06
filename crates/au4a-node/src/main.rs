@@ -130,9 +130,12 @@ fn main() {
                     exit(2);
                 }
             };
+            // 注意：身份提示**必须走 stderr**。
+            // v2.6.2 曾用 println! 打到 stdout，破坏了 `run --json` 的机器可读契约——
+            // deploy/verify.ps1 直接 `ConvertFrom-Json`，在第一个汉字"节"上就解析失败（CI 因此连续红）。
             match &node_identity {
-                Some(id) => println!("节点身份：{}（面板报告将带 Ed25519 来源签名）", id.did()),
-                None => println!(
+                Some(id) => eprintln!("节点身份：{}（面板报告将带 Ed25519 来源签名）", id.did()),
+                None => eprintln!(
                     "节点身份：匿名只读模式（未提供 --node-key / --node-key-file / AU4A_NODE_KEY）"
                 ),
             }
