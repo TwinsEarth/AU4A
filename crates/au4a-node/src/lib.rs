@@ -4,6 +4,7 @@
 //! [`scenario`] 编排的是 Agent 自己的动作（注册、声明能力、协商、结算、学习、治理……），
 //! [`observer`] 提供的是一组**只有 GET** 的只读投影。二者之间没有写通道。
 
+pub mod identity;
 pub mod observer;
 pub mod scenario;
 

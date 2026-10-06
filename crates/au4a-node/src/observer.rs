@@ -16,13 +16,15 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 /// 全部路由。**没有一条是写路由**——这就是「人类只观察」的机器可验证形式。
-pub const ROUTES: [&str; 6] = [
+/// v2.6.2：新增 `/api/provenance`（来源证明；仍是只读 GET）。
+pub const ROUTES: [&str; 7] = [
     "/",
     "/api/progress",
     "/api/results",
     "/api/revenue",
     "/api/selfcheck",
     "/api/tracks",
+    "/api/provenance",
 ];
 
 /// 唯一允许的方法。
@@ -166,6 +168,20 @@ fn handle(mut stream: TcpStream, view: &SharedView) -> std::io::Result<()> {
         "/api/revenue" => respond(&mut stream, 200, JSON_CT, &panel(&value, "revenue")),
         "/api/selfcheck" => respond(&mut stream, 200, JSON_CT, &panel(&value, "selfcheck")),
         "/api/tracks" => respond(&mut stream, 200, JSON_CT, &panel(&value, "tracks")),
+        // v2.6.2：独立路由。与面板嵌入返回**同一份**来源信息（两种暴露方式都支持）。
+        // 无密钥时 `node` 为 null（匿名只读模式），仍然 200 —— 这与"未签名"是明确区分的一回事。
+        "/api/provenance" => respond(
+            &mut stream,
+            200,
+            JSON_CT,
+            &json!({
+                "node": value.get("provenance").cloned().unwrap_or(Value::Null),
+                "read_only": true,
+                "allowed_method": ALLOWED_METHOD,
+                "verify_hint": "取 node.report（内核观察报告）调用其 verify_provenance()；签名覆盖 node.scope 列出的面板",
+            })
+            .to_string(),
+        ),
         _ => respond(
             &mut stream,
             404,
@@ -184,6 +200,9 @@ fn panel(value: &Value, key: &str) -> String {
         "read_only": true,
         "allowed_method": ALLOWED_METHOD,
         "data": value.get(key).cloned().unwrap_or(Value::Null),
+        // v2.6.2：**默认嵌入**来源证明（无密钥时为 null）。
+        // 内容只有 DID + 签名 + 被签名覆盖的范围与报告本身——**永不含私钥**。
+        "provenance": value.get("provenance").cloned().unwrap_or(Value::Null),
     });
     au4a_core::canonicalize(&payload).unwrap_or_else(|_| "{}".to_string())
 }
@@ -389,6 +408,12 @@ mod tests {
             assert_eq!(status, 200, "GET {route} 应当 200，实际 {status}");
             if route == "/" {
                 assert!(body.contains("观察面板"), "首页应当渲染三面板");
+            } else if route == "/api/provenance" {
+                // v2.6.2：来源证明路由**不是面板**——它返回 {node, read_only, allowed_method, verify_hint}。
+                // 无密钥时 node 为 null（匿名只读模式），仍然 200。
+                assert!(body.contains("\"node\":"), "来源路由必须返回 node：{body}");
+                assert!(body.contains("\"read_only\":true"));
+                assert!(body.contains("\"allowed_method\":\"GET\""));
             } else {
                 let key = route.trim_start_matches("/api/");
                 assert!(
@@ -423,7 +448,9 @@ mod tests {
     #[test]
     fn every_declared_route_is_enumerable_and_get_only() {
         // 结构性证据：路由表本身就是全部入口；没有任何一条带写语义的名字。
-        assert_eq!(ROUTES.len(), 6);
+        // v2.6.2：6 → 7（新增只读的 `/api/provenance`）。数量变化必须显式改测试，
+        // 而不是让断言模糊成 `>= 6`——路由表是"人类唯一入口"的结构性证据。
+        assert_eq!(ROUTES.len(), 7);
         let joined = ROUTES.join(" ");
         for forbidden in [
             "write", "update", "set", "delete", "create", "admin", "approve",

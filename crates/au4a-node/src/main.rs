@@ -118,6 +118,48 @@ fn main() {
                 .unwrap_or(DEFAULT_AGENTS);
             let observe = value("--observe");
 
+            // v2.6.2：节点身份。三种来源全支持，优先级：--node-key > --node-key-file > AU4A_NODE_KEY。
+            // 都没有 → 匿名只读模式（面板照常，只是不带来源签名）。
+            let node_identity = match au4a_node::identity::NodeIdentity::resolve(
+                value("--node-key").as_deref(),
+                value("--node-key-file").as_deref(),
+            ) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("invalid node key: {e}");
+                    exit(2);
+                }
+            };
+            match &node_identity {
+                Some(id) => println!("节点身份：{}（面板报告将带 Ed25519 来源签名）", id.did()),
+                None => println!(
+                    "节点身份：匿名只读模式（未提供 --node-key / --node-key-file / AU4A_NODE_KEY）"
+                ),
+            }
+            let publish = |k: &au4a_kernel::Kernel| -> String {
+                let text = scenario::view_json(k);
+                let Some(id) = &node_identity else {
+                    return text; // 匿名只读模式：快照原样，不带来源
+                };
+                let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    return text;
+                };
+                // 用 v2.6.0 的口径签发（只覆盖结果 + 收益），并把 DID/签名/报告放进快照。
+                // 私钥只在这一刻被使用，快照里只出现 DID + 签名。
+                if let Ok(report) = au4a_kernel::Observer::report_signed(k, id.keys()) {
+                    v["provenance"] = serde_json::json!({
+                        "node_did": report.node_did,
+                        "sig": report.sig,
+                        "scheme": "ed25519",
+                        "scope": au4a_kernel::ObserverReport::signed_routes(),
+                        // 把被签名的报告一并给出：验证方可以对它直接跑 verify_provenance()，
+                        // 而不必自己拼装签名载荷（拼装规则若漂移，"验签通过"就失去意义）。
+                        "report": report,
+                    });
+                }
+                au4a_core::canonicalize(&v).unwrap_or(text)
+            };
+
             // 观察面先起来（人类可以立刻开始看），随后 Agent 才开跑。
             let placeholder = au4a_core::canonicalize(&serde_json::json!({
                 "version": au4a_node::version(),
@@ -150,7 +192,7 @@ fn main() {
             let started = std::time::Instant::now();
             let (kernel, outcomes, dids) = match scenario::run_full(agents, |k| {
                 if observe.is_some() {
-                    view.update(scenario::view_json(k));
+                    view.update(publish(k));
                 }
             }) {
                 Ok(v) => v,
@@ -160,7 +202,7 @@ fn main() {
                 }
             };
             if observe.is_some() {
-                view.update(scenario::view_json(&kernel));
+                view.update(publish(&kernel));
             }
 
             let summary = scenario::summary_json(&kernel, &outcomes, &dids)
