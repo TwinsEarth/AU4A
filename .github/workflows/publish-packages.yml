@@ -120,6 +120,18 @@ jobs:
           v=${{ matrix.version }}; v=${v#v}
           maj=${v%%.*}; rest=${v#*.}; min=${rest%%.*}
           npm dist-tag add "@twinsearth/au4a@${v}" "medium-${maj}.${min}" --registry=https://registry.npmjs.org
+      # v2.x 的 tag 推送必须把 `latest` 指向**该 tag 自己**。
+      # 此前只有 `npm-major` 会写 `latest`，而它写的是 v1 收尾版本，
+      # 于是发布 v2.4.0 反而把 `latest` 从 2.0.2 **退回** 1.9.9（实证：2026-10-06 发布）。
+      - name: point latest at this v2 release (npmjs)
+        if: ${{ !inputs.skip_npmjs && startsWith(matrix.version, 'v2.') }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          v=${{ matrix.version }}; v=${v#v}; maj=${v%%.*}
+          npm dist-tag add "@twinsearth/au4a@${v}" latest --registry=https://registry.npmjs.org
+          npm dist-tag add "@twinsearth/au4a@${v}" "major-v${maj}" --registry=https://registry.npmjs.org
 
   npm-major:
     name: npm major line v1
@@ -151,8 +163,11 @@ jobs:
             echo "$out" | grep -qiE 'already exists|EPUBLISHCONFLICT|cannot publish over' || { echo "::error::npmjs publish failed"; exit 1; }
             echo "already published to npmjs — ok"
           fi
+          # 只写 `major-v1`，**不再写 `latest`**。
+          # 这个作业的 `major` 是 `docs/versions.json` 里 v1 系列的收尾版本（v1.9.9），
+          # 拿它写 `latest` 会在每次发布 v2.x 时把 `latest` 退回 v1（实证见 npm-medium 里的注释）。
+          # `latest` 由 `npm-medium` 的 "point latest at this v2 release" 负责（仅 v2.x tag）。
           latest=${{ needs.plan.outputs.major }}; latest=${latest#v}
-          npm dist-tag add "@twinsearth/au4a@${latest}" latest --registry=https://registry.npmjs.org
           npm dist-tag add "@twinsearth/au4a@${latest}" major-v1 --registry=https://registry.npmjs.org
       - name: publish to GitHub Packages
         working-directory: pkg-major
