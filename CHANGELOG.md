@@ -1,5 +1,48 @@
 # Changelog
 
+## v2.5.0（2026-10-06）
+
+**观察报告的来源证明（新增能力）。** 这是 P1-2 审查里唯一被单列一条的能力项：
+修复前"人类看到的报告"**只自洽、无来源**。
+
+### 问题
+
+`ObserverReport::fingerprint()` 只是报告内容的哈希，它证明的是**"这份报告自洽"**，
+不是**"这份报告来自某个真实的内核状态"**。任何人都能用 `serde_json::from_value` 造一份
+字段完全自洽的报告（`writable: false`、任意 `payload`、自洽的 `fingerprint`），
+指纹照样算得出来。而"人类只能看到真相"是本项目的立身之本——**真相必须可验证来源**。
+
+### 新增
+
+| 项 | 说明 |
+|---|---|
+| `ObserverReport::node_did: Option<String>` | 签发节点 DID（`None` = 未签名的本地渲染；旧格式反序列化默认 `None`，**向后兼容**） |
+| `ObserverReport::sig: String` | 对签名载荷的 Ed25519 签名（hex）；空串 = 未签名 |
+| `ObserverReport::signing_payload()` | 被签名载荷 = `network_id + now + 各投影的 (route, fingerprint)`。投影指纹已把载荷内容绑住，因此不必重复编码整份载荷，同时保证**可复算** |
+| `ObserverReport::verify_provenance()` | 来源验证：未签名 → `NotSealed`（与"签名错"**明确区分**）；DID 非法 → `InvalidDid`；签名不符 → `InvalidSignature` |
+| `Observer::report_signed(kernel, keys)` | 签发入口。渲染仍然只读（只取 `&Kernel`），密钥由调用方显式传入 —— **"观察层在类型上不存在写路径"这一性质不受影响** |
+
+线上形状：新增两个字段且都带 `#[serde(default)]`，旧报告仍可解析；`Observer::report` 的行为
+（`node_did = None`、`sig = ""`）与之前完全一致。
+
+### 回归测试（2 个，独立集成测试文件）
+
+- `signed_report_verifies_and_tampering_is_detected` —— 合法签名通过；**改时刻 / 改任一投影指纹 / 换签发者 / 改投影载荷**四种篡改全部被验签发现；
+- `unsigned_report_is_not_sealed` —— 未签名 → `NotSealed`；只给 DID 不给签名 → 仍是 `NotSealed`；合法 DID + 垃圾签名 → `InvalidSignature`；非法 DID → `InvalidDid`。
+
+### 证据
+
+- `cargo test -p au4a-kernel` → 全绿（lib 套件 95 passed + 新集成套件 2 passed）
+- `cargo test --workspace --locked -j 2` → **exit 0**
+
+### 备注
+
+- 本版是**新增能力**（不是修复），按此前约定单列；
+- 仍未做：观察层 HTTP 面板（`au4a-node`）尚未调用 `report_signed`——面板要验证来源，
+  需要节点持有密钥并在 `/api/*` 响应里带上 DID + 签名，这属于下一版（v2.6.0）的接口工作。
+
+---
+
 ## v2.4.0（2026-10-06）
 
 **内核审计（P1-2）落地批次：1 条 P0 + 15 条 P1 + 若干 P2。** 全部带回归测试，每批都过

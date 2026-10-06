@@ -100,11 +100,22 @@ pub struct ObserverProjection {
 }
 
 /// 三个投影的打包（人类界面一次取全部）。
+///
+/// v2.5.0：新增 `node_did` / `sig` 两个字段，为报告引入**来源**语义。
+/// 修复前 `fingerprint()` 只证明"这份报告自洽"，不能证明"它来自某个真实的内核状态"——
+/// 任何人都能用 `serde_json::from_value` 造一份自洽报告，指纹照样算得出来。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ObserverReport {
     pub network_id: String,
     pub now: u64,
     pub projections: Vec<ObserverProjection>,
+    /// 签发节点的 DID（`None` = 未签名的本地报告）。旧格式反序列化默认 `None`。
+    #[serde(default)]
+    pub node_did: Option<String>,
+    /// 对 [`ObserverReport::signing_payload`] 的规范字节所做的 Ed25519 签名（hex）。
+    /// 空串 = 未签名（`verify_provenance` 返回 `NotSealed`）。
+    #[serde(default)]
+    pub sig: String,
 }
 
 impl ObserverReport {
@@ -129,6 +140,61 @@ impl ObserverReport {
     pub fn fingerprint(&self) -> CoreResult<String> {
         let value = serde_json::to_value(self).map_err(|_| CoreError::Encoding)?;
         canonical_hash(&value)
+    }
+
+    /// v2.5.0：**被签名的载荷**。
+    ///
+    /// 只覆盖 `network_id + now + 每个投影的 route/fingerprint`：
+    /// 投影指纹本身已经把载荷内容绑住，因此这里不必重复编码整份载荷，
+    /// 同时保证签名**可复算**（两个节点对同一状态得到同一载荷）。
+    pub fn signing_payload(&self) -> CoreResult<String> {
+        let value = json!({
+            "network_id": self.network_id,
+            "now": self.now,
+            "projections": self
+                .projections
+                .iter()
+                .map(|p| json!({"route": p.route, "fingerprint": p.fingerprint}))
+                .collect::<Vec<Value>>(),
+        });
+        au4a_core::canonicalize(&value).map_err(|_| CoreError::Encoding)
+    }
+
+    /// v2.5.0：**来源验证**。
+    ///
+    /// * 没有 `node_did` 或 `sig` 为空 → [`CoreError::NotSealed`]（明确区分"未签名"与"签名错"）；
+    /// * `node_did` 不合法 → [`CoreError::InvalidDid`]；
+    /// * **逐投影重算指纹**：`fingerprint` 必须等于该投影载荷的规范哈希；
+    /// * 签名与载荷/签发者不符 → [`CoreError::InvalidSignature`]。
+    ///
+    /// 第三条是必须的：签名载荷只含 `fingerprint` **字段**，若不重算，
+    /// "替换 `payload` 但保留原 `fingerprint`"的伪造仍会通过验签。
+    /// 这一点是 v2.5.0 自己的回归测试 ④ 抓出来的设计漏洞，实现时一并堵上。
+    pub fn verify_provenance(&self) -> CoreResult<()> {
+        let did = match self.node_did.as_deref() {
+            Some(d) => d,
+            None => return Err(CoreError::NotSealed),
+        };
+        if self.sig.is_empty() {
+            return Err(CoreError::NotSealed);
+        }
+        for p in &self.projections {
+            // 与 `Observer::render` 里的指纹公式**逐字一致**：canonical_**hash**({route, capability, payload})。
+            // 注意是 `canonical_hash`（SHA-256 hex）而不是 `canonicalize`（规范字符串）——
+            // 用错后者会让比对永远不等，把合法报告判成伪造。
+            let recomputed = au4a_core::canonical_hash(&json!({
+                "route": p.route,
+                "capability": p.capability,
+                "payload": p.payload,
+            }))
+            .map_err(|_| CoreError::Encoding)?;
+            if recomputed != p.fingerprint {
+                return Err(CoreError::InvalidSignature);
+            }
+        }
+        let did = au4a_core::Did::parse(did)?;
+        let payload = self.signing_payload()?;
+        did.verify(payload.as_bytes(), &self.sig)
     }
 }
 
@@ -203,13 +269,33 @@ impl Observer {
             .collect()
     }
 
-    /// 人类界面拿到的那一个值。
+    /// 人类界面拿到的那一个值（**未签名**：`node_did = None`、`sig = ""`）。
+    ///
+    /// 需要来源证明时用 [`Observer::report_signed`]；`report` 保持无签名，
+    /// 是为了不改变既有的只读渲染语义（渲染本身不接触任何密钥）。
     pub fn report(kernel: &Kernel) -> ObserverReport {
         ObserverReport {
             network_id: kernel.config().network_id.clone(),
             now: kernel.now(),
             projections: Observer::render_all(kernel),
+            node_did: None,
+            sig: String::new(),
         }
+    }
+
+    /// v2.5.0：**签发**报告——写入节点 DID 并对载荷签名，使人类与其它节点可以验证来源。
+    ///
+    /// 渲染仍然只读（只取 `&Kernel`）；密钥由调用方持有并显式传入，
+    /// 因此"观察层在类型上不存在写路径"这一性质不受影响。
+    pub fn report_signed(
+        kernel: &Kernel,
+        keys: &au4a_core::AgentKeys,
+    ) -> CoreResult<ObserverReport> {
+        let mut report = Observer::report(kernel);
+        let payload = report.signing_payload()?;
+        report.node_did = Some(keys.did().as_str().to_string());
+        report.sig = keys.sign(payload.as_bytes());
+        Ok(report)
     }
 }
 
