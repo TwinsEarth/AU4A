@@ -125,4 +125,25 @@ mod tests {
         let v = json!({"s": "智能体\n宇宙"});
         assert_eq!(canonicalize(&v).unwrap(), "{\"s\":\"智能体\\n宇宙\"}");
     }
+
+    // ── v2.4.0 回归测试 ──────────────────────────────────────────────────────
+
+    #[test]
+    fn integral_looking_floats_are_still_refused() {
+        // 修复前只覆盖了 1.5。`1.0` / `1e10` / `-0.0` 这类"看起来像整数"的浮点
+        // 同样必须被拒——否则一旦有人"优化"成「小数部分为 0 就转整数」，
+        // 整数守恒断言与内容寻址的可复现性就会被破坏。
+        for v in [
+            json!({"x": 1.0}),
+            json!({"x": 1e10}),
+            json!({"x": -0.0}),
+            json!({"x": 0.5}),
+            json!({"x": -1.5}),
+        ] {
+            assert_eq!(canonicalize(&v), Err(CoreError::FloatForbidden), "{v}");
+        }
+        // 整数字面量不受影响
+        assert_eq!(canonicalize(&json!({"x": 1})).unwrap(), r#"{"x":1}"#);
+        assert_eq!(canonicalize(&json!({"x": -1})).unwrap(), r#"{"x":-1}"#);
+    }
 }

@@ -242,7 +242,9 @@ pub fn audit_kernel(kernel: &Kernel) -> HostAudit {
         if event.at < last || event.at > now {
             backwards += 1;
         }
-        last = event.at;
+        // v2.4.0（P2）：乱序判定用 `max` 保底。修复前 `last = event.at` 会把异常值写进基线，
+        // 于是一次倒退会被后续事件**重复计为**异常（例如 [10, 5, 7] 记 2 次，实际只有 1 次）。
+        last = last.max(event.at);
     }
     findings.push(if backwards == 0 {
         AuditFinding::pass(

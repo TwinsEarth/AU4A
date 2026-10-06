@@ -203,6 +203,8 @@ impl PermissionReport {
             "limits": self.limits,
             "authorities": self.authorities.iter().map(|a| a.as_str()).collect::<Vec<&str>>(),
             "total_partition": self.is_total_partition(),
+            // v2.4.0：把抽签时刻一并导出，否则 JSON 消费者仍然无法复算这份判定。
+            "sorted_at": self.sorted_at,
         })
     }
 
