@@ -106,6 +106,7 @@ pub const MAX_LAG: u64 = 64;
 
 /// 一次路由判定。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "RawRouteDecision", into = "RawRouteDecision")]
 pub struct RouteDecision {
     pub id: String,
     pub kind: String,
@@ -115,6 +116,67 @@ pub struct RouteDecision {
     pub recipients: Vec<String>,
     pub code: Option<RefusalCode>,
     pub reason: String,
+}
+
+/// 线上形态（字段一一对应，JSON 形状不变）。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RawRouteDecision {
+    pub id: String,
+    pub kind: String,
+    pub class: MessageClass,
+    pub accepted: bool,
+    pub recipients: Vec<String>,
+    pub code: Option<RefusalCode>,
+    pub reason: String,
+}
+
+/// v2.4.0 新增（P1）：**路由判定记录必须自洽**。
+///
+/// 修复前 `RouteDecision` 是纯 `derive(Deserialize)`，外部 JSON 可以造出
+/// `{"accepted": true, "code": "unauthorized"}`（既声称通过、又附一个恶意拒绝码）、
+/// 或 `accepted: true` 但 `recipients: []`（声称投递成功却没有收件人）。
+/// 判定记录是投递侧的**账**，被伪造的"已投递"会污染审计与观察面板。
+impl TryFrom<RawRouteDecision> for RouteDecision {
+    type Error = CoreError;
+
+    fn try_from(raw: RawRouteDecision) -> CoreResult<Self> {
+        if raw.id.trim().is_empty() || raw.reason.trim().is_empty() {
+            return Err(CoreError::Encoding);
+        }
+        if raw.class != classify_kind(&raw.kind) {
+            return Err(CoreError::InvalidKind);
+        }
+        if raw.accepted {
+            if raw.code.is_some() || raw.recipients.is_empty() {
+                return Err(CoreError::Encoding);
+            }
+        } else if raw.code.is_none() {
+            return Err(CoreError::Encoding);
+        }
+        Ok(RouteDecision {
+            id: raw.id,
+            kind: raw.kind,
+            class: raw.class,
+            accepted: raw.accepted,
+            recipients: raw.recipients,
+            code: raw.code,
+            reason: raw.reason,
+        })
+    }
+}
+
+impl From<RouteDecision> for RawRouteDecision {
+    fn from(d: RouteDecision) -> Self {
+        RawRouteDecision {
+            id: d.id,
+            kind: d.kind,
+            class: d.class,
+            accepted: d.accepted,
+            recipients: d.recipients,
+            code: d.code,
+            reason: d.reason,
+        }
+    }
 }
 
 impl RouteDecision {
