@@ -1,5 +1,39 @@
 # Changelog
 
+## v2.6.3（2026-10-06）
+
+**补齐 v2.6.2 的端到端缺口：面板经 HTTP 送达的签名报告**真的**验签通过。**
+
+### 新增测试（`crates/au4a-node/tests/provenance_e2e.rs`，2 个）
+
+`a_panel_delivered_over_http_carries_a_verifiable_signature`：
+1. 起一个**带身份**的节点（`NodeIdentity::from_seed_hex` → `report_signed` → 快照）；
+2. `GET /api/results` → 断言 `read_only: true`、`provenance.node_did`/`scheme` 正确、`sig` 非空；
+3. **闭环**：把响应里的 `provenance.report` 反序列化成 `au4a_kernel::ObserverReport`，
+   调用 `verify_provenance()` —— **必须通过**；
+4. `GET /api/provenance` 返回**同一份** `sig`/`node_did`，其 `report` 同样验得过；
+5. **私钥永不出现在任何响应体**：遍历 `/ ` `/api/progress` `/api/results` `/api/revenue` `/api/provenance`，
+   断言响应文本不含种子十六进制；
+6. **反向对照**：把报告 `now += 1` 后验签**必须失败**——证明第 3 步的"通过"不是因为验签形同虚设。
+
+`anonymous_node_serves_panels_without_provenance`：无密钥时面板与 `/api/provenance` 的
+`provenance`/`node` 均为 `null`，其余行为（只读、200）不变。
+
+### 证据
+
+- `cargo test -p au4a-node --test provenance_e2e` → **2 passed / 0 failed**
+- `cargo test --workspace --locked -j 2` → exit 0
+
+### 说明
+
+测试里复刻了 `main.rs` 的发布闭包（`scenario::view_json` + `provenance` 注入）——
+因为它位于二进制 `main.rs` 内、无法被集成测试直接调用。**这是本测试的已知局限**：
+若 `main.rs` 的注入逻辑与测试里的复刻漂移，测试不会发现。要彻底消除这个缺口，
+应把该闭包提取成 `au4a_node` 的公共函数（`publish_snapshot(kernel, identity)`），
+让 `main.rs` 与测试调用**同一份实现**——留给下一版。
+
+---
+
 ## v2.6.2（2026-10-06）
 
 **观察面板接入来源签名。** v2.6.0 只在库层面提供了"报告来源证明"，本版把它接到真正跑起来的节点上：
